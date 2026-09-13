@@ -7,21 +7,31 @@
 // never slow, it never ran.
 // node scripts/sync-whisper-cli.verify.mjs
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import {
   adoptable,
   archiveProblem,
+  archiveEntriesProblem,
+  atomicPublish,
+  copyRuntimeDirectory,
+  fileManifest,
   findExecutable,
   flattenExecutableDir,
   helpProbeProblem,
   MIN_WHISPER_BINARY_BYTES,
+  offlineDecision,
   PLATFORMS,
   provisionedProblem,
   VERSION,
 } from './sync-whisper-cli.mjs';
+
+assert.equal(offlineDecision({ offline: true, hasInput: false, existingProblem: null }), 'noop', 'a verified existing runtime is an offline no-op');
+assert.equal(offlineDecision({ offline: true, hasInput: false, existingProblem: 'missing' }), 'error');
+assert.equal(offlineDecision({ offline: true, hasInput: true, existingProblem: 'missing' }), 'provision');
 
 const scratch = await mkdtemp(join(tmpdir(), 'whisper-flatten-'));
 const tree = async (root, files) => {
@@ -166,9 +176,10 @@ assert.match(VERSION, /^v\d+\.\d+\.\d+$/);
     source: 'asset',
     archiveSha256: 'a'.repeat(64),
     binarySha256: 'b'.repeat(64),
+    files: [],
   };
   const binary = { bytes: 830_792, executable: true, sha256: 'b'.repeat(64) };
-  const good = { expected, record, binary, probe: { problem: null } };
+  const good = { expected, record, binary, probe: { problem: null }, files: [] };
 
   assert.equal(provisionedProblem(good), null, 'a verified binary is reused');
   assert.match(
@@ -206,6 +217,11 @@ assert.match(VERSION, /^v\d+\.\d+\.\d+$/);
     /exited 127/,
     'a probe failure re-provisions even when the digests line up',
   );
+  assert.match(
+    provisionedProblem({ ...good, files: [{ path: 'ggml.dll', bytes: 3, sha256: 'c'.repeat(64) }] }) ?? '',
+    /runtime files do not match/,
+    'a deleted or changed DLL is caught by the runtime manifest',
+  );
 
   // An explicitly supplied binary has no knowable upstream version, but it is
   // still held to the digest, size, executable-bit and probe checks.
@@ -241,3 +257,76 @@ assert.match(VERSION, /^v\d+\.\d+\.\d+$/);
 }
 
 console.log('sync-whisper-cli.verify: layout keeps its libraries, and provisioning verifies instead of trusting existsSync');
+
+// ── archive member names are checked before tar/PowerShell extraction ────────
+{
+  assert.equal(archiveEntriesProblem(['Release/', 'Release/whisper-cli.exe', 'Release/ggml.dll']), null);
+  for (const unsafe of ['/absolute.exe', 'C:/absolute.exe', '..\\escape.exe', 'Release/../escape.exe', 'Release//x.dll']) {
+    assert.match(archiveEntriesProblem([unsafe]) ?? '', /unsafe|duplicate|non-normalized/);
+  }
+  assert.match(archiveEntriesProblem(['Release/x.dll', 'Release\\x.dll']) ?? '', /duplicate/);
+}
+
+// ── atomic publication keeps the old runtime when staging cannot be renamed ──
+{
+  const root = await mkdtemp(join(tmpdir(), 'whisper-atomic-'));
+  try {
+    const target = join(root, 'target');
+    const stage = join(root, 'stage');
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.dll'), 'old');
+    await mkdir(stage, { recursive: true });
+    await writeFile(join(stage, 'new.dll'), 'new');
+    await atomicPublish(stage, target);
+    assert.deepEqual((await readdir(target)).sort(), ['new.dll']);
+    const badStage = join(root, 'missing-stage');
+    await assert.rejects(() => atomicPublish(badStage, target));
+    assert.deepEqual((await readdir(target)).sort(), ['new.dll'], 'a failed publish does not remove the verified runtime');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+// ── runtime-dir input copies every adjacent library, not just the executable ─
+{
+  const root = await mkdtemp(join(tmpdir(), 'whisper-runtime-copy-'));
+  try {
+    const source = join(root, 'source');
+    const destination = join(root, 'destination');
+    await tree(source, { 'whisper-cli': 'e', 'whisper.dll': 'd', 'ggml.dll': 'g', 'nested/extra.dat': 'x' });
+    await writeFile(join(source, 'whisper-cli.provenance.json'), '{}');
+    await writeFile(join(source, 'whisper-cli.sha256'), 'legacy');
+    await copyRuntimeDirectory(source, destination);
+    assert.deepEqual((await readdir(destination)).sort(), ['ggml.dll', 'nested', 'whisper-cli', 'whisper.dll']);
+    assert.equal(await readFile(join(destination, 'whisper.dll'), 'utf8'), 'd');
+    assert.equal(await readFile(join(destination, 'nested', 'extra.dat'), 'utf8'), 'x');
+    assert.deepEqual((await fileManifest(destination)).map((entry) => entry.path), ['ggml.dll', 'nested/extra.dat', 'whisper-cli', 'whisper.dll']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+// ── --offline fails before any release fetch when no local input is supplied ─
+{
+  const node = process.execPath;
+  const child = spawn(node, ['./scripts/sync-whisper-cli.mjs', '--offline'], {
+    cwd: process.cwd(),
+    env: { ...process.env, OPENCHATCUT_WHISPER_OFFLINE: '1', OPENCHATCUT_WHISPER_ARCHIVE: '', OPENCHATCUT_WHISPER_RUNTIME_DIR: '', OPENCHATCUT_WHISPER_CLI: '' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const code = await new Promise((resolve) => child.on('close', resolve));
+  assert.notEqual(code, 0);
+  assert.match(stderr, /offline mode requires .*OPENCHATCUT_WHISPER_ARCHIVE.*OPENCHATCUT_WHISPER_RUNTIME_DIR/);
+}
+
+// Code builds stay offline; a formal Windows package must prepare the verified runtime first.
+{
+  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.doesNotMatch(packageJson.scripts.prebuild, /whisper/i, 'ordinary application builds must not fetch Whisper');
+  assert.match(packageJson.scripts['prepare:runtime:win'], /sync-whisper-cli\.mjs --offline/);
+  assert.match(packageJson.scripts['desktop:dist:win'], /^npm run prepare:runtime:win && npm run build/);
+}
+
+console.log('sync-whisper-cli.verify: offline inputs, archive path safety, atomic failure preservation, and no-fetch mode pass');
