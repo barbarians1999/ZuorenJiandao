@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { ToolSet } from '@github/copilot-sdk';
 import { parseCopilotTurnRequest } from '../plugins/copilot-agent.ts';
 import { isSupportedCopilotVersion, resolveCopilotCli, selectCopilotExecutable } from './installation.ts';
@@ -36,7 +36,7 @@ try {
   delete process.env.OPENCHATCUT_COPILOT_PATH;
   const bundled = fileURLToPath(import.meta.resolve(`@github/copilot-${process.platform}-${process.arch}`));
   assert.equal(await resolveCopilotCli(), bundled, 'the installed platform package is discovered without a PATH installation');
-  const archivePath = join(packageFixture, 'app.asar', 'node_modules', 'copilot', 'copilot');
+  const archivePath = join(packageFixture, 'app.asar', 'node_modules', 'copilot', basename(bundled));
   const unpacked = archivePath.replace('app.asar', 'app.asar.unpacked');
   await mkdir(dirname(unpacked), { recursive: true });
   await copyFile(bundled, unpacked);
@@ -52,7 +52,7 @@ try {
   assert.equal(await selectCopilotExecutable([cmd, bat], 'win32'), null,
     'a shim-only installation is unavailable to both the version probe and SDK spawn');
 } finally {
-  await rm(packageFixture, { recursive: true, force: true });
+  await rm(packageFixture, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   if (cliOverride === undefined) delete process.env.OPENCHATCUT_COPILOT_PATH;
   else process.env.OPENCHATCUT_COPILOT_PATH = cliOverride;
 }
