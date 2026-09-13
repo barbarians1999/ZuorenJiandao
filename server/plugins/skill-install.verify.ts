@@ -54,10 +54,18 @@ async function checkCloneBoundaries(): Promise<void> {
   await mkdir(source);
   await mkdir(stage);
   await writeFile(outside, 'outside fixture');
-  await symlink(outside, join(source, 'SKILL.md'));
-  await assert.rejects(stageCloneSkillFiles(source, stage), /symbolic links/);
-  assert.deepEqual(await readdir(stage), []);
-  await rm(join(source, 'SKILL.md'));
+  let fileSymlinkCreated = false;
+  try {
+    await symlink(outside, join(source, 'SKILL.md'));
+    fileSymlinkCreated = true;
+  } catch (error) {
+    if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
+  }
+  if (fileSymlinkCreated) {
+    await assert.rejects(stageCloneSkillFiles(source, stage), /symbolic links/);
+    assert.deepEqual(await readdir(stage), []);
+    await rm(join(source, 'SKILL.md'));
+  }
   await writeFile(join(source, 'SKILL.md'), skill);
   await symlink(root, join(source, 'references'), process.platform === 'win32' ? 'junction' : 'dir');
   await assert.rejects(stageCloneSkillFiles(source, stage), /symbolic links/);
@@ -161,9 +169,25 @@ try {
   const outside = join(root, 'outside');
   await mkdir(outside);
   await symlink(outside, join(dir, 'assets'), process.platform === 'win32' ? 'junction' : 'dir');
-  await assert.rejects(installGitHubSkill('fixtures/skill'), /destination must be a directory/);
+  await assert.rejects(installGitHubSkill('fixtures/skill'), (error: unknown) => (
+    error instanceof Error
+    && error.message === 'skill destination must be a directory tree without symbolic links: assets'
+    && (error as Error & { code?: string }).code === 'SKILL_DESTINATION_UNSAFE'
+  ));
   assert.deepEqual(await readdir(outside), []);
   assert.equal(await readFile(join(dir, 'SKILL.md'), 'utf8'), skill);
+  assert.deepEqual((await readdir(installed)).filter((entry) => entry.startsWith('.skill-install-')), []);
+  await rm(join(dir, 'assets'));
+  await mkdir(join(dir, 'custom-links'));
+  await symlink(outside, join(dir, 'custom-links', 'external'), process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(installGitHubSkill('fixtures/skill'), (error: unknown) => (
+    error instanceof Error
+    && error.message === 'skill destination must be a directory tree without symbolic links: custom-links/external'
+    && (error as Error & { code?: string }).code === 'SKILL_DESTINATION_UNSAFE'
+  ));
+  assert.deepEqual(await readdir(outside), []);
+  assert.equal(await readFile(join(dir, 'SKILL.md'), 'utf8'), skill);
+  assert.deepEqual((await readdir(installed)).filter((entry) => entry.startsWith('.skill-install-')), []);
   await checkCloneBoundaries();
   await checkStreamBounds();
   await checkRealGitFallback();

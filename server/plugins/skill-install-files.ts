@@ -116,6 +116,64 @@ async function existingDirectory(dir: string): Promise<boolean> {
   return true;
 }
 
+export class SkillDestinationUnsafeError extends Error {
+  readonly code = 'SKILL_DESTINATION_UNSAFE';
+
+  constructor(relativePath: string) {
+    super(`skill destination must be a directory tree without symbolic links: ${relativePath}`);
+    this.name = 'SkillDestinationUnsafeError';
+  }
+}
+
+function destinationUnsafe(relativePath: string): never {
+  throw new SkillDestinationUnsafeError(relativePath || '.');
+}
+
+async function inspectInstalledSkillTree(root: string, relative = ''): Promise<void> {
+  const path = relative ? join(root, ...relative.split('/')) : root;
+  const info = await lstat(path);
+  if (info.isSymbolicLink()) destinationUnsafe(relative);
+  if (info.isFile()) return;
+  if (!info.isDirectory()) destinationUnsafe(relative);
+  for (const entry of await readdir(path)) {
+    const child = relative ? `${relative}/${entry}` : entry;
+    await inspectInstalledSkillTree(root, child);
+  }
+}
+
+async function copyInstalledFile(source: string, target: string, relative: string): Promise<void> {
+  const before = await lstat(source);
+  if (before.isSymbolicLink() || !before.isFile()) destinationUnsafe(relative);
+  const handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino
+      || opened.size !== before.size || opened.mtimeMs !== before.mtimeMs) {
+      destinationUnsafe(relative);
+    }
+    await pipeline(handle.createReadStream(), createWriteStream(target, { flags: 'wx' }));
+  } finally {
+    await handle.close();
+  }
+}
+
+async function copyInstalledSkillTree(source: string, target: string, relative = ''): Promise<void> {
+  const path = relative ? join(source, ...relative.split('/')) : source;
+  const info = await lstat(path);
+  if (info.isSymbolicLink()) destinationUnsafe(relative);
+  if (info.isFile()) {
+    await copyInstalledFile(path, join(target, ...relative.split('/')), relative);
+    return;
+  }
+  if (!info.isDirectory()) destinationUnsafe(relative);
+  const destination = relative ? join(target, ...relative.split('/')) : target;
+  await mkdir(destination);
+  for (const entry of await readdir(path)) {
+    const child = relative ? `${relative}/${entry}` : entry;
+    await copyInstalledSkillTree(source, target, child);
+  }
+}
+
 async function overlayStagedFiles(stage: string, target: string, files: SkillInstallFile[]): Promise<void> {
   for (const file of files) {
     const parts = file.path.split('/');
@@ -137,8 +195,10 @@ async function publishStagedSkillFiles(stage: string, dir: string, files: SkillI
   const previous = join(scratch, 'previous');
   let backedUp = false;
   try {
-    if (await existingDirectory(dir)) await cp(dir, next, { recursive: true, dereference: false, verbatimSymlinks: true });
-    else await mkdir(next);
+    if (await existingDirectory(dir)) {
+      await inspectInstalledSkillTree(dir);
+      await copyInstalledSkillTree(dir, next);
+    } else await mkdir(next);
     await overlayStagedFiles(stage, next, files);
     if (await existingDirectory(dir)) { await rename(dir, previous); backedUp = true; }
     try { await rename(next, dir); }
