@@ -41,6 +41,8 @@ const props = {
   onSelectItem: () => undefined,
   onSetItemTransform: () => undefined,
   onSetItemKeyframe: () => undefined,
+  onRemoveItemKeyframe: () => undefined,
+  onSeek: () => undefined,
   onBeginHistoryGesture: () => undefined,
   onEndHistoryGesture: () => undefined,
 };
@@ -120,6 +122,8 @@ assert.match(
   assert.equal((markup.match(/data-preview-handle="crop-[nsew]"/g) ?? []).length, 4, '四边中点应可裁切遮盖');
   assert.equal((markup.match(/data-preview-handle="rotate"/g) ?? []).length, 1, '顶部应有一个旋转手柄');
   assert.match(markup, /var\(--cc-accent\)/, '控制框颜色跟随当前皮肤强调色');
+  assert.match(markup, /在播放头添加位置关键帧/, '没有路径节点时仍显示可发现的添加按钮');
+  assert.match(markup, /data-motion-path-interactive/, '运动路径控件必须与对象拖动事件隔离');
 }
 
 // Locked and hidden tracks can never expose writable controls.

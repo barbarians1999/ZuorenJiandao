@@ -7,6 +7,7 @@ import {
   captionTrackEntries,
   type ProjectDoc,
   type ClipTransform,
+  type KeyframeEasing,
   type KeyframeProp,
   type TimelineItem,
   type TimelineState,
@@ -90,7 +91,9 @@ interface PreviewPanelProps {
   onSeedChat?: (text: string) => void;
   onSelectItem?: (id: string | null) => void;
   onSetItemTransform?: (id: string, patch: ClipTransform) => void;
-  onSetItemKeyframe?: (id: string, prop: KeyframeProp, localFrame: number, value: number) => void;
+  onSetItemKeyframe?: (id: string, prop: KeyframeProp, localFrame: number, value: number, easing?: KeyframeEasing) => void;
+  onRemoveItemKeyframe?: (id: string, prop: KeyframeProp, localFrame: number) => void;
+  onSeek?: (frame: number) => void;
   onBeginHistoryGesture?: () => void;
   onEndHistoryGesture?: () => void;
   onItemPropChange?: (id: string, key: string, value: unknown) => void;
@@ -109,7 +112,7 @@ interface PreviewPanelProps {
 
 export const PreviewPanel = memo(function PreviewPanel({
   state, project, playerRef, onImport, offlineSrcs, onUpdateCaptions, onSelectCaption, activeCaptionSelection, onSeedChat,
-  onSelectItem, onSetItemTransform, onSetItemKeyframe, onBeginHistoryGesture, onEndHistoryGesture,
+  onSelectItem, onSetItemTransform, onSetItemKeyframe, onRemoveItemKeyframe, onSeek, onBeginHistoryGesture, onEndHistoryGesture,
   onItemPropChange,
   projectId, timelineId, reviewState, selectedItem, reviewRequest, inspectorOpen, onToggleInspector,
   selectedPreviewStatuses, onSelectedPreviewStatus, slipPreview,
@@ -148,12 +151,14 @@ export const PreviewPanel = memo(function PreviewPanel({
   // Must listen to Remotion's own fullscreenchange: it walks the webkit legacy API in Chrome,
   // The document standard event is not guaranteed to be triggered, the SDK emitter is the real source.
   const [fullscreen, setFullscreen] = useState(false);
-  const transformApi = onSelectItem && onSetItemTransform && onSetItemKeyframe
+  const transformApi = onSelectItem && onSetItemTransform && onSetItemKeyframe && onRemoveItemKeyframe && onSeek
     && onBeginHistoryGesture && onEndHistoryGesture
     ? {
       onSelectItem,
       onSetItemTransform,
       onSetItemKeyframe,
+      onRemoveItemKeyframe,
+      onSeek,
       onBeginHistoryGesture,
       onEndHistoryGesture,
       onItemPropChange,

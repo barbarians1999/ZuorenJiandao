@@ -8,7 +8,7 @@ import {
   type RefObject,
 } from 'react';
 import type { PlayerRef } from '@remotion/player';
-import type { FlexCrop, ClipTransform, KeyframeProp, TimelineItem, TimelineState } from '../../editor/types';
+import type { FlexCrop, ClipTransform, KeyframeEasing, KeyframeProp, TimelineItem, TimelineState } from '../../editor/types';
 import { t } from '../../i18n/locale';
 import {
   cyclePreviewCandidate,
@@ -30,13 +30,16 @@ import {
 } from './previewTransform';
 import { canPreviewTextEdit, previewTextEditFields } from './previewTextEdit';
 import { PreviewTextEditBar } from './PreviewTextEditBar';
+import { MotionPathOverlay } from './MotionPathOverlay';
 
 export interface PreviewTransformOverlayProps {
   state: TimelineState;
   playerRef: RefObject<PlayerRef | null>;
   onSelectItem: (id: string | null) => void;
   onSetItemTransform: (id: string, patch: ClipTransform) => void;
-  onSetItemKeyframe: (id: string, prop: KeyframeProp, localFrame: number, value: number) => void;
+  onSetItemKeyframe: (id: string, prop: KeyframeProp, localFrame: number, value: number, easing?: KeyframeEasing) => void;
+  onRemoveItemKeyframe?: (id: string, prop: KeyframeProp, localFrame: number) => void;
+  onSeek?: (frame: number) => void;
   onBeginHistoryGesture: () => void;
   onEndHistoryGesture: () => void;
   /** Live text style edits for text / text-like MG clips. */
@@ -102,6 +105,8 @@ export function PreviewTransformOverlay({
   onSelectItem,
   onSetItemTransform,
   onSetItemKeyframe,
+  onRemoveItemKeyframe,
+  onSeek,
   onBeginHistoryGesture,
   onEndHistoryGesture,
   onItemPropChange,
@@ -286,6 +291,7 @@ export function PreviewTransformOverlay({
   }, [queueValues, state]);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('[data-motion-path-interactive]'))) return;
     if (event.button !== 0 || gestureRef.current) return;
     const root = rootRef.current;
     if (!root) return;
@@ -477,6 +483,17 @@ export function PreviewTransformOverlay({
               />
             )}
         </>
+      )}
+      {selection && selectedCandidate && onRemoveItemKeyframe && onSeek && (
+        <MotionPathOverlay
+          state={state} item={selectedCandidate.item}
+          frame={frame}
+          onSetItemKeyframe={onSetItemKeyframe}
+          onRemoveItemKeyframe={onRemoveItemKeyframe}
+          onSeek={onSeek}
+          onBeginHistoryGesture={onBeginHistoryGesture}
+          onEndHistoryGesture={onEndHistoryGesture}
+        />
       )}
     </div>
   );
