@@ -16,9 +16,9 @@ function vector(seed: number): number[] {
 
 async function main(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'occ-semantic-vec-verify-'));
-  const previousHome = process.env.HOME;
+  const previousDataDir = process.env.OPENCHATCUT_DATA_DIR;
   const previousEnv = process.env.OPENCHATCUT_SQLITE_STORE;
-  process.env.HOME = root;
+  process.env.OPENCHATCUT_DATA_DIR = root;
   process.env.OPENCHATCUT_SQLITE_STORE = '1';
 
   try {
@@ -100,8 +100,12 @@ async function main(): Promise<void> {
   } finally {
     if (previousEnv === undefined) delete process.env.OPENCHATCUT_SQLITE_STORE;
     else process.env.OPENCHATCUT_SQLITE_STORE = previousEnv;
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
+    if (previousDataDir === undefined) delete process.env.OPENCHATCUT_DATA_DIR;
+    else process.env.OPENCHATCUT_DATA_DIR = previousDataDir;
+    const { resetSemanticVectorsForTests } = await import('./semantic-vectors.ts');
+    resetSemanticVectorsForTests();
+    const { resetSqliteStoreForTests } = await import('./sqlite-store.ts');
+    resetSqliteStoreForTests();
     rmSync(root, { recursive: true, force: true });
   }
 }

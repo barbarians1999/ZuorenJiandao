@@ -8,8 +8,8 @@ import { join } from 'node:path';
 
 async function main(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'occ-fts-verify-'));
-  const previousHome = process.env.HOME;
-  process.env.HOME = root;
+  const previousDataDir = process.env.OPENCHATCUT_DATA_DIR;
+  process.env.OPENCHATCUT_DATA_DIR = root;
   process.env.OPENCHATCUT_SQLITE_STORE = '1';
 
   try {
@@ -113,8 +113,12 @@ async function main(): Promise<void> {
 
     console.log('✓ fulltext-search verify: tokenizer/index/search/ranking/scoping/delete-sync/rebuild all passed');
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
+    if (previousDataDir === undefined) delete process.env.OPENCHATCUT_DATA_DIR;
+    else process.env.OPENCHATCUT_DATA_DIR = previousDataDir;
+    const { resetSearchForTests } = await import('./fulltext-search.ts');
+    resetSearchForTests();
+    const { resetSqliteStoreForTests } = await import('./sqlite-store.ts');
+    resetSqliteStoreForTests();
     rmSync(root, { recursive: true, force: true });
   }
 }

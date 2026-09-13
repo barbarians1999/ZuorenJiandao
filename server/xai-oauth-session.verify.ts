@@ -2,15 +2,24 @@
 // and the persisted session file round trip. Runs against a throwaway HOME so
 // the real Grok CLI session and the real profile files are never touched.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const throwawayHome = mkdtempSync(join(tmpdir(), 'xai-oauth-verify-'));
+const throwawayData = join(throwawayHome, 'data');
+const previousHome = process.env.HOME;
+const previousUserProfile = process.env.USERPROFILE;
+const previousDataDir = process.env.OPENCHATCUT_DATA_DIR;
 process.env.HOME = throwawayHome;
+process.env.USERPROFILE = throwawayHome;
+process.env.OPENCHATCUT_DATA_DIR = throwawayData;
 // Intentionally dynamic: the module resolves its profile paths (HOME-rooted)
 // at import time, so the throwaway HOME must exist before it loads.
 const mod = await import('./xai-oauth-session.ts');
+const { runtimeProfile } = await import('./runtime-profile.ts');
+assert.equal(runtimeProfile().rootDir, throwawayData);
+const sessionFile = join(runtimeProfile().rootDir, 'xai-oauth-session.json');
 const {
   parseGrokAuthJson, refreshTokens, persistSession, readSessionFile, dropSessionFile,
   importXaiOauthFromCli, logoutXaiOauth, xaiOauthAccessToken, xaiOauthStatus,
@@ -106,7 +115,7 @@ const reloaded = readSessionFile();
 assert.ok(reloaded, 'persisted session reads back');
 assert.equal(reloaded.access, 'at-jwt-2');
 assert.equal(reloaded.clientId, CLIENT_ID);
-writeFileSync(join(throwawayHome, '.openchatcut', 'xai-oauth-session.json'), '{broken', 'utf8');
+writeFileSync(sessionFile, '{broken', 'utf8');
 assert.equal(readSessionFile(), null, 'corrupt file reads as no session');
 dropSessionFile();
 
@@ -158,5 +167,13 @@ assert.equal(xaiOauthStatus().found, false);
 assert.equal(readSessionFile(), null);
 
 globalThis.fetch = originalFetch;
+
+if (previousHome === undefined) delete process.env.HOME;
+else process.env.HOME = previousHome;
+if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+else process.env.USERPROFILE = previousUserProfile;
+if (previousDataDir === undefined) delete process.env.OPENCHATCUT_DATA_DIR;
+else process.env.OPENCHATCUT_DATA_DIR = previousDataDir;
+rmSync(throwawayHome, { recursive: true, force: true });
 
 console.log('xai-oauth-session.verify: parsing + refresh shape + session file OK');

@@ -7,9 +7,11 @@ const root = mkdtempSync(join(tmpdir(), 'occ-embedded-project-store-'));
 const previousHome = process.env.HOME;
 const previousAppData = process.env.APPDATA;
 const previousLocalAppData = process.env.LOCALAPPDATA;
+const previousDataDir = process.env.OPENCHATCUT_DATA_DIR;
 process.env.HOME = root;
 process.env.APPDATA = root;
 process.env.LOCALAPPDATA = root;
+process.env.OPENCHATCUT_DATA_DIR = join(root, 'data');
 
 try {
   const distDir = join(root, 'dist');
@@ -78,6 +80,14 @@ try {
   else process.env.APPDATA = previousAppData;
   if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA;
   else process.env.LOCALAPPDATA = previousLocalAppData;
+  if (previousDataDir === undefined) delete process.env.OPENCHATCUT_DATA_DIR;
+  else process.env.OPENCHATCUT_DATA_DIR = previousDataDir;
+  const { resetSearchForTests } = await import('../server/storage/fulltext-search.ts');
+  resetSearchForTests();
+  const { resetSemanticVectorsForTests } = await import('../server/storage/semantic-vectors.ts');
+  resetSemanticVectorsForTests();
+  const { resetSqliteStoreForTests } = await import('../server/storage/sqlite-store.ts');
+  resetSqliteStoreForTests();
   rmSync(root, { recursive: true, force: true });
 }
 
