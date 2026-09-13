@@ -13,6 +13,15 @@ for (const step of plan) {
   ]);
 }
 
+const localElectron = 'C:\\verified-cache\\electron-v43.1.1-win32-x64.zip';
+const offlinePlan = windowsPackagePlan({ node: 'node.exe', electronDist: localElectron });
+for (const step of offlinePlan) {
+  assert.ok(
+    step.args.includes(`--config.electronDist=${localElectron}`),
+    'a verified local Electron archive must bypass release-network downloads',
+  );
+}
+
 const configSource = await readFile(new URL('../config/electron-builder.config.mjs', import.meta.url), 'utf8');
 assert.match(configSource, /appId:\s*'org\.zuoren\.jiandao'/);
 assert.match(configSource, /productName:\s*isWindowsTarget \? '左人剪刀' : 'OpenChatCut'/);

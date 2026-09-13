@@ -4,11 +4,20 @@ import { pathToFileURL } from 'node:url';
 const TARGET = 'win32-x64';
 const KINDS = ['nsis', 'portable'];
 
-export function windowsPackagePlan({ node = process.execPath, cli = 'node_modules/electron-builder/cli.js' } = {}) {
+export function windowsPackagePlan({
+  node = process.execPath,
+  cli = 'node_modules/electron-builder/cli.js',
+  electronDist = process.env.CC_ELECTRON_DIST?.trim() || undefined,
+} = {}) {
   return KINDS.map((kind) => ({
     kind,
     command: node,
-    args: [cli, '--config', 'config/electron-builder.config.mjs', '--win', '--x64', '--publish', 'never'],
+    args: [
+      cli,
+      '--config', 'config/electron-builder.config.mjs',
+      ...(electronDist ? [`--config.electronDist=${electronDist}`] : []),
+      '--win', '--x64', '--publish', 'never',
+    ],
     env: { CC_EB_TARGET: TARGET, CC_EB_WIN_KIND: kind },
   }));
 }
