@@ -1,13 +1,12 @@
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const ffmpegStatic = require('ffmpeg-static') as string | null;
 const ffprobeInstaller = require('@ffprobe-installer/ffprobe') as { path?: string };
 
-const ASAR_SEGMENT = `${sep}app.asar${sep}`;
-const UNPACKED_SEGMENT = `${sep}app.asar.unpacked${sep}`;
+const ASAR_SEGMENT = /[\\/]app\.asar[\\/]/;
 
 /**
  * The on-disk twin of a path inside the packaged app archive.
@@ -15,14 +14,19 @@ const UNPACKED_SEGMENT = `${sep}app.asar.unpacked${sep}`;
  * Electron's fs shim reads files inside app.asar transparently, but nothing can be
  * executed or dlopen'ed from there: spawn needs a real file. electron-builder keeps the
  * modules listed in asarUnpack as real files under app.asar.unpacked with the same
- * layout, so a resolved path is rewritten to that twin when it exists. Dev builds and
- * paths outside the archive come back unchanged.
+ * layout, so a resolved archive path is always rewritten to that twin. Callers can then
+ * report a missing packaged binary at its real disk location. Dev builds and paths
+ * outside the archive come back unchanged.
  */
 export function unpackedPath(path: string): string {
-  const index = path.indexOf(ASAR_SEGMENT);
-  if (index < 0) return path;
-  const twin = `${path.slice(0, index)}${UNPACKED_SEGMENT}${path.slice(index + ASAR_SEGMENT.length)}`;
-  return existsSync(twin) ? twin : path;
+  const match = ASAR_SEGMENT.exec(path);
+  if (!match || match.index === undefined) return path;
+  const segment = match[0].replace('app.asar', 'app.asar.unpacked');
+  // Return the on-disk twin even when it is missing.  Callers use the same
+  // resolved path for preflight and spawn, so a missing file is reported at
+  // the location electron-builder promised to create rather than attempting
+  // to execute a path inside the read-only archive.
+  return `${path.slice(0, match.index)}${segment}${path.slice(match.index + match[0].length)}`;
 }
 
 /**

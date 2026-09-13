@@ -33,13 +33,15 @@
 ## 本机验收结果
 
 - 两个 Windows 0.2.15 EXE 均成功生成，产品元数据为“左人剪刀”/`0.2.15`。
+- 修复了成品内 FFmpeg 从 `app.asar` 到 `app.asar.unpacked` 的路径解析；最终包内 `ffmpeg.exe` 位于可执行目录，大小为 82,797,568 字节。
 - 包内 `whisper-cli.exe --help` 实测退出码 0，能加载 CPU 后端；安装版、便携版和 `win-unpacked` 均包含 Whisper 运行时与核心品牌资源。
+- `win-unpacked` 使用独立临时用户目录进行完整渲染冒烟：桌面桥接、本地服务和实际单帧渲染均通过，程序输出 `SMOKE-OK` 并以退出码 0 结束。
 - 已通过 i18n、oxlint、TypeScript、Vite build、组件、桌面窗口、工具栏提示和 Windows 打包配置自检；最终 `git diff --check` 通过。
 - 本轮沿用已验证的 0.2.14 完整工程/导出/两人往返证据；0.2.15 本轮改动集中在界面、品牌和 i18n，并完成包内资源及 Whisper 冷启动自检。
 
 ## Electron 运行时说明
 
-成品使用经 SHA256 核验的 Electron 43.1.1 ZIP：`b4e9995cd3f65785eb8818276aa9020f3165ab11da41b3c762616d4a0ad8c7ad`。源码开发依赖声明为 Electron 43.7.0，下一版对齐；请不要将成品运行时写成 43.7.0。
+成品使用经 SHA256 核验的 Electron 43.1.1 ZIP：`b4e9995cd3f65785eb8818276aa9020f3165ab11da41b3c762616d4a0ad8c7ad`。当前本地 `node_modules` 中的开发运行时为 43.7.0；`package.json` 声明 `^43.1.1`，npm 锁文件锁定 43.1.1。请不要将本版成品运行时写成 43.7.0。
 
 ## 开源与校验
 
@@ -52,6 +54,7 @@
 ## 当前限制
 
 - 安装包没有商业代码签名证书，Windows 可能显示 SmartScreen 提示。
+- 当前 Codex 受控执行环境的 `CreateProcess` 策略拦截了安装器启动，因此本轮没有伪称完成真实安装/卸载；最终应用负载已通过同批次 `win-unpacked` 完整渲染冒烟。
 - 本地字幕模型首次需要下载；安装包只携带经哈希核验的 Whisper 运行时，不携带数百 MB 至 1 GB 的模型。
 - Tiny 适合低配置和快速草稿；正式中文口播应使用 Base/Small 并人工检查。
 - 0.2.15 尚未重新跑 40 分钟完整工程；需要长片交付时请先用短片段检查素材、字幕和导出目录。

@@ -9,10 +9,14 @@ const root = mkdtempSync(join(tmpdir(), 'media-binaries-'));
 try {
   const archived = join(root, 'Resources', 'app.asar', 'node_modules', 'ffmpeg-static', 'ffmpeg');
   const twin = join(root, 'Resources', 'app.asar.unpacked', 'node_modules', 'ffmpeg-static', 'ffmpeg');
-  assert.equal(unpackedPath(archived), archived, 'without an unpacked twin the path is left alone');
+  assert.equal(unpackedPath(archived), twin, 'an archive path resolves to its on-disk twin even before extraction');
   mkdirSync(join(root, 'Resources', 'app.asar.unpacked', 'node_modules', 'ffmpeg-static'), { recursive: true });
   writeFileSync(twin, 'binary');
   assert.equal(unpackedPath(archived), twin, 'a path inside app.asar is rewritten to its app.asar.unpacked twin');
+  const archivedForward = archived.replaceAll(sep, '/');
+  const twinForward = twin.replaceAll(sep, '/');
+  assert.equal(unpackedPath(archivedForward), twinForward, 'forward-slash asar paths are rewritten too');
+  assert.equal(unpackedPath(twin), twin, 'an already-unpacked path is not rewritten twice');
   const plain = join(root, 'dev', 'node_modules', 'ffmpeg-static', 'ffmpeg');
   assert.equal(unpackedPath(plain), plain, 'dev paths are untouched');
   const lookalike = join(root, 'my-app.asar-notes', 'ffmpeg');

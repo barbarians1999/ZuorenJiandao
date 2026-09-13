@@ -1,2 +1,2 @@
-4a9896155d6e42cdc76c9a356403cdcb7368811d513b093cce9e1fbe0b051e41  ZuorenJiandao-Setup-0.2.15-x64.exe
-033a25a2485fdd22b78ba2ea956a156831564ec854bcc6942e4cacb418f4297a  ZuorenJiandao-Portable-0.2.15-x64.exe
+6b869ad40571a4c10d05de81599b0522dd2e3881f505e726c5637b7c7d606e5d  ZuorenJiandao-Setup-0.2.15-x64.exe
+8edcb7718ec1ccc57dfe2921b6d5c5a556c55f2674578f96611a56395bd3fbe5  ZuorenJiandao-Portable-0.2.15-x64.exe
