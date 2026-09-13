@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { TimelineState } from '../editor/types';
 
 function makeState(): TimelineState {
@@ -33,11 +34,11 @@ function makeState(): TimelineState {
 
 async function main(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'occ-export-reach-'));
-  const previousHome = process.env.HOME;
-  process.env.HOME = root;
+  const previousDataDir = process.env.OPENCHATCUT_DATA_DIR;
+  process.env.OPENCHATCUT_DATA_DIR = root;
   try {
-    // Real media on disk: /media/uploads maps to <root>/.openchatcut/media/uploads.
-    const uploads = join(root, '.openchatcut', 'media', 'uploads');
+    // Real media on disk: /media/uploads maps to <data-root>/media/uploads.
+    const uploads = join(root, 'media', 'uploads');
     mkdirSync(uploads, { recursive: true });
     writeFileSync(join(uploads, 'main-clip.mp4'), Buffer.from('fakemp4'));
     writeFileSync(join(uploads, 'music-bed.mp3'), Buffer.from('fakemp3'));
@@ -59,7 +60,7 @@ async function main(): Promise<void> {
     const srcs = [...xml.matchAll(/src="([^"]+)"/g)].map((m) => m[1]!).filter((s) => s.startsWith('file://'));
     assert.equal(srcs.length, 2, 'exactly the two media clips, both file:// URLs');
     for (const src of srcs) {
-      const path = src.replace(/^file:\/\//, '');
+      const path = fileURLToPath(src);
       assert.ok(existsSync(path), `NLE must find the media file at ${path}`);
     }
 
@@ -77,21 +78,21 @@ async function main(): Promise<void> {
       .map((m) => m[1]!).filter((s) => s.startsWith('file://'));
     assert.equal(resolveSrcs.length, 2, 'Resolve export keeps both media refs');
     for (const src of resolveSrcs) {
-      assert.ok(existsSync(src.replace(/^file:\/\//, '')), `Resolve media must exist: ${src}`);
+      assert.ok(existsSync(fileURLToPath(src)), `Resolve media must exist: ${src}`);
     }
     assert.ok(!/src="\/media\/uploads\//.test(resolveXml), 'Resolve export: no relative upload URL');
 
     // ── 4. resolveAssetSrc standalone contract ──
     const resolved = resolveAssetSrc('/media/uploads/main-clip.mp4', mediaDir);
     assert.ok(resolved.startsWith('file://'), 'upload URL must become a file:// URL');
-    assert.ok(existsSync(resolved.slice('file://'.length)), 'resolved asset must exist on disk');
+    assert.ok(existsSync(fileURLToPath(resolved)), 'resolved asset must exist on disk');
     assert.equal(resolveAssetSrc('https://cdn.example/x.mp4'), 'https://cdn.example/x.mp4', 'remote stays remote');
     assert.equal(resolveAssetSrc('blob:http://localhost/id'), 'blob:http://localhost/id', 'blob stays blob');
 
     console.log('✓ export reachability verify: real FCPXML → every media file exists on disk (NLE relink-ready)');
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
+    if (previousDataDir === undefined) delete process.env.OPENCHATCUT_DATA_DIR;
+    else process.env.OPENCHATCUT_DATA_DIR = previousDataDir;
     rmSync(root, { recursive: true, force: true });
   }
 }
