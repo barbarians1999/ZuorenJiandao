@@ -3039,6 +3039,30 @@
       }
     },
     {
+      "name": "export_shared_shot_plan",
+      "description": "Export the active timeline as narrated-video-shot-plan/v1 for the narration editing, pause editing, and MG animation skills. One explicitly resolved primary video track defines SH001… shot boundaries; overlays, captions, MG, images, text, and markers never create a second timeline. Pass primaryTrackId when more than one track could be the main picture. The JSON download contains portable media identities, sentence continuity warnings, a content-addressed timelineVersion, and a plan fingerprint.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "primaryTrackId": {
+            "type": "string",
+            "description": "Stable video track id or current alias such as V1. Required only when automatic selection is ambiguous."
+          },
+          "guardFrames": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 120,
+            "description": "Transparent-animation safety margin. Defaults to 6 frames."
+          },
+          "filename": {
+            "type": "string",
+            "description": "Optional JSON download filename."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "verify_export",
       "description": "Quality-check a COMPLETED video export before delivery. Pass renderId from submit_render_job/track_export, or a /media/uploads/ export src. Checks stream presence, duration, resolution, frame rate, black/frozen frames, long silence, and audio peaks. Returns a structured issue list plus a labeled before/after contact sheet around timeline edit points. Run after every important export; inspect warnings and fix the timeline before re-exporting when needed.",
       "input_schema": {

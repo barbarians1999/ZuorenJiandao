@@ -114,9 +114,12 @@ const ROUTING_GROUPS: readonly RoutingGroup[] = [
     ],
   },
   {
-    requestKeywords: ['export', 'render', 'xml', 'prores', 'premiere', 'resolve', '导出', '渲染', '成片'],
+    requestKeywords: [
+      'export', 'render', 'shot plan', 'storyboard', 'xml', 'prores', 'premiere', 'resolve',
+      '导出', '渲染', '成片', '分镜', '共享分镜',
+    ],
     tools: [
-      'submit_export', 'submit_render_job', 'track_export', 'read_export_history',
+      'submit_export', 'submit_render_job', 'track_export', 'read_export_history', 'export_shared_shot_plan',
       'verify_export', 'download_media', 'export_motion_graphic_prores',
     ],
   },

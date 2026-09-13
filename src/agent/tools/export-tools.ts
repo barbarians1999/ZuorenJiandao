@@ -14,6 +14,9 @@ import {
 } from '../../export/agentExportTracking';
 import type { ExportJobResult } from '../../export/exportWorkflowTypes';
 import type { ProjectDoc } from '../../editor/types';
+import { downloadBlob } from '../../export/exportFiles';
+import { buildSharedShotPlan, SharedShotPlanError } from '../../export/sharedShotPlan';
+import { sanitizeFileName } from '../../../shared/file-name';
 
 // ═════════════════════════════════════ ══════════════════════════════════════
 // Asynchronous rendering job tool
@@ -258,6 +261,47 @@ async function submitRenderJob(args: Args, ctx: AgentContext): Promise<unknown> 
   }
 }
 
+async function exportSharedShotPlan(args: Args, ctx: AgentContext): Promise<unknown> {
+  try {
+    const plan = await buildSharedShotPlan({
+      doc: ctx.getDoc(),
+      projectId: ctx.getProjectId?.(),
+      primaryTrackId: typeof args.primaryTrackId === 'string' ? args.primaryTrackId : undefined,
+      guardFrames: typeof args.guardFrames === 'number' ? args.guardFrames : undefined,
+    });
+    if (typeof document === 'undefined') {
+      return { error: '共享分镜计划只能从已打开的桌面编辑器下载', code: 'DOWNLOAD_UNAVAILABLE' };
+    }
+    const requested = typeof args.filename === 'string' ? args.filename.trim() : '';
+    const baseName = sanitizeFileName(requested || `${plan.project.title}-shared-shot-plan.json`, 'shared-shot-plan.json');
+    const filename = baseName.toLowerCase().endsWith('.json') ? baseName : `${baseName}.json`;
+    downloadBlob(
+      new Blob([`${JSON.stringify(plan, null, 2)}\n`], { type: 'application/json;charset=utf-8' }),
+      filename,
+    );
+    return {
+      ok: true,
+      downloaded: true,
+      filename,
+      schemaVersion: plan.schema_version,
+      timelineId: plan.project.timeline_id,
+      primaryTrackId: plan.project.primary_track_id,
+      primaryTrackAlias: plan.project.primary_track_alias,
+      timelineVersion: plan.project.timeline_version,
+      planFingerprint: plan.plan_fingerprint,
+      shotCount: plan.shots.length,
+      warningCount: plan.validation.warnings.length,
+      warnings: plan.validation.warnings,
+      next: 'Use this exact JSON with the narration edit, pause edit, and MG animation skills. Regenerate it after any active-timeline edit; a changed timelineVersion invalidates older animation manifests.',
+    };
+  } catch (error) {
+    if (error instanceof SharedShotPlanError) {
+      return { error: error.message, code: error.code, details: error.details };
+    }
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /** Comma separated ids/prefixes → complete list of renderIds. Prefix parses the session submission record; unknown
  *  The token is transparently transmitted to the server as it is (it may be the complete ID obtained elsewhere). Ambiguous prefixes report clarity errors.*/
 function resolveRenderIds(raw: string): { ids: string[] } | { error: string } {
@@ -389,6 +433,8 @@ export async function execExportTool(name: string, args: Args, ctx: AgentContext
       return submitRenderJob(args, ctx);
     case 'track_export':
       return trackExport(args, ctx);
+    case 'export_shared_shot_plan':
+      return exportSharedShotPlan(args, ctx);
     case 'read_export_history': {
       const requested = typeof args.limit === 'number' && Number.isFinite(args.limit) ? Math.floor(args.limit) : 20;
       const limit = Math.min(Math.max(requested, 1), 100);

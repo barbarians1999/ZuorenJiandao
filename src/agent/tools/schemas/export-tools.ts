@@ -55,6 +55,23 @@ export const EXPORT_TOOL_SCHEMAS: AgentToolSchema[] = [
       },
     },
   },
+  {
+    name: 'export_shared_shot_plan',
+    description: [
+      'Export the active timeline as narrated-video-shot-plan/v1 for the narration editing, pause editing, and MG animation skills.',
+      'One explicitly resolved primary video track defines SH001… shot boundaries; overlays, captions, MG, images, text, and markers never create a second timeline.',
+      'Pass primaryTrackId when more than one track could be the main picture. The JSON download contains portable media identities, sentence continuity warnings, a content-addressed timelineVersion, and a plan fingerprint.',
+    ].join(' '),
+    input_schema: {
+      type: 'object',
+      properties: {
+        primaryTrackId: { type: 'string', description: 'Stable video track id or current alias such as V1. Required only when automatic selection is ambiguous.' },
+        guardFrames: { type: 'integer', minimum: 0, maximum: 120, description: 'Transparent-animation safety margin. Defaults to 6 frames.' },
+        filename: { type: 'string', description: 'Optional JSON download filename.' },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 export const EXPORT_TOOL_NAMES = new Set(EXPORT_TOOL_SCHEMAS.map((t) => t.name));

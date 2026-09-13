@@ -85,6 +85,10 @@ function verifyPoliciesAndSchemas(): void {
   for (const schema of TOOL_SCHEMAS) assert.ok(policyForTool(schema.name));
   assert.equal(policyForTool('read_agent_artifact').effect, 'read');
   assert.equal(policyForTool('submit_render_job').recovery, 'outcome_unknown');
+  assert.deepEqual(policyForTool('export_shared_shot_plan'), {
+    effect: 'persistent_local',
+    recovery: 'idempotent',
+  });
   assert.equal(validateAgentToolInvocation(aspectSchema, { ratio: 'invalid' }, [aspectSchema]).ok, false);
   assert.equal(validateAgentToolInvocation(aspectSchema, { ratio: '9:16' }, []).ok, false);
   const uriSchema: AgentToolSchema = {

@@ -22,6 +22,7 @@ const catalog = [
   schema('edit_item'),
   schema('edit_track'),
   schema('submit_export'),
+  schema('export_shared_shot_plan'),
   schema('verify_export'),
   schema('web_crawl'),
   schema('list_audio'),
@@ -97,10 +98,18 @@ const routedAndExport = new ToolActivation(catalog, [
   { role: 'user', content: '准备导出 ProRes 成片' },
 ]);
 assert.ok(routedAndExport.names().includes('submit_export'));
+assert.ok(routedAndExport.names().includes('export_shared_shot_plan'));
 assert.equal(
   routedAndExport.names().includes('edit_item'),
   false,
   'semantic routes follow only the current request',
+);
+const sharedShotPlanRouted = new ToolActivation(catalog, [
+  { role: 'user', content: '导出共享分镜给 MG 动画 Skill' },
+]);
+assert.ok(
+  sharedShotPlanRouted.names().includes('export_shared_shot_plan'),
+  'shared-shot-plan requests expose the canonical plan exporter',
 );
 const routedContinuation = new ToolActivation(catalog, [
   { role: 'user', content: '把 V1 轨道片段移动并剪辑一下' },
