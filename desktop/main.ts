@@ -71,6 +71,7 @@ import {
 } from './export-directory-state.ts';
 import { runDesktopSmokeProbe } from './smoke-probe.ts';
 import { exitSmoke, installSmokeWatchdog } from './smoke-lifecycle.ts';
+import { packagedWhisperCliPath, probePackagedWhisper, runtimeSelfTestRequested } from './runtime-self-test.ts';
 import { runtimeProfile } from '../server/runtime-profile.ts';
 import {
   applyWindowsGpuCrashFallback,
@@ -90,6 +91,7 @@ const PRELOAD_PATH = join(dirname(fileURLToPath(import.meta.url)), 'preload.cjs'
 // CC_SMOKE_RENDER=1 adds a true rendering probe (packaged version acceptance: pre-bundled + full browser link included in the package).
 const SMOKE = process.env.CC_SMOKE === '1';
 const SMOKE_RENDER = process.env.CC_SMOKE_RENDER === '1';
+const RUNTIME_SELF_TEST = runtimeSelfTestRequested(process.argv);
 const SMOKE_TIMEOUT_MS = SMOKE_RENDER ? 240_000 : 90_000;
 let mainWindow: BrowserWindow | null = null;
 
@@ -342,6 +344,17 @@ async function boot(): Promise<void> {
       userDataPath: app.getPath('userData'),
       version: app.getVersion(),
     });
+    if (RUNTIME_SELF_TEST) {
+      const whisperPath = packagedWhisperCliPath(process.resourcesPath, process.platform, process.arch);
+      const result = await probePackagedWhisper(process.resourcesPath, whisperPath);
+      console.log(`RUNTIME-SELF-TEST ${JSON.stringify(result)}`);
+      if (!result.ok) throw new Error(result.problem ?? 'packaged Whisper self-test failed');
+      console.log('RUNTIME-SELF-TEST-OK');
+      exitSmoke(0);
+      return;
+    }
+  } else if (RUNTIME_SELF_TEST) {
+    throw new Error('--runtime-self-test must be run from an installed or portable package');
   }
   const devOrigin = resolveDesktopDevOrigin({
     configuredDevUrl: process.env.CC_DESKTOP_DEV_URL,
@@ -357,6 +370,7 @@ async function boot(): Promise<void> {
       packaged: app.isPackaged,
       smoke: SMOKE,
       platform: process.platform,
+      allowPrivateUpdates: process.env.CC_ENABLE_PRIVATE_UPDATES === '1',
     }),
   });
   installDirectoryWatchIpc(origin);
@@ -414,7 +428,7 @@ async function boot(): Promise<void> {
     ...initialBounds,
     show: !SMOKE,
     backgroundColor: '#111111',
-    title: 'OpenChatCut',
+    title: '左人剪刀',
     ...desktopWindowFrameOptions(),
     webPreferences: {
       preload: PRELOAD_PATH,
@@ -450,7 +464,9 @@ async function boot(): Promise<void> {
 
 app.on('window-all-closed', () => app.quit());
 
-const hasSingleInstanceLock = requestProfileScopedSingleInstanceLock(app, runtimeProfile());
+const hasSingleInstanceLock = RUNTIME_SELF_TEST
+  ? true
+  : requestProfileScopedSingleInstanceLock(app, runtimeProfile());
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
@@ -461,7 +477,7 @@ if (!hasSingleInstanceLock) {
   });
 }
 
-if (SMOKE) {
+if (SMOKE || RUNTIME_SELF_TEST) {
   installSmokeWatchdog(SMOKE_TIMEOUT_MS);
 }
 
@@ -469,12 +485,12 @@ if (hasSingleInstanceLock) {
   boot().catch((err) => {
     const detail = err instanceof Error ? err.message : String(err);
     console.error('[desktop] boot failed:', err instanceof Error ? err.stack ?? err.message : err);
-    if (SMOKE) exitSmoke(1);
+    if (SMOKE || RUNTIME_SELF_TEST) exitSmoke(1);
     else {
       // A packaged double-click has no console: without this the process just
       // disappears and the user has nothing to report (issue #140).
       try {
-        dialog.showErrorBox('OpenChatCut 启动失败 / failed to start', detail);
+        dialog.showErrorBox('左人剪刀 启动失败 / failed to start', detail);
       } catch {
         // A dialog is best effort; the exit below still has to happen.
       }

@@ -1,34 +1,28 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-interface PublishConfig {
-  provider?: string;
-  owner?: string;
-  repo?: string;
-  channel?: string;
-}
-
 interface BuilderConfig {
-  publish?: PublishConfig[];
+  appId?: string;
+  productName?: string;
+  artifactName?: string;
+  publish?: unknown;
+  win?: { target?: string[]; executableName?: string };
   mac?: { target?: string[] };
   files?: string[];
 }
 
-async function configFor(target: string): Promise<BuilderConfig> {
+async function configFor(target: string, kind?: string): Promise<BuilderConfig> {
   // Query isolation is intentional: the config reads CC_EB_TARGET once at module evaluation.
   process.env.CC_EB_TARGET = target;
-  const moduleUrl = new URL(`../config/electron-builder.config.mjs?target=${target}`, import.meta.url);
+  if (kind) process.env.CC_EB_WIN_KIND = kind;
+  else delete process.env.CC_EB_WIN_KIND;
+  const moduleUrl = new URL(`../config/electron-builder.config.mjs?target=${target}&kind=${kind ?? ''}`, import.meta.url);
   const loaded = await import(moduleUrl.href) as { default: BuilderConfig };
   return loaded.default;
 }
 
 const arm64 = await configFor('darwin-arm64');
-assert.deepEqual(arm64.publish, [{
-  provider: 'github',
-  owner: '0xsline',
-  repo: 'OpenChatCut',
-  channel: 'latest-arm64',
-}]);
+assert.equal(arm64.publish, undefined, 'internal packages must not include upstream publish metadata');
 assert.deepEqual(arm64.mac?.target, ['dmg', 'zip'], 'macOS updates need a zip artifact in addition to the DMG');
 // Both main-process bundles have to ship: the entry imports ./app-main.mjs
 // dynamically, so a package with only the entry fails every launch.
@@ -50,7 +44,7 @@ assert.ok(
 );
 
 const x64 = await configFor('darwin-x64');
-assert.equal(x64.publish?.[0]?.channel, 'latest-x64');
+assert.equal(x64.publish, undefined);
 assert.equal(
   x64.files?.includes('!node_modules/onnxruntime-node/bin/napi-v6/darwin/x64/**'),
   false,
@@ -98,6 +92,15 @@ assert.equal(
 );
 
 const windows = await configFor('win32-x64');
+assert.equal(windows.appId, 'org.zuoren.jiandao');
+assert.equal(windows.productName, '左人剪刀');
+assert.deepEqual(windows.win?.target, ['nsis']);
+assert.equal(windows.win?.executableName, 'ZuorenJiandao');
+assert.equal(windows.artifactName, 'ZuorenJiandao-Setup-${version}-${arch}.${ext}');
+const windowsPortable = await configFor('win32-x64', 'portable');
+assert.deepEqual(windowsPortable.win?.target, ['portable']);
+assert.equal(windowsPortable.artifactName, 'ZuorenJiandao-Portable-${version}-${arch}.${ext}');
+assert.equal(arm64.productName, 'OpenChatCut', 'existing non-Windows packaging paths stay compatible');
 assert.equal(
   windows.files?.includes('!node_modules/sqlite-vec-windows-x64/**'),
   false,
@@ -128,24 +131,18 @@ assert.doesNotMatch(packageJson.scripts['desktop:dist'], /--mac dmg/, 'mac packa
 const windowsDistScript = packageJson.scripts['desktop:dist:win'];
 assert.match(
   windowsDistScript,
-  /spawnSync\(process\.execPath,\['node_modules\/electron-builder\/cli\.js'/,
-  'Windows packaging must launch electron-builder through a cross-platform Node wrapper',
-);
-assert.match(
-  windowsDistScript,
-  /env:\{\.\.\.process\.env,CC_EB_TARGET:'win32-x64'\}/,
-  'Windows packaging must explicitly select win32-x64 filters on every host',
+  /node scripts\/package-windows\.mjs/,
+  'Windows packaging must use the deterministic NSIS + portable wrapper',
 );
 assert.doesNotMatch(
   windowsDistScript,
   /&& electron-builder /,
   'Windows packaging must not invoke electron-builder with host-derived filters',
 );
-assert.match(
-  windowsDistScript,
-  /'--config','config\/electron-builder\.config\.mjs'/,
-  'Windows packaging must pass the categorized electron-builder config path',
-);
+const packageWindowsSource = await readFile(new URL('../scripts/package-windows.mjs', import.meta.url), 'utf8');
+assert.match(packageWindowsSource, /spawnSync/);
+assert.match(packageWindowsSource, /CC_EB_TARGET: TARGET/);
+assert.match(packageWindowsSource, /CC_EB_WIN_KIND: kind/);
 assert.match(
   packageJson.scripts['desktop:dist'],
   /--config config\/electron-builder\.config\.mjs/,

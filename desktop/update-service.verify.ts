@@ -51,8 +51,13 @@ class FakeUpdater extends EventEmitter {
 for (const platform of ['win32', 'linux'] satisfies NodeJS.Platform[]) {
   assert.equal(
     supportsDirectDesktopUpdates({ packaged: true, smoke: false, platform }),
+    false,
+    `${platform} packaged internal builds must keep updates disabled`,
+  );
+  assert.equal(
+    supportsDirectDesktopUpdates({ packaged: true, smoke: false, platform, allowPrivateUpdates: true }),
     true,
-    `${platform} packaged builds must support direct updates`,
+    `${platform} private deployments may opt in to direct updates`,
   );
 }
 assert.equal(

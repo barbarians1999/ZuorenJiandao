@@ -30,9 +30,9 @@ try {
 } catch (error) {
   const detail = error instanceof Error ? error.stack ?? error.message : String(error);
   console.error('[desktop] failed to load the application bundle:', detail);
-  if (process.env.CC_SMOKE !== '1') {
+  if (process.env.CC_SMOKE !== '1' && !process.argv.includes('--runtime-self-test')) {
     try {
-      dialog.showErrorBox('OpenChatCut 启动失败 / failed to start', [
+      dialog.showErrorBox('左人剪刀 启动失败 / failed to start', [
         '无法加载程序主体 / could not load the application bundle:',
         '',
         error instanceof Error ? error.message : String(error),

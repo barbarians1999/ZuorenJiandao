@@ -62,25 +62,25 @@ const keepSqliteVec = TARGET_SQLITE_VEC_PACKAGE[target];
 const sqliteVecFilters = SQLITE_VEC_PACKAGES
   .filter((packageSuffix) => packageSuffix !== keepSqliteVec)
   .map((packageSuffix) => `!node_modules/sqlite-vec-${packageSuffix}/**`);
-const updateChannel = target.includes('arm64') ? 'latest-arm64' : 'latest-x64';
 const hasMacSigningCertificate = Boolean(process.env.CSC_LINK || process.env.CSC_NAME);
+const windowsKind = process.env.CC_EB_WIN_KIND;
+const isWindowsTarget = target.startsWith('win32-');
+const windowsArtifactName = windowsKind === 'portable'
+  ? 'ZuorenJiandao-Portable-${version}-${arch}.${ext}'
+  : 'ZuorenJiandao-Setup-${version}-${arch}.${ext}';
 
 export default {
-  appId: 'dev.openchatcut.app',
-  productName: 'OpenChatCut',
-  artifactName: '${productName}-${version}-${arch}.${ext}',
+  appId: 'org.zuoren.jiandao',
+  productName: isWindowsTarget ? '左人剪刀' : 'OpenChatCut',
+  artifactName: isWindowsTarget
+    ? windowsArtifactName
+    : '${productName}-${version}-${arch}.${ext}',
   directories: { output: 'release' },
   // 7z LZMA maximum compression for the distributable installers (dmg/zip/nsis/AppImage).
   // Trade-off: noticeably slower packaging time in exchange for a smaller final download.
   // The app.asar content itself is handled by the `compression` setting; native binaries
   // (onnxruntime-node, ffmpeg-static, @remotion/compositor, sqlite-vec) stay unpacked per asarUnpack.
   compression: 'maximum',
-  publish: [{
-    provider: 'github',
-    owner: '0xsline',
-    repo: 'OpenChatCut',
-    channel: updateChannel,
-  }],
   files: [
     // Two bundles: the entry (desktop/bootstrap.ts) and the application it
     // imports dynamically (desktop/main.ts). Shipping only the entry would make
@@ -134,7 +134,8 @@ export default {
     ...(hasMacSigningCertificate ? {} : { identity: '-' }),
   },
   win: {
-    target: ['nsis'],
+    target: windowsKind === 'portable' ? ['portable'] : ['nsis'],
+    executableName: 'ZuorenJiandao',
     icon: 'public/openchatcut-icon.png',
   },
   nsis: {

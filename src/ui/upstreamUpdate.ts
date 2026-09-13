@@ -5,6 +5,8 @@ import type {
 
 export const UPSTREAM_LATEST_RELEASE_URL = 'https://api.github.com/repos/0xsline/OpenChatCut/releases/latest';
 export const UPSTREAM_RELEASES_URL = 'https://github.com/0xsline/OpenChatCut/releases/latest';
+/** Internal Windows builds do not contact the upstream update service. */
+export const UPSTREAM_UPDATE_ENABLED = false;
 
 export const CURRENT_APP_VERSION =
   typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
@@ -239,6 +241,7 @@ async function requestWebUpdateCheck(source: CheckSource): Promise<void> {
 }
 
 export async function requestUpstreamUpdateCheck(source: CheckSource = 'manual'): Promise<void> {
+  if (!UPSTREAM_UPDATE_ENABLED) return;
   const desktop = hasDesktopUpdateSupport() ? ensureDesktopUpdateSubscription() : null;
   if (!desktop) return requestWebUpdateCheck(source);
 
@@ -259,6 +262,7 @@ export async function requestUpstreamUpdateCheck(source: CheckSource = 'manual')
 }
 
 export async function requestUpstreamUpdateDownload(): Promise<void> {
+  if (!UPSTREAM_UPDATE_ENABLED) return;
   const desktop = hasDesktopUpdateSupport() ? ensureDesktopUpdateSubscription() : null;
   if (!desktop) {
     openUpstreamReleasePage();
@@ -279,6 +283,7 @@ export async function requestUpstreamUpdateDownload(): Promise<void> {
 }
 
 export async function requestUpstreamUpdateInstall(): Promise<void> {
+  if (!UPSTREAM_UPDATE_ENABLED) return;
   const desktop = hasDesktopUpdateSupport() ? ensureDesktopUpdateSubscription() : null;
   if (!desktop) return;
   try {
@@ -296,11 +301,13 @@ export async function requestUpstreamUpdateInstall(): Promise<void> {
 }
 
 export function openUpstreamReleasePage(): void {
+  if (!UPSTREAM_UPDATE_ENABLED) return;
   if (typeof window === 'undefined') return;
   window.open(UPSTREAM_RELEASES_URL, '_blank', 'noopener,noreferrer');
 }
 
 export function startAutomaticUpstreamUpdateCheck(): void {
+  if (!UPSTREAM_UPDATE_ENABLED) return;
   if (autoCheckStarted) return;
   autoCheckStarted = true;
   void requestUpstreamUpdateCheck('auto');

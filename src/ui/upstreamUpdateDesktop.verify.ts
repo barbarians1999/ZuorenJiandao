@@ -15,6 +15,7 @@ const unsupportedCheck: DesktopUpdateState = {
   currentVersion: '0.1.9',
 };
 let checkState = failedCheck;
+let fetchCalls = 0;
 const updates = {
   getState: async () => {
     await delay(0);
@@ -35,7 +36,10 @@ const updates = {
 Object.defineProperties(globalThis, {
   fetch: {
     configurable: true,
-    value: async () => new Response(JSON.stringify({ tag_name: 'v0.2.0' }), { status: 200 }),
+    value: async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify({ tag_name: 'v0.2.0' }), { status: 200 });
+    },
   },
   window: {
     configurable: true,
@@ -48,24 +52,18 @@ const moduleUrl = new URL('./upstreamUpdate.ts', import.meta.url);
 const updateModule = await import(moduleUrl.href);
 updateModule.startAutomaticUpstreamUpdateCheck();
 await Promise.resolve();
-assert.equal(updateModule.getUpstreamUpdateState().phase, 'error');
+assert.equal(updateModule.getUpstreamUpdateState().phase, 'idle');
 
 await delay(5);
 assert.equal(
   updateModule.getUpstreamUpdateState().phase,
-  'error',
-  'a late initial getState response must not overwrite a newer update event',
+  'idle',
+  'disabled automatic checks must stay idle',
 );
 
 checkState = unsupportedCheck;
 await updateModule.requestUpstreamUpdateCheck('manual');
-assert.equal(updateModule.hasDesktopUpdateSupport(), false);
-const fallbackState = updateModule.getUpstreamUpdateState();
-assert.equal(fallbackState.phase, 'available');
-assert.equal(fallbackState.source, 'manual');
-assert.equal(fallbackState.visible, true);
-assert.equal(fallbackState.phase === 'available' ? fallbackState.latestVersion : undefined, 'v0.2.0');
-const actionModule = await import('./upstreamUpdateAction.ts');
-assert.equal(actionModule.resolveUpstreamUpdateAction(fallbackState, false).command, 'view-release');
+assert.equal(updateModule.getUpstreamUpdateState().phase, 'idle');
+assert.equal(fetchCalls, 0, 'internal builds must not query the upstream GitHub API');
 
-console.log('upstreamUpdateDesktop.verify: race guard and unsupported desktop fallback OK');
+console.log('upstreamUpdateDesktop.verify: disabled automatic and manual upstream checks stay offline');

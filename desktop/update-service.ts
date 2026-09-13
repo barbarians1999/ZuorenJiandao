@@ -14,10 +14,12 @@ export interface DesktopUpdateSupportContext {
   readonly packaged: boolean;
   readonly smoke: boolean;
   readonly platform: NodeJS.Platform;
+  /** Private deployments may opt in explicitly; internal builds stay offline. */
+  readonly allowPrivateUpdates?: boolean;
 }
 
 export function supportsDirectDesktopUpdates(context: DesktopUpdateSupportContext): boolean {
-  if (!context.packaged || context.smoke) return false;
+  if (!context.packaged || context.smoke || !context.allowPrivateUpdates) return false;
   return context.platform === 'win32' || context.platform === 'linux';
 }
 

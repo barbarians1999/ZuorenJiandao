@@ -24,6 +24,7 @@ import {
   formatDisplayVersion,
   getUpstreamUpdateState,
   hasDesktopUpdateSupport,
+  UPSTREAM_UPDATE_ENABLED,
   subscribeUpstreamUpdate,
 } from '../../ui/upstreamUpdate';
 import {
@@ -306,12 +307,18 @@ export function SettingsDialog({ onClose, initialVendor }: { onClose: () => void
             <b style={{ fontSize: 14 }}>{t('设置 · API 密钥')}</b>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <SettingsVersionControl
-              versionLabel={t('当前版本号：{version}', { version: formatDisplayVersion(CURRENT_APP_VERSION) })}
-              actionLabel={updateAction.label}
-              disabled={updateAction.disabled}
-              onAction={() => { runUpstreamUpdateCommand(updateAction.command); }}
-            />
+            {UPSTREAM_UPDATE_ENABLED ? (
+              <SettingsVersionControl
+                versionLabel={t('当前版本号：{version}', { version: formatDisplayVersion(CURRENT_APP_VERSION) })}
+                actionLabel={updateAction.label}
+                disabled={updateAction.disabled}
+                onAction={() => { runUpstreamUpdateCommand(updateAction.command); }}
+              />
+            ) : (
+              <span style={{ color: theme.textDim, fontSize: 11.5, whiteSpace: 'nowrap' }}>
+                {t('当前版本号：{version}', { version: formatDisplayVersion(CURRENT_APP_VERSION) })}
+              </span>
+            )}
             <button type="button" onClick={requestClose} title={t('关闭')} style={iconBtn}><Icon name="x" size={15} /></button>
           </div>
         </header>
