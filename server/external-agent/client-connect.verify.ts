@@ -65,9 +65,15 @@ async function main(): Promise<void> {
     const stubDir = path.join(home, 'bin');
     await mkdir(stubDir, { recursive: true });
     await mkdir(path.join(home, '.codex'), { recursive: true });
-    const stub = path.join(stubDir, 'codex-stub');
-    await writeFile(stub, '#!/bin/sh\necho "$@" >> "$CODEX_HOME/stub-args"\nexit 0\n');
-    await chmod(stub, 0o755);
+    const windows = process.platform === 'win32';
+    const stub = path.join(stubDir, `codex-stub${windows ? '.cmd' : ''}`);
+    await writeFile(
+      stub,
+      windows
+        ? '@echo off\r\n>> "%CODEX_HOME%\\stub-args" echo %~1 %~2 %~3 %~4 %~5 %~6 %~7\r\nexit /b 0\r\n'
+        : '#!/bin/sh\necho "$@" >> "$CODEX_HOME/stub-args"\nexit 0\n',
+    );
+    if (!windows) await chmod(stub, 0o755);
     const codex = await connectExternalClient('codex', ENDPOINT, TOKEN, { baseDir: home, codexBin: stub });
     assert.equal(codex.ok, true);
     if (codex.ok) assert.deepEqual(codex.paths, ['~/.codex/config.toml', '~/.zshrc']);
@@ -85,9 +91,12 @@ async function main(): Promise<void> {
     assert.equal((zshrcSecond.match(/OPENCHATCUT_MCP_TOKEN=/g) ?? []).length, 1, 'no duplicate export');
 
     // 7. Codex CLI failure surfaces as codex-cli-failed.
-    const failStub = path.join(stubDir, 'codex-fail');
-    await writeFile(failStub, '#!/bin/sh\necho boom >&2\nexit 3\n');
-    await chmod(failStub, 0o755);
+    const failStub = path.join(stubDir, `codex-fail${windows ? '.cmd' : ''}`);
+    await writeFile(
+      failStub,
+      windows ? '@echo off\r\n>&2 echo boom\r\nexit /b 3\r\n' : '#!/bin/sh\necho boom >&2\nexit 3\n',
+    );
+    if (!windows) await chmod(failStub, 0o755);
     const codexFail = await connectExternalClient('codex', ENDPOINT, TOKEN, { baseDir: home, codexBin: failStub });
     assert.equal(codexFail.ok, false);
     if (!codexFail.ok) {
@@ -102,7 +111,7 @@ async function main(): Promise<void> {
     assert.equal(badToken.ok, false);
     if (!badToken.ok) assert.equal(badToken.error, 'invalid-token');
   } finally {
-    await rm(home, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
   console.log('✓ client-connect: merges idempotent, broken JSON refused, codex CLI + env var synced');
 }

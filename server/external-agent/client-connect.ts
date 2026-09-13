@@ -91,7 +91,17 @@ async function connectJsonClient(
 
 function runCodex(bin: string, endpoint: string, env: NodeJS.ProcessEnv): Promise<{ code: number | null; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(bin, ['mcp', 'add', 'openchatcut', '--url', endpoint, '--bearer-token-env-var', TOKEN_ENV_VAR], { env });
+    const args = ['mcp', 'add', 'openchatcut', '--url', endpoint, '--bearer-token-env-var', TOKEN_ENV_VAR];
+    const isWindowsShim = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(bin);
+    const executable = isWindowsShim ? (process.env.ComSpec ?? process.env.COMSPEC ?? 'cmd.exe') : bin;
+    const spawnArgs = isWindowsShim
+      ? ['/d', '/s', '/c', `""${bin}" ${args.map((arg) => `"${arg}"`).join(' ')}"`]
+      : args;
+    const child = spawn(executable, spawnArgs, {
+      env,
+      windowsHide: true,
+      windowsVerbatimArguments: isWindowsShim,
+    });
     let stderr = '';
     const timer = setTimeout(() => child.kill('SIGKILL'), 15_000);
     child.stderr.on('data', (chunk: Buffer) => {
