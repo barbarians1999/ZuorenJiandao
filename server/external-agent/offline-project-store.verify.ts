@@ -37,13 +37,16 @@ function entryArray(value: unknown): unknown[] {
 }
 
 const root = await mkdtemp(join(tmpdir(), 'occ-offline-store-'));
-const previousHome = process.env.HOME;
-process.env.HOME = root;
+const previousDataDir = process.env.OPENCHATCUT_DATA_DIR;
+process.env.OPENCHATCUT_DATA_DIR = root;
 
 // Store paths are captured at module evaluation, so known modules load only
-// after HOME points at an isolated directory.
+// after the explicit data root points at a test-owned directory. HOME does not
+// control the Windows profile path and must never be used as the safety fence.
 
 try {
+  const { runtimeProfile } = await import('../runtime-profile.ts');
+  assert.equal(runtimeProfile().rootDir, root);
   const { getStoredEntry, setStoredEntry } = await import('../plugins/project-store.ts');
   const {
     commitOfflineStoredProject,
@@ -291,8 +294,8 @@ try {
   assert.deepEqual((await getStoredEntry(`project:${projectId}`)).value, projectDoc(1000, 1000),
     'browser ownership claimed first fences the stale offline writer');
 } finally {
-  if (previousHome === undefined) delete process.env.HOME;
-  else process.env.HOME = previousHome;
+  if (previousDataDir === undefined) delete process.env.OPENCHATCUT_DATA_DIR;
+  else process.env.OPENCHATCUT_DATA_DIR = previousDataDir;
   await rm(root, { recursive: true, force: true });
 }
 
