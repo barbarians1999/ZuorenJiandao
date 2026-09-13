@@ -3,24 +3,41 @@
 // Boots a REAL node:http server with the project-store plugin middleware and
 // exercises the loopback trust flow: same-origin read → write → migrate →
 // migrate-status, plus the 403 rejections for missing Origin. Isolated via a
-// temporary HOME.
+// a temporary application data root.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import type { AddressInfo } from 'node:net';
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+function assertUnderRoot(root: string, path: string, label: string): void {
+  const rel = relative(root, path);
+  assert.ok(rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel),
+    `${label} must stay under the test root`);
+}
+
 async function main(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'occ-migrate-http-verify-'));
-  const previousHome = process.env.HOME;
-  process.env.HOME = root;
+  const hadPreviousDataDir = Object.hasOwn(process.env, 'OPENCHATCUT_DATA_DIR');
+  const previousDataDir = process.env.OPENCHATCUT_DATA_DIR;
+  process.env.OPENCHATCUT_DATA_DIR = root;
 
-  const serverHandle: { close: () => void } = { close: () => undefined };
+  const serverHandle: { close: () => Promise<void> } = { close: async () => undefined };
+  let resetStore = (): void => undefined;
   try {
     const { projectStorePlugin } = await import('../plugins/project-store-plugin.ts');
+    const { runtimeProfile } = await import('../runtime-profile.ts');
+    const { resetSqliteStoreForTests, storePath } = await import('./sqlite-store.ts');
+    resetStore = resetSqliteStoreForTests;
+    const { importReceiptPath } = await import('./sqlite-migration.ts');
+    const profile = runtimeProfile();
+    assert.equal(profile.rootDir, root, 'the runtime profile must use the test-owned data root');
+    assertUnderRoot(root, profile.projectStore.directory, 'legacy project store');
+    assertUnderRoot(root, storePath(), 'SQLite database');
+    assertUnderRoot(root, importReceiptPath(profile), 'migration receipt');
 
     // Minimal vite-server-shaped stub: the plugin only uses middlewares.use
     // and config.logger.error.
@@ -51,7 +68,9 @@ async function main(): Promise<void> {
     });
     await new Promise<void>((resolve) => app.listen(0, '127.0.0.1', resolve));
     const port = (app.address() as AddressInfo).port;
-    serverHandle.close = () => app.close();
+    serverHandle.close = () => new Promise<void>((resolve, reject) => {
+      app.close((error) => error ? reject(error) : resolve());
+    });
 
     // node:http.request (fetch forbids the Origin header, which the trust
     // checks require for writes).
@@ -121,9 +140,10 @@ async function main(): Promise<void> {
 
     console.log('✓ migrate-http verify: read-status / no-origin 403 / seed / loopback migrate / status-after / idempotent all passed');
   } finally {
-    serverHandle.close();
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
+    await serverHandle.close();
+    resetStore();
+    if (hadPreviousDataDir) process.env.OPENCHATCUT_DATA_DIR = previousDataDir!;
+    else delete process.env.OPENCHATCUT_DATA_DIR;
     rmSync(root, { recursive: true, force: true });
   }
 }

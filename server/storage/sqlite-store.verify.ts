@@ -13,11 +13,17 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { verifyCfcMigrationChecks } from './sqlite-store-cfc.verify-support.ts';
 
 const sha256 = (value: Buffer): string => createHash('sha256').update(value).digest('hex');
+
+function assertUnderRoot(root: string, path: string, label: string): void {
+  const rel = relative(root, path);
+  assert.ok(rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel),
+    `${label} must stay under the test root`);
+}
 
 function replaceSqlite(path: string, rows: Record<string, string>): void {
   rmSync(path, { force: true });
@@ -60,11 +66,12 @@ function readMigrationPhase(path: string): number | null {
 
 async function main(): Promise<void> {
   const home = mkdtempSync(join(tmpdir(), 'occ-sqlite-migration-'));
-  const previousHome = process.env.HOME;
+  const hadPreviousDataDir = Object.hasOwn(process.env, 'OPENCHATCUT_DATA_DIR');
+  const previousDataDir = process.env.OPENCHATCUT_DATA_DIR;
   const previousStore = process.env.OPENCHATCUT_GENERATION_JOB_STORE;
   const previousSwitch = process.env.OPENCHATCUT_SQLITE_STORE;
   const customJobsPath = join(home, 'custom-profile', 'jobs-ledger.json');
-  process.env.HOME = home;
+  process.env.OPENCHATCUT_DATA_DIR = home;
   process.env.OPENCHATCUT_GENERATION_JOB_STORE = customJobsPath;
   delete process.env.OPENCHATCUT_SQLITE_STORE;
 
@@ -92,6 +99,8 @@ async function main(): Promise<void> {
     const { runtimeProfile } = await import('../runtime-profile.ts');
 
     const profile = runtimeProfile();
+    assert.equal(profile.rootDir, home, 'the runtime profile must use the test-owned data root');
+    assertUnderRoot(home, profile.projectStore.directory, 'legacy project store');
     assert.equal(profile.generationJobStore, customJobsPath,
       'the custom runtime-profile ledger must be authoritative');
     mkdirSync(profile.projectStore.directory, { recursive: true });
@@ -117,6 +126,8 @@ async function main(): Promise<void> {
     // Simulate an interrupted older attempt: SQLite contains partial imports,
     // including one key subsequently deleted from authoritative legacy storage.
     const sqlitePath = join(profile.rootDir, 'project-store-v1.sqlite3');
+    assertUnderRoot(home, sqlitePath, 'SQLite database');
+    assertUnderRoot(home, importReceiptPath(profile), 'migration receipt');
     mkdirSync(dirname(sqlitePath), { recursive: true });
     const partial = new DatabaseSync(sqlitePath);
     partial.exec('CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)');
@@ -365,8 +376,8 @@ async function main(): Promise<void> {
       },
     });
   } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
+    if (hadPreviousDataDir) process.env.OPENCHATCUT_DATA_DIR = previousDataDir!;
+    else delete process.env.OPENCHATCUT_DATA_DIR;
     if (previousStore === undefined) delete process.env.OPENCHATCUT_GENERATION_JOB_STORE;
     else process.env.OPENCHATCUT_GENERATION_JOB_STORE = previousStore;
     if (previousSwitch === undefined) delete process.env.OPENCHATCUT_SQLITE_STORE;

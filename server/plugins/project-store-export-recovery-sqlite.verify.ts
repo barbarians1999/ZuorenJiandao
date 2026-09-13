@@ -5,11 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import {
-  executeImmediateExportRecoveryMutation,
-  type ExportRecoveryLeaseInput,
-} from './project-store-export-recovery.ts';
-import { sqliteImmediateTransaction } from '../storage/sqlite-store.ts';
+import type { ExportRecoveryLeaseInput } from './project-store-export-recovery.ts';
 
 const CHILD_MODE = process.env.OPENCHATCUT_EXPORT_RECOVERY_RACE_CHILD === '1';
 const renderId = '11111111-1111-4111-8111-111111111111';
@@ -26,7 +22,11 @@ function claim(ownerInstanceId: string): ExportRecoveryLeaseInput {
   };
 }
 
-function runChild(): void {
+async function runChild(): Promise<void> {
+  const [{ executeImmediateExportRecoveryMutation }, { sqliteImmediateTransaction }] = await Promise.all([
+    import('./project-store-export-recovery.ts'),
+    import('../storage/sqlite-store.ts'),
+  ]);
   process.on('message', (message) => {
     if (message !== 'go') return;
     try {
@@ -67,19 +67,19 @@ function waitForMessage(child: ChildProcess, expected: (value: unknown) => boole
   return promise;
 }
 
-function spawnChild(home: string): ChildProcess {
+function spawnChild(dataRoot: string): ChildProcess {
   return fork(fileURLToPath(import.meta.url), [], {
     env: {
       ...process.env,
-      HOME: home,
+      OPENCHATCUT_DATA_DIR: dataRoot,
       OPENCHATCUT_EXPORT_RECOVERY_RACE_CHILD: '1',
     },
     stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
   });
 }
 
-async function seedRecovery(home: string): Promise<void> {
-  const path = join(home, '.openchatcut', 'project-store-v1.sqlite3');
+async function seedRecovery(dataRoot: string): Promise<void> {
+  const path = join(dataRoot, 'project-store-v1.sqlite3');
   await mkdir(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL; CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);');
@@ -129,7 +129,10 @@ async function runParent(): Promise<void> {
   }
 }
 
-if (CHILD_MODE) runChild();
+if (CHILD_MODE) void runChild().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 else void runParent().catch((error) => {
   console.error(error);
   process.exitCode = 1;
