@@ -12,9 +12,35 @@ import { serveDiskFile } from './media-dir.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'occ-media-stream-check-'));
 const errors: NodeJS.ErrnoException[] = [];
-const app = createMiniConnect((error) => errors.push(error as NodeJS.ErrnoException));
+const errorWaiters = new Set<() => void>();
+const app = createMiniConnect((error) => {
+  errors.push(error as NodeJS.ErrnoException);
+  for (const notify of [...errorWaiters]) notify();
+});
 const content = '0123456789';
 let cancelDone: Promise<unknown> | undefined;
+
+function waitForErrorCount(expected: number, timeoutMs = 2_000): Promise<void> {
+  if (errors.length >= expected) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const check = () => {
+      if (settled || errors.length < expected) return;
+      settled = true;
+      clearTimeout(timeout);
+      errorWaiters.delete(check);
+      resolve();
+    };
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      errorWaiters.delete(check);
+      reject(new Error(`Timed out waiting for ${expected} middleware errors; received ${errors.length}`));
+    }, timeoutMs);
+    errorWaiters.add(check);
+    check();
+  });
+}
 
 function removeOnHeaders(res: ServerResponse, file: string): void {
   const original = res.writeHead.bind(res);
@@ -81,10 +107,13 @@ try {
   assert.ok(svg.headers.get('content-disposition')?.startsWith('attachment;'));
   await svg.text();
   assert.equal(await (await fetch(`${origin}/editor-route`)).text(), '<html>fixture</html>');
-  for (const path of ['/race.mp4', '/race.js']) {
+  for (const [index, path] of ['/race.mp4', '/race.js'].entries()) {
     await assert.rejects(async () => { await (await fetch(origin + path)).text(); });
+    await waitForErrorCount(index + 1);
+    assert.equal(errors.length, index + 1, 'each failed source reaches middleware exactly once');
+    assert.equal(errors[index]?.code, 'ENOENT');
+    assert.equal(errors[index]?.path, join(root, path.slice(1)));
   }
-  assert.deepEqual(errors.map((error) => error.code), ['ENOENT', 'ENOENT'], 'async source errors reach existing middleware catch');
   await new Promise<void>((resolve, reject) => {
     get(`${origin}/cancel.mp4`, (res) => {
       res.once('data', () => { res.destroy(); resolve(); });
