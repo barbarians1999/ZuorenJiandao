@@ -9,6 +9,7 @@ import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 
 import { isSafeUploadName, resolveUploadFile, uploadDir } from '../media-dir.ts';
+import { ffprobeBin } from '../media-binaries.ts';
 import type { MusicAudioFormat } from './music-types.ts';
 // Proxy-aware fetch: attaches the configured outbound proxy (keystore
 // PROXY_URL or HTTPS_PROXY/HTTP_PROXY env) via undici dispatcher.
@@ -29,10 +30,10 @@ export async function musicProviderError(response: Response): Promise<string> {
 
 function probeDuration(file: string): Promise<number> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file]);
+    const child = spawn(ffprobeBin(), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file]);
     let output = '';
     child.stdout.on('data', (data) => { output += String(data); });
-    child.on('error', reject);
+    child.on('error', () => reject(new Error('unable to probe generated music')));
     child.on('close', (code) => {
       const duration = Number(output.trim());
       if (code === 0 && Number.isFinite(duration) && duration > 0) resolvePromise(duration);
