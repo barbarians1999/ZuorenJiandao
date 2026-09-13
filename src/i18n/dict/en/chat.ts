@@ -5,6 +5,12 @@ export default {
   // ── ChatPanel shell ──
   '展开 OpenChatCut Agent': 'Expand OpenChatCut Agent',
   '收起 OpenChatCut Agent': 'Collapse OpenChatCut Agent',
+  '展开 Codex 剪辑助手': 'Expand Codex editing assistant',
+  '收起 Codex 剪辑助手': 'Collapse Codex editing assistant',
+  'Codex 剪辑助手': 'Codex Editing Assistant',
+  '说出你想怎么剪': 'Tell me how you want to edit',
+  '选择常用工作流，或直接告诉 Codex 成片目标。': 'Choose a common workflow, or tell Codex what you want the finished video to be.',
+  '例如：剪掉气口，生成字幕，再配一段低音量 BGM': 'For example: tighten narration pauses, generate captions, then add low-volume background music',
   '清空对话': 'Clear chat',
   'Agent 仍在运行中，无法清空对话。请先等待运行结束或停止当前运行，再试一次。':
     'The Agent is still running and the chat cannot be cleared. Wait for the run to finish or stop it first, then try again.',

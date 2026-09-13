@@ -25,6 +25,7 @@ for (const step of offlinePlan) {
 const configSource = await readFile(new URL('../config/electron-builder.config.mjs', import.meta.url), 'utf8');
 assert.match(configSource, /appId:\s*'org\.zuoren\.jiandao'/);
 assert.match(configSource, /productName:\s*isWindowsTarget \? '左人剪刀' : 'OpenChatCut'/);
+assert.match(configSource, /icon:\s*'public\/zuoren-jiandao-icon\.png'/);
 assert.match(configSource, /ZuorenJiandao-Setup-\$\{version\}-\$\{arch\}/);
 assert.match(configSource, /ZuorenJiandao-Portable-\$\{version\}-\$\{arch\}/);
 assert.doesNotMatch(configSource, /provider:\s*'github'/, 'internal packages must not carry upstream publish metadata');

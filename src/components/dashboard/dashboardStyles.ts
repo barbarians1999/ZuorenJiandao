@@ -2,10 +2,10 @@ import type { CSSProperties } from 'react';
 import { theme } from '../../theme';
 
 export const newCard: CSSProperties = {
-  width: '100%', aspectRatio: '16 / 9', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
-  border: `0.5px dashed ${theme.border}`, borderRadius: 4, background: 'transparent', cursor: 'pointer',
+  width: '100%', aspectRatio: '16 / 9', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
+  border: `1px dashed ${theme.border}`, borderRadius: 8, background: theme.panel, cursor: 'pointer',
 };
-export const card: CSSProperties = { border: `0.5px solid ${theme.border}`, borderRadius: 4, background: theme.panel, overflow: 'hidden' };
+export const card: CSSProperties = { border: `0.5px solid ${theme.border}`, borderRadius: 8, background: theme.panel, overflow: 'hidden' };
 export const thumb: CSSProperties = {
   width: '100%', aspectRatio: '16 / 9', background: theme.bg, border: 'none', borderBottom: `0.5px solid ${theme.border}`,
   position: 'relative', overflow: 'hidden', display: 'grid', placeItems: 'center', cursor: 'pointer',
@@ -28,13 +28,13 @@ export const modelSetupButton: CSSProperties = {
 };
 export const importBtn: CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: theme.text,
-  background: 'none', border: `0.5px solid ${theme.border}`, borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
+  height: 30, background: theme.panel, border: `0.5px solid ${theme.border}`, borderRadius: 6, padding: '0 10px', cursor: 'pointer',
 };
-export const searchBox: CSSProperties = { width: 216, position: 'relative', display: 'inline-flex', alignItems: 'center' };
+export const searchBox: CSSProperties = { width: 228, position: 'relative', display: 'inline-flex', alignItems: 'center' };
 export const searchIcon: CSSProperties = { position: 'absolute', left: 9, display: 'inline-flex', color: theme.textDim, pointerEvents: 'none' };
 export const searchInput: CSSProperties = {
-  width: '100%', height: 28, boxSizing: 'border-box', padding: '0 30px 0 28px',
-  border: `0.5px solid ${theme.border}`, borderRadius: 4, background: theme.bg, color: theme.text,
+  width: '100%', height: 30, boxSizing: 'border-box', padding: '0 30px 0 28px',
+  border: `0.5px solid ${theme.border}`, borderRadius: 6, background: theme.inset, color: theme.text,
   fontSize: 12, WebkitAppearance: 'none',
 };
 export const searchClear: CSSProperties = {

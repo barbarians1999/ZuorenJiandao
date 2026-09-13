@@ -136,7 +136,7 @@ export default {
   win: {
     target: windowsKind === 'portable' ? ['portable'] : ['nsis'],
     executableName: 'ZuorenJiandao',
-    icon: 'public/openchatcut-icon.png',
+    icon: 'public/zuoren-jiandao-icon.png',
   },
   nsis: {
     oneClick: false,

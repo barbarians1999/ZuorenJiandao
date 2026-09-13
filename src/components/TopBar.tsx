@@ -101,13 +101,12 @@ export function TopBar({ projectId, projectName, canUndo, canRedo, exporting, ex
       <LocaleToggle />
       <TopBarIconButton icon="layoutPanel" label={t('切换面板布局')} onClick={() => invokeAction('toggle-layout', undefined, 'toolbar')} />
       <button onClick={() => invokeAction('open-export', undefined, 'toolbar')}
-        className="cc-tip cc-tip-r"
+        className="cc-topbar-export cc-tip cc-tip-r"
         data-tip={exporting ? t('查看后台导出任务') : t('导出 MP4')}
         aria-label={exporting ? t('查看后台导出任务') : t('导出 MP4')}
-        style={{ minWidth: 58, height: 26, background: theme.accent, color: theme.onAccent, border: 'none', borderRadius: 2, padding: '0 8px', fontSize: 12, fontWeight: 600, cursor: 'pointer', marginLeft: 4 }}>
+        style={{ minWidth: 62, height: 28, background: theme.accent, color: theme.onAccent, border: 'none', borderRadius: 6, padding: '0 10px', fontSize: 12, fontWeight: 650, cursor: 'pointer', marginLeft: 4 }}>
         {exporting ? t('{n} 个导出', { n: Math.max(1, exportJobCount) }) : t('导出')}
       </button>
-      <div title={t('账户')} style={{ width: 20, height: 20, borderRadius: '50%', marginLeft: 2, background: 'conic-gradient(from 210deg, #6d6cff, #ff5f9e, #ffb35f, #6d6cff)', flexShrink: 0 }} />
       </div>
       {/* No fallback: a dialog that is still loading shows nothing, exactly as it
           did before it was opened — the same treatment the other overlays get. */}

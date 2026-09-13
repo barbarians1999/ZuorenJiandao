@@ -157,6 +157,80 @@ button, input, select { font: inherit; }
 .cc-header-btn { transition: color 0.12s, background 0.12s; }
 .cc-header-btn:hover { color: var(--cc-text) !important; background: rgba(var(--cc-ink-rgb), 0.06); }
 
+/* 左人剪刀 uses one compact identity across the project picker and Codex panel. */
+.cc-zuoren-wordmark {
+  display:inline-flex; align-items:baseline; gap:5px; flex:0 0 auto;
+  color:var(--cc-text-strong); font-size:15px; font-weight:650;
+  line-height:1; letter-spacing:-.04em;
+}
+.cc-zuoren-wordmark strong {
+  display:inline-flex; align-items:center; min-height:23px; padding:0 7px;
+  border-radius:5px; background:var(--cc-text-strong); color:var(--cc-panel);
+  font-size:13px; font-weight:800; letter-spacing:.02em;
+}
+.cc-zuoren-wordmark > span { letter-spacing:.01em; }
+.cc-zuoren-wordmark.is-compact { gap:4px; font-size:13px; }
+.cc-zuoren-wordmark.is-compact strong { min-height:19px; padding-inline:5px; font-size:11px; border-radius:4px; }
+
+/* Project picker: a quiet working surface with clear action hierarchy. */
+.cc-dashboard-titlebar { box-shadow:0 1px 0 rgba(var(--cc-shadow-rgb),.18); }
+.cc-dashboard-main { background:var(--cc-bg); }
+.cc-dashboard-content { max-width:1180px; margin:0 auto; padding:32px 28px 80px; }
+.cc-dashboard-toolbar {
+  display:flex; align-items:flex-end; gap:16px; margin-bottom:18px;
+}
+.cc-dashboard-heading { display:flex; flex-direction:column; gap:4px; min-width:190px; }
+.cc-dashboard-heading h1 {
+  margin:0; color:var(--cc-text-strong); font-size:21px; font-weight:680;
+  letter-spacing:-.025em; line-height:1.1;
+}
+.cc-dashboard-heading > span { color:var(--cc-text-dim); font-size:11.5px; line-height:1.35; }
+.cc-dashboard-toolbar-actions {
+  display:inline-flex; align-items:center; gap:8px; margin-left:auto; min-width:0;
+}
+.cc-project-grid {
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(246px,1fr));
+  align-items:start; gap:16px;
+}
+.cc-project-card {
+  transition:border-color 140ms ease,transform 140ms ease,box-shadow 140ms ease;
+  box-shadow:0 1px 0 rgba(var(--cc-shadow-rgb),.1);
+}
+.cc-project-card:hover {
+  border-color:var(--cc-border-light) !important; transform:translateY(-1px);
+  box-shadow:0 8px 24px rgba(var(--cc-shadow-rgb),.18);
+}
+.cc-project-card-thumb { transition:background-color 140ms ease; }
+.cc-project-card:hover .cc-project-card-thumb { background:var(--cc-inset) !important; }
+.cc-project-new-card {
+  min-height:154px; color:var(--cc-text-muted);
+  transition:border-color 140ms ease,background-color 140ms ease,transform 140ms ease;
+}
+.cc-project-new-card:hover {
+  border-color:var(--cc-accent) !important; background:var(--cc-panel-alt) !important;
+  transform:translateY(-1px); color:var(--cc-text-strong);
+}
+.cc-project-new-card:active,.cc-dashboard-action:active,.cc-topbar-export:active { transform:translateY(1px); }
+.cc-project-new-icon {
+  width:36px; height:36px; display:grid; place-items:center; flex:0 0 36px;
+  border:1px solid var(--cc-border-light); border-radius:8px; color:var(--cc-accent);
+  background:var(--cc-inset);
+}
+.cc-project-new-copy { display:flex; flex-direction:column; align-items:flex-start; gap:3px; text-align:left; }
+.cc-project-new-copy strong { color:var(--cc-text); font-size:13px; font-weight:650; }
+.cc-project-new-copy small { color:var(--cc-text-dim); font-size:11px; }
+.cc-dashboard-action,.cc-project-mini-action { transition:background-color 120ms ease,color 120ms ease,border-color 120ms ease; }
+.cc-dashboard-action:hover { border-color:var(--cc-border-light) !important; background:var(--cc-panel-alt) !important; color:var(--cc-text-strong) !important; }
+.cc-project-mini-action:hover { background:var(--cc-hover) !important; color:var(--cc-text-strong) !important; }
+.cc-topbar-export { box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 2px 8px rgba(var(--cc-shadow-rgb),.2); transition:filter 120ms ease,transform 80ms ease; }
+.cc-topbar-export:hover { filter:brightness(1.08); }
+@media (max-width:900px) {
+  .cc-dashboard-content { padding-inline:20px; }
+  .cc-dashboard-toolbar { align-items:flex-start; flex-direction:column; }
+  .cc-dashboard-toolbar-actions { width:100%; margin-left:0; flex-wrap:wrap; }
+  .cc-dashboard-toolbar-actions label { flex:1 1 220px; width:auto !important; }
+}
+
 /* macOS custom titlebar: retain native placement and behavior at renderer scale. */
 .cc-window-titlebar--mac {
   padding-left:84px !important;

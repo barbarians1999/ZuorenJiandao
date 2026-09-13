@@ -1,3 +1,5 @@
+import { useT } from '../i18n/locale';
+
 // Monochrome line icons (lucide-style, 24×24 stroke) for the editor
 // toolbar/track-header glyphs — replaces emoji for a consistent editor chrome.
 
@@ -135,7 +137,16 @@ export function Icon({ name, size = 16, color = 'currentColor', strokeWidth = 1.
  * (Skin Discipline Guaranteed ≥4.5 vs.). Use this when replacing sparkles before wordmark. */
 export function BrandMark({ size = 16 }: { size?: number }) {
   return (
-    <img src="/openchatcut-icon.png" alt="" aria-hidden width={size} height={size} style={{ display: 'block' }} />
+    <img src="/zuoren-jiandao-icon.png" alt="" aria-hidden width={size} height={size} style={{ display: 'block' }} />
+  );
+}
+
+export function ZuorenJiandaoWordmark({ compact = false }: { compact?: boolean }) {
+  const t = useT();
+  return (
+    <span className={`cc-zuoren-wordmark${compact ? ' is-compact' : ''}`} aria-label={t('左人剪刀')}>
+      <strong>{t('左人')}</strong><span>{t('剪刀')}</span>
+    </span>
   );
 }
 

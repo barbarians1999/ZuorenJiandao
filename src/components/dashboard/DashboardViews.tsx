@@ -3,7 +3,7 @@ import type { ProjectMeta } from '../../persist/projectStoreCoordinators';
 import { theme } from '../../theme';
 import { useT } from '../../i18n/locale';
 import { DashboardHeaderLinks } from '../DashboardHeaderLinks';
-import { BrandMark, Icon, OpenChatCutWordmark } from '../icons';
+import { BrandMark, Icon, ZuorenJiandaoWordmark } from '../icons';
 import { bindAction } from '../../shortcuts/actionRegistry';
 // Opened on demand, so they load on demand — see dashboardDialogs.tsx.
 import {
@@ -62,7 +62,7 @@ export function DashboardTitlebarContent({ model }: { model: DashboardModel }) {
   return (
     <>
       <BrandMark size={20} />
-      <OpenChatCutWordmark />
+      <ZuorenJiandaoWordmark />
       <span style={{ color: theme.textDim, fontSize: 13 }}>{t('· 我的工程')}</span>
       <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
         <DashboardHeaderLinks />
@@ -80,13 +80,16 @@ export function DashboardTitlebarContent({ model }: { model: DashboardModel }) {
 function ProjectToolbar({ projects, model }: { projects: ProjectMeta[]; model: DashboardModel }) {
   const t = useT();
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-      <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em' }}>{t('工程')}</h1>
+    <div className="cc-dashboard-toolbar">
+      <div className="cc-dashboard-heading">
+        <h1>{t('工程')}</h1>
+        <span>{t('继续剪辑，或导入同伴发来的工程')}</span>
+      </div>
       {model.transfer.note && <span style={{ color: theme.textDim, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.transfer.note}</span>}
-      <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+      <span className="cc-dashboard-toolbar-actions">
         <ProjectSearch value={model.query} onChange={model.setQuery} />
-        <button onClick={() => model.setDialog('cleanup', true)} style={importBtn} title={t('清理所有工程都不引用的上传素材(测试/已删工程残留)')}><Icon name="trash" size={13} /> {t('清理素材')}</button>
-        <button onClick={() => model.transfer.fileRef.current?.click()} disabled={model.transfer.busy} style={importBtn} title={t('导入 .ccproj 工程文件(兼容旧 .ccproj.json)')}><Icon name="upload" size={13} /> {t('导入工程')}</button>
+        <button className="cc-dashboard-action" onClick={() => model.setDialog('cleanup', true)} style={importBtn} title={t('清理所有工程都不引用的上传素材(测试/已删工程残留)')}><Icon name="trash" size={13} /> {t('清理素材')}</button>
+        <button className="cc-dashboard-action" onClick={() => model.transfer.fileRef.current?.click()} disabled={model.transfer.busy} style={importBtn} title={t('导入 .ccproj 工程文件(兼容旧 .ccproj.json)')}><Icon name="upload" size={13} /> {t('导入工程')}</button>
         <input ref={model.transfer.fileRef} type="file" accept=".ccproj,.json,application/json,application/x-openchatcut-project" onChange={model.transfer.pickImport} style={{ display: 'none' }} />
         <span style={{ color: theme.textDim, fontSize: 12.5 }}>
           {model.normalizedQuery
@@ -131,10 +134,10 @@ function ProjectActions({ project, props, model }: { project: ProjectMeta; props
   }
   return (
     <>
-      <button onClick={() => model.rename.start(project)} style={miniBtn} title={t('重命名')}><Icon name="pencil" size={13} /></button>
-      <button onClick={() => props.onDuplicate(project.id)} style={miniBtn} title={t('复制')}><Icon name="copy" size={13} /></button>
-      <button onClick={() => void model.transfer.run(props.onExport(project.id, project.name))} disabled={model.transfer.busy} style={miniBtn} title={t('导出为流式 .ccproj(含素材,可在桌面版/其它机器导入)')}><Icon name="download" size={13} /></button>
-      <button onClick={() => model.rename.setConfirmId(project.id)} style={miniBtn} title={t('删除')}><Icon name="trash" size={13} /></button>
+      <button className="cc-project-mini-action" onClick={() => model.rename.start(project)} style={miniBtn} title={t('重命名')}><Icon name="pencil" size={13} /></button>
+      <button className="cc-project-mini-action" onClick={() => props.onDuplicate(project.id)} style={miniBtn} title={t('复制')}><Icon name="copy" size={13} /></button>
+      <button className="cc-project-mini-action" onClick={() => void model.transfer.run(props.onExport(project.id, project.name))} disabled={model.transfer.busy} style={miniBtn} title={t('导出为流式 .ccproj(含素材,可在桌面版/其它机器导入)')}><Icon name="download" size={13} /></button>
+      <button className="cc-project-mini-action" onClick={() => model.rename.setConfirmId(project.id)} style={miniBtn} title={t('删除')}><Icon name="trash" size={13} /></button>
     </>
   );
 }
@@ -142,8 +145,8 @@ function ProjectActions({ project, props, model }: { project: ProjectMeta; props
 function ProjectCard({ project, props, model }: { project: ProjectMeta; props: DashboardProps; model: DashboardModel }) {
   const t = useT();
   return (
-    <div style={card}>
-      <button onClick={() => props.onOpen(project.id)} style={thumb} title={t('打开 {name}', { name: project.name })}>
+    <div className="cc-project-card" style={card}>
+      <button className="cc-project-card-thumb" onClick={() => props.onOpen(project.id)} style={thumb} title={t('打开 {name}', { name: project.name })}>
         {model.thumbs[project.id]
           ? <img src={model.thumbs[project.id]} alt="" draggable={false} loading="lazy" decoding="async" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
           : <span style={{ color: theme.borderLight, display: 'inline-flex' }}><Icon name="play" size={26} /></span>}
@@ -163,10 +166,10 @@ function ProjectGrid({ props, model }: { props: DashboardProps; model: Dashboard
   const t = useT();
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(232px, 1fr))', alignItems: 'start', gap: 16 }}>
-        <button onClick={props.onNew} style={newCard} title={t('新建工程')}>
-          <span style={{ fontSize: 30, color: theme.textDim, lineHeight: 1 }}>＋</span>
-          <span style={{ fontSize: 13, color: theme.textDim }}>{t('新建工程')}</span>
+      <div className="cc-project-grid">
+        <button className="cc-project-new-card" onClick={props.onNew} style={newCard} title={t('新建工程')}>
+          <span className="cc-project-new-icon"><Icon name="plus" size={19} /></span>
+          <span className="cc-project-new-copy"><strong>{t('新建工程')}</strong><small>{t('从空白时间线开始')}</small></span>
         </button>
         {model.visibleProjects.map((project) => <ProjectCard key={project.id} project={project} props={props} model={model} />)}
       </div>
@@ -179,8 +182,8 @@ function ProjectGrid({ props, model }: { props: DashboardProps; model: Dashboard
 
 export function DashboardContent({ props, model }: { props: DashboardProps; model: DashboardModel }) {
   return (
-    <main style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-      <div style={{ maxWidth: 1120, margin: '0 auto', padding: '28px 24px 80px' }}>
+    <main className="cc-dashboard-main" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <div className="cc-dashboard-content">
         <StorageMigrationBanner onOpenDialog={() => model.setDialog('storage', true)} />
         {model.modelSnapshot.loaded && model.modelSnapshot.choices.length === 0 && <ModelSetupCard onOpen={() => model.setDialog('settings', true)} />}
         <ProjectToolbar projects={props.projects} model={model} />

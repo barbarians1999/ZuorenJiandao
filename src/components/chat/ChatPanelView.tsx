@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import { theme } from '../../theme';
-import { BrandMark, Icon, OpenChatCutWordmark } from '../icons';
+import { BrandMark, Icon, ZuorenJiandaoWordmark } from '../icons';
 import { AgentChangeLogMenu } from './AgentChangeLogMenu';
 import { AgentRunInspector } from './AgentRunInspector';
 import { ChatComposer } from './ChatComposer';
@@ -38,11 +38,11 @@ function CollapsedPanel({ controller }: { controller: ChatPanelController }) {
     <ChangeLogPortal controller={controller} />
     <aside className="cc-chat-panel collapsed" data-cc-shortcut-surface="agent-chat" tabIndex={-1}
       style={{ gridColumn: 1, gridRow: '2 / 5', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '10px 0', borderRight: `0.5px solid ${theme.border}`, background: theme.panel }}>
-      <button type="button" onClick={props.onToggleCollapse} title={t('展开 OpenChatCut Agent')}
+      <button type="button" onClick={props.onToggleCollapse} title={t('展开 Codex 剪辑助手')}
         style={{ background: 'none', border: 'none', color: theme.textDim, cursor: 'pointer', fontSize: 14 }}>
         <span style={{ transform: 'rotate(-90deg)', display: 'inline-flex' }}><Icon name="chevronDown" size={14} /></span>
       </button>
-      <div className="cc-chat-collapsed-brand">OpenChatCut</div>
+      <div className="cc-chat-collapsed-brand">{t('左人剪刀')}</div>
     </aside>
   </>;
 }
@@ -53,8 +53,8 @@ function ChatHeader({ controller }: { controller: ChatPanelController }) {
     <div className="cc-chat-brand">
       <BrandMark size={20} />
       <span className="cc-chat-brand-copy">
-        <OpenChatCutWordmark width={102} />
-        <small>{t('Agent 工作台')}</small>
+        <ZuorenJiandaoWordmark compact />
+        <small>{t('Codex 剪辑助手')}</small>
       </span>
     </div>
     <AgentRunInspector projectId={props.projectId} />
@@ -62,7 +62,7 @@ function ChatHeader({ controller }: { controller: ChatPanelController }) {
       style={{ background: 'none', border: 'none', color: theme.textDim, cursor: agent.running ? 'default' : 'pointer', opacity: agent.running ? 0.4 : 1, padding: 2, lineHeight: 0 }}>
       <Icon name="trash" size={14} />
     </button>
-    <button type="button" onClick={props.onToggleCollapse} title={t('收起 OpenChatCut Agent')}
+    <button type="button" onClick={props.onToggleCollapse} title={t('收起 Codex 剪辑助手')}
       style={{ background: 'none', border: 'none', color: theme.textDim, cursor: 'pointer', fontSize: 13 }}>
       <span style={{ transform: 'rotate(90deg)', display: 'inline-flex' }}><Icon name="chevronDown" size={14} /></span>
     </button>
@@ -72,9 +72,8 @@ function ChatHeader({ controller }: { controller: ChatPanelController }) {
 function ChatOnboarding({ controller }: { controller: ChatPanelController }) {
   const { composer, t } = controller;
   return <div className="cc-chat-onboarding">
-    <div className="cc-chat-onboarding-kicker">{t('从这里开工')}</div>
-    <h2>{t('从一个剪辑目标开始')}</h2>
-    <p>{t('选择工作流，或直接描述你想得到的成片。')}</p>
+    <h2>{t('说出你想怎么剪')}</h2>
+    <p>{t('选择常用工作流，或直接告诉 Codex 成片目标。')}</p>
     <div className="cc-chat-starter-list">
       {EMPTY_PROJECT_STARTERS.map((starter) => (
         <button type="button" key={starter.label} onClick={() => {
@@ -236,7 +235,7 @@ function ComposerInput({ controller }: { controller: ChatPanelController }) {
     pasteError={composer.pasteError} onDismissPasteError={() => composer.setPasteError(null)}
     onDropEditorItem={actions.onDropEditorItem} taRef={composer.taRef}
     placeholder={agent.messages.length === 0
-      ? t('描述你想要创建的内容...') : t('告诉 AI 要做哪些修改 - @ 引用素材')} />;
+      ? t('例如：剪掉气口，生成字幕，再配一段低音量 BGM') : t('告诉 AI 要做哪些修改 - @ 引用素材')} />;
 }
 
 function ComposerSection({ controller }: { controller: ChatPanelController }) {
