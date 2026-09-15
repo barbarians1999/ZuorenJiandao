@@ -24,7 +24,10 @@ const dashboardSource = readFileSync(new URL('./Dashboard.tsx', import.meta.url)
 const cssSource = readFileSync(new URL('../index.css', import.meta.url), 'utf8');
 assert.match(topBarSource, /<DesktopWindowControls\s*\/>/, 'editor titlebar includes desktop controls');
 assert.match(dashboardSource, /<DesktopWindowControls\s*\/>/, 'dashboard titlebar includes desktop controls');
-assert.match(cssSource, /app-region:\s*drag/, 'macOS titlebar exposes a draggable region');
+assert.match(topBarSource, /cc-window-titlebar--windows/, 'editor exposes a Windows titlebar class');
+assert.match(dashboardSource, /cc-window-titlebar--windows/, 'dashboard exposes a Windows titlebar class');
+assert.match(cssSource, /\.cc-window-titlebar--windows\s*\{[^}]*padding-right:\s*140px[^}]*app-region:\s*drag/s, 'Windows titlebar keeps a draggable region and native-button safe area');
 assert.match(cssSource, /app-region:\s*no-drag/, 'interactive titlebar controls remain clickable');
+assert.match(readFileSync(controlsUrl, 'utf8'), /platform\s*!==\s*'darwin'/, 'renderer controls stay macOS-only while Windows uses native caption buttons');
 
 console.log('renderer window-titlebar verification passed');

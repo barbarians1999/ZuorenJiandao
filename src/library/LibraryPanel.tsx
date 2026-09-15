@@ -129,6 +129,8 @@ export function LibraryPanel({ semanticScopeId, templates, onAddTemplate, onAddA
   const selKind = selectedItem?.kind ?? null;
   const isVisual = selKind != null && selKind !== 'audio';
   const [mainTab, setMainTab] = useState<(typeof MAIN_TABS)[number]>('我的素材');
+  const [assetFocus, setAssetFocus] = useState<'all' | 'bgm'>('all');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [subTab, setSubTab] = useState<(typeof SUB_TABS)[number]>('MG 动画');
   const [extensionOpen, setExtensionOpen] = useState(false);
   const [directoryImportError, setDirectoryImportError] = useState<string | null>(null);
@@ -188,16 +190,21 @@ export function LibraryPanel({ semanticScopeId, templates, onAddTemplate, onAddA
 
   return (
     <section className="cc-library-panel">
-      <div className="cc-main-tabs">
-        {MAIN_TABS.map((tab) => (
-          <button key={tab} onClick={() => { setExtensionOpen(false); setMainTab(tab); }}
-            className={`cc-main-tab${mainTab === tab ? ' selected' : ''}`}>{t(tab)}</button>
-        ))}
+      <div className="cc-main-tabs cc-main-tabs-primary">
+        <button className={`cc-main-tab${mainTab === '我的素材' && assetFocus === 'all' && !advancedOpen ? ' selected' : ''}`} onClick={() => { setAdvancedOpen(false); setExtensionOpen(false); setAssetFocus('all'); setMainTab('我的素材'); }}>{t('剪辑')}</button>
+        <button className={`cc-main-tab${mainTab === '我的素材' && assetFocus === 'bgm' && !advancedOpen ? ' selected' : ''}`} onClick={() => { setAdvancedOpen(false); setExtensionOpen(false); setAssetFocus('bgm'); setMainTab('我的素材'); }}>{t('背景音乐')}</button>
+        <button className={`cc-main-tab${mainTab === '字幕' && !advancedOpen ? ' selected' : ''}`} onClick={() => { setAdvancedOpen(false); setExtensionOpen(false); setMainTab('字幕'); }}>{t('字幕')}</button>
+        <button className={`cc-main-tab${advancedOpen ? ' selected' : ''}`} onClick={() => setAdvancedOpen((value) => !value)}>{t('更多工具')}</button>
       </div>
+      {advancedOpen && <div className="cc-main-tabs cc-main-tabs-advanced">
+        {MAIN_TABS.filter((tab) => tab !== '字幕').map((tab) => (
+          <button key={tab} onClick={() => { setExtensionOpen(false); if (tab === '我的素材') setAssetFocus('all'); setMainTab(tab); }} className={`cc-main-tab${mainTab === tab ? ' selected' : ''}`}>{t(tab)}</button>
+        ))}
+      </div>}
       {extensionOpen ? (
         <ExtensionCenter onClose={() => setExtensionOpen(false)} />
       ) : isCaptions ? (
-        <CaptionsPanel playerRef={playerRef} fps={fps} items={items} captionTracks={captionTracks} onSetCaptions={onSetCaptions} onUpdateCaptions={onUpdateCaptions} />
+        <CaptionsPanel playerRef={playerRef} fps={fps} items={items} trackOptions={trackOptions} selectedItem={selectedItem} captionTracks={captionTracks} onSetCaptions={onSetCaptions} onUpdateCaptions={onUpdateCaptions} onCreateCaptionTrack={onCreateCaptionTrack} />
       ) : isTranscript ? (
         <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, borderTop: `0.5px solid ${theme.border}` }}>
           <TranscriptPanel playerRef={playerRef} fps={fps} items={items} trackOptions={trackOptions} onSetItemTranscript={onSetItemTranscript} onToggleWord={onToggleWord} onCleanScript={onCleanScript} onSetGapCap={onSetGapCap} onSetTranscriptPlayOrder={onSetTranscriptPlayOrder} onReorderTrackItems={onReorderTrackItems} onClearEdits={onClearEdits} onImportSrt={(file) => { void importSrt(file); }} onOpenCaptionStyles={openCaptionStyles} />
@@ -225,7 +232,7 @@ export function LibraryPanel({ semanticScopeId, templates, onAddTemplate, onAddA
         </div>
       ) : isMyAssets ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, borderTop: `0.5px solid ${theme.border}` }}>
-          <MediaPoolPanel semanticScopeId={semanticScopeId} assets={assets} folders={mediaFolders} fps={fps} usedAssetIds={usedAssetIds} offlineAssetIds={offlineAssetIds} onAssetLoadError={onAssetLoadError} onImport={onImportMedia} onImportMobile={onImportMobileMedia} directoryImport={directoryImport} directoryImportError={directoryImportError} onAddAsset={onAddMediaItem} onAddAssetsToTimeline={onAddMediaAssetsToTimeline} onAddAssetsToChat={onUseMediaAI}
+          <MediaPoolPanel key={assetFocus} initialType={assetFocus === 'bgm' ? 'audio' : 'all'} purpose={assetFocus === 'bgm' ? 'bgm' : undefined} semanticScopeId={semanticScopeId} assets={assets} folders={mediaFolders} fps={fps} usedAssetIds={usedAssetIds} offlineAssetIds={offlineAssetIds} onAssetLoadError={onAssetLoadError} onImport={onImportMedia} onImportMobile={onImportMobileMedia} directoryImport={directoryImport} directoryImportError={directoryImportError} onAddAsset={onAddMediaItem} onAddAssetsToTimeline={onAddMediaAssetsToTimeline} onAddAssetsToChat={onUseMediaAI}
             onCreateFolder={onCreateMediaFolder} onRenameFolder={onRenameMediaFolder} onDeleteFolder={onDeleteMediaFolder}
             onMoveAssets={onMoveMediaAssets} onRenameAsset={onRenameMediaAsset} onTranscribe={onTranscribeAsset} onRenameAssets={onRenameMediaAssets} onSetFavorite={onSetMediaAssetFavorite} onSetAssetsFavorite={onSetMediaAssetsFavorite} onRemoveAsset={onRemoveMediaAsset} onRemoveAssets={onRemoveMediaAssets} onPasteAssets={onPasteMediaAssets}
             onRelinkAsset={onRelinkMediaAsset} onAddSolid={onAddSolid} />

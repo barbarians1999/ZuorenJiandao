@@ -29,6 +29,8 @@ import { resolveMediaPoolShortcut } from './mediaPoolShortcutScope';
 import { useMediaPoolFileImport } from './useMediaPoolFileImport';
 import type { UseDirectoryImportState } from './useDirectoryImport';
 interface MediaPoolPanelProps {
+  initialType?: MediaTypeFilter;
+  purpose?: 'bgm';
   semanticScopeId: string;
   assets: MediaAsset[];
   folders: MediaFolder[];
@@ -72,6 +74,7 @@ interface MediaPoolPanelProps {
 }
 
 export function MediaPoolPanel({
+  initialType = 'all', purpose,
   semanticScopeId, assets, folders, fps, usedAssetIds, offlineAssetIds, onAssetLoadError,
   onImport, onImportMobile, directoryImport, directoryImportError, onAddAsset, onAddAssetsToTimeline, onAddAssetsToChat, onCreateFolder, onRenameFolder,
   onDeleteFolder, onMoveAssets, onRenameAsset, onRenameAssets, onSetFavorite, onSetAssetsFavorite, onRemoveAsset, onRemoveAssets, onPasteAssets, onRelinkAsset, onAddSolid, onTranscribe,
@@ -87,7 +90,7 @@ export function MediaPoolPanel({
   const { available: canWatchDirectory, busy: watchBusy, activeWatch, start: startWatch, stop: stopWatch } = directoryImport;
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<MediaSortKey>('newest');
-  const [type, setType] = useState<MediaTypeFilter>('all');
+  const [type, setType] = useState<MediaTypeFilter>(initialType);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [view, setView] = usePersistedState<'grid' | 'list'>('cc.mediaView', 'grid');
   const [menu, setMenu] = useState<MediaToolbarMenu>(null);
@@ -351,6 +354,7 @@ export function MediaPoolPanel({
     >
       <input ref={inputRef} type="file" multiple hidden onChange={(event) => void pickFiles(event.target.files, currentFolderId)} />
       <input ref={relinkInputRef} type="file" hidden onChange={(event) => void pickRelinkFile(event.target.files)} />
+      {purpose === 'bgm' && <div className="cc-media-purpose"><strong>{t('添加背景音乐')}</strong><span>{t('导入本机 MP3 或 WAV，双击或拖到音轨，再调整音量和淡入淡出。')}</span></div>}
       <MediaPoolToolbar
         scopeId={semanticScopeId}
         assets={assets}

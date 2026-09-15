@@ -52,6 +52,7 @@ interface TopBarProps {
 export function TopBar({ projectId, projectName, canUndo, canRedo, exporting, exportJobCount = 0, onHome, onRename, onResumeGeneration }: TopBarProps) {
   const t = useT();
   const isMacDesktop = window.openChatCutDesktop?.platform === 'darwin';
+  const isWindowsDesktop = window.openChatCutDesktop?.platform === 'win32';
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(projectName);
   const [mcpOpen, setMcpOpen] = useState(false);
@@ -62,7 +63,7 @@ export function TopBar({ projectId, projectName, canUndo, canRedo, exporting, ex
   const commit = () => { setEditing(false); if (onRename && draft.trim() && draft.trim() !== projectName) onRename(draft.trim()); };
 
   return (
-    <header className={`cc-topbar cc-window-titlebar${isMacDesktop ? ' cc-window-titlebar--mac' : ''}`} style={{ gridColumn: '1 / -1', gridRow: 1, position: 'relative', height: '100%', display: 'flex', alignItems: 'center', padding: '0 6px', borderBottom: `0.5px solid ${theme.border}`, background: theme.panel, gap: 4 }}>
+    <header className={`cc-topbar cc-window-titlebar${isMacDesktop ? ' cc-window-titlebar--mac' : ''}${isWindowsDesktop ? ' cc-window-titlebar--windows' : ''}`} style={{ gridColumn: '1 / -1', gridRow: 1, position: 'relative', height: '100%', display: 'flex', alignItems: 'center', padding: '0 6px', borderBottom: `0.5px solid ${theme.border}`, background: theme.panel, gap: 4 }}>
       <DesktopWindowControls />
       {/* home in a rounded chip + a vertical divider */}
       <button className="cc-tip" data-tip={t('返回工程列表')} aria-label={t('返回工程列表')} onClick={onHome}

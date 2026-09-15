@@ -173,6 +173,13 @@ export default {
   '将当前工程转换为 9:16 竖屏，并调整主要画面构图': 'Convert the current project to 9:16 portrait and reframe the main visuals',
 
   // ── Empty project starter (label + prefilled prompt word) ──
+  '简单剪辑': 'Simple edit',
+  '剪掉停顿并整理当前口播': 'Cut pauses and tidy the current narration',
+  '整理当前口播': 'Tidy the current narration',
+  '添加背景音乐': 'Add background music',
+  '为当前工程配一段低音量 BGM': 'Add a low-volume BGM track to the current project',
+  '粘贴文字稿生成字幕': 'Paste script and generate captions',
+  '用文字稿和现有转写时间生成字幕': 'Generate captions from the script and existing transcript timings',
   '口播净剪': 'Clean talking-head edit',
   '去停顿、赘词并同步字幕': 'Remove pauses and filler, then sync captions',
   '动态包装': 'Motion package',

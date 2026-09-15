@@ -238,6 +238,17 @@ button, input, select { font: inherit; }
   app-region:drag;
   user-select:none;
 }
+.cc-window-titlebar--windows {
+  padding-right:140px !important;
+  app-region:drag;
+  user-select:none;
+}
+.cc-window-titlebar--windows button,
+.cc-window-titlebar--windows input,
+.cc-window-titlebar--windows select,
+.cc-window-titlebar--windows [data-cc-titlebar-control="true"] {
+  app-region:no-drag;
+}
 .cc-window-controls {
   position:absolute; left:12px; top:50%; z-index:2;
   display:flex; align-items:center; gap:8px; height:12px;
@@ -444,6 +455,9 @@ button, input, select { font: inherit; }
 
 /* Editor asset panel. */
 .cc-library-panel { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; background:var(--cc-panel); border-right:0.5px solid var(--cc-border); container:library-panel / inline-size; font-family:Geist, system-ui,-apple-system,sans-serif; }
+.cc-media-purpose { display:flex; align-items:baseline; gap:8px; padding:8px 12px; border-bottom:0.5px solid var(--cc-border); background:color-mix(in srgb, var(--cc-accent) 7%, var(--cc-panel)); color:var(--cc-text); font-size:11px; line-height:1.45; }
+.cc-media-purpose strong { flex:0 0 auto; font-weight:650; }
+.cc-media-purpose span { min-width:0; color:var(--cc-text-dim); }
 .cc-main-tabs { display:flex; align-items:center; gap:12px; min-height:30px; padding:0 12px; overflow-x:auto; flex-shrink:0; scrollbar-width:none; }
 .cc-main-tab { height:30px; padding:0; border:0; border-bottom:1px solid transparent; background:transparent; color:var(--cc-text-dim); cursor:pointer; font-size:12px; font-weight:500; line-height:29px; white-space:nowrap; transition:border-color 120ms ease-out,color 120ms ease-out; }
 .cc-main-tab:hover,.cc-main-tab:focus-visible { color:var(--cc-text); }
