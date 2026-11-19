@@ -1,3 +1,5 @@
+> Zuoren Jiandao 0.3.1 is a local video editor with external MCP control. Embedded AI chat, provider/API configuration and generative services are removed. Plan and issue editing commands in Codex. The upstream documentation below is historical and its embedded-AI sections do not apply to this distribution.
+
 <p align="center">
   <img src="public/openchatcut-icon.png" width="96" alt="OpenChatCut" />
 </p>

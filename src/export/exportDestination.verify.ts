@@ -4,6 +4,7 @@ import {
   DEFAULT_EXPORT_DESTINATION,
   ExportDestinationError,
   exportDestinationErrorMessage,
+  exportDestinationTaskKey,
   ensureExportDestinationWritable,
   restoreExportDestination,
   writeBlobToDestination,
@@ -13,6 +14,18 @@ import {
 } from './exportDestination';
 import { ExportFailureError } from './exportFailure';
 import { exportDestinationMatchesFilename } from './useExportDestination';
+
+const grantedA: ExportDestination = { type: 'desktop-directory', label: 'Exports', grantId: 'a'.repeat(43) };
+const grantedB: ExportDestination = { ...grantedA, grantId: 'b'.repeat(43) };
+assert.notEqual(exportDestinationTaskKey(grantedA, 'same.mp4'), exportDestinationTaskKey(grantedB, 'same.mp4'));
+assert.equal(exportDestinationTaskKey(grantedA, 'same.mp4'), exportDestinationTaskKey({ ...grantedA }, 'same.mp4'));
+const handleA: BrowserExportDirectoryHandle = { kind: 'directory', name: 'Exports',
+  getFileHandle: async () => { throw new Error('identity must not write'); },
+  queryPermission: async () => 'granted', requestPermission: async () => 'granted' };
+const browserA: ExportDestination = { type: 'browser-directory', label: 'Exports', handle: handleA };
+assert.notEqual(exportDestinationTaskKey(browserA, 'same.mp4'),
+  exportDestinationTaskKey({ ...browserA, handle: { ...handleA } }, 'same.mp4'));
+assert.equal(exportDestinationTaskKey(browserA, 'same.mp4'), exportDestinationTaskKey({ ...browserA }, 'same.mp4'));
 
 const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
 const originalFetch = globalThis.fetch;

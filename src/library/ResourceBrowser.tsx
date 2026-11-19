@@ -18,6 +18,7 @@ import {
 } from './ResourcePreviewContext';
 import { useFixedVirtualGrid } from '../hooks/useFixedVirtualGrid';
 import { LIBRARY_CARD_GRID_METRICS } from './libraryCardGrid';
+import { Icon } from '../components/icons';
 
 // Generic resource-library category browser (Transition/Special Effects/Scale/LUT).
 // `layout="grid"` uses cards with a thumbnail and label;
@@ -115,6 +116,9 @@ const ResourceCard = memo(function ResourceCard(props: ResourceCardProps) {
           : src
             ? <img src={src} alt="" draggable={false} loading="lazy" decoding="async" />
             : <span className="cc-resource-thumb-placeholder" />}
+        <span className="cc-resource-add-badge" aria-hidden="true">
+          <Icon name="plus" size={13} strokeWidth={2.2} />
+        </span>
       </div>
       <div className="cc-resource-name">{props.t(item.name)}</div>
     </button>

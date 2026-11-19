@@ -16,6 +16,7 @@ import type {
 
 interface ExportQaContext {
   fps: number;
+  frameRange?: [number, number];
   setBusy: StateSetter<string | null>;
   setProgress: StateSetter<ExportProgress | null>;
   setQa: StateSetter<ExportQaUiState | null>;
@@ -23,8 +24,10 @@ interface ExportQaContext {
   t: Translate;
 }
 
-function qaRequest(state: TimelineState, completed: ExportJobResult, fps: number): ExportQaRequest {
-  const baseline = exportQaExpectations(state);
+export function qaRequest(state: TimelineState, completed: ExportJobResult, fps: number, frameRange?: [number, number]): ExportQaRequest {
+  const baseline = exportQaExpectations(state, frameRange
+    ? { startFrame: frameRange[0], endFrameExclusive: frameRange[1] }
+    : undefined);
   const expected = {
     ...baseline,
     durationSeconds: completed.durationSeconds ?? baseline.durationSeconds,
@@ -61,7 +64,7 @@ async function verifyCompletedExport(
   beginQa(context);
   try {
     const result = await runExportQa(
-      qaRequest(context.state, completed, context.fps),
+      qaRequest(context.state, completed, context.fps, context.frameRange),
       { signal },
     );
     signal?.throwIfAborted();

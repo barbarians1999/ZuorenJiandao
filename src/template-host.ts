@@ -22,7 +22,7 @@ import {
   spring, Easing, random, Img as RemotionImg, Video, Audio, Sequence, AbsoluteFill, staticFile,
 } from 'remotion';
 
-export type MgItem = { props: Record<string, unknown>; width: number; height: number };
+export type MgItem = { props: Record<string, unknown>; width: number; height: number; durationInFrames?: number; frameOffset?: number };
 export type MgComponent = React.FC<{ item: MgItem }>;
 
 // Scraped templates often carry a DANGLING bgImage — a bare asset id like

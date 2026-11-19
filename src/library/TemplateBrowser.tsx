@@ -34,6 +34,7 @@ const CAT_LABEL: Record<string, string> = {
   'talking-head-overlays': '出镜叠加',
   'text-effects': '文字特效',
   'title-cards': '标题卡片',
+  'chapter-cards': '章节标题卡',
   'social-media': '社交媒体',
   'social-shorts': '竖屏自媒体',
   'koubo-scenes': '口播场景',
@@ -52,10 +53,9 @@ const MENU_H = 148;
 interface TemplateBrowserProps {
   templates: Tpl[];
   onAdd: (tpl: Tpl) => void;
-  onUseAI: (tpl: Tpl) => void;
 }
 
-export const TemplateBrowser = memo(function TemplateBrowser({ templates, onAdd, onUseAI }: TemplateBrowserProps) {
+export const TemplateBrowser = memo(function TemplateBrowser({ templates, onAdd }: TemplateBrowserProps) {
   const t = useT();
   const [favs, setFavs] = usePersistedState<string[]>('cc.favTemplates', []);
   /** Template id removed from the resource library list (soft deletion, persistence; does not affect the inserted clips in the timeline) */
@@ -346,12 +346,6 @@ export const TemplateBrowser = memo(function TemplateBrowser({ templates, onAdd,
               onClick={() => { addAndRemember(menuTpl); closeMenu(); }}
               style={menuItem}
             >≡ {t('添加到时间线')}</button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => { onUseAI(menuTpl); closeMenu(); }}
-              style={{ ...menuItem, display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            ><Icon name="sparkles" size={13} />{t('用 AI 生成')}</button>
             <div style={{ height: 0.5, background: theme.border, margin: '4px 6px' }} />
             {confirmDelete ? (
               <div style={{ display: 'flex', gap: 4, padding: '2px 4px 4px' }}>

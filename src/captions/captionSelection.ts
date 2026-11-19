@@ -3,6 +3,7 @@ import type { CaptionPreviewTarget } from './captionPreviewTarget';
 import { isManualCaptionEntry } from './manualCaptions';
 import { effectivePreset } from './renderStyles';
 import { orderedCaptionSourceEntries } from './sourceOrder';
+import { captionFontKey } from '../fonts/captionFontScope';
 import {
   captionsOnTrack,
   timelineTrackIds,
@@ -27,6 +28,8 @@ export interface SelectedCaptionInspector {
   trackId: TrackId;
   captions: CaptionsData;
   target: CaptionPreviewTarget;
+  /** Current multi-selection on this same caption track, for font-only edits. */
+  fontTargets?: readonly CaptionPreviewTarget[];
 }
 
 export interface ResolvedCaptionSelection extends SelectedCaptionInspector {
@@ -59,7 +62,7 @@ export function captionSelectionKey(selection: CaptionSelectionRef | null): stri
     : `${selection.trackId}:manual:${selection.laneId}:${selection.cueId}`;
 }
 
-/** Resolve every visible caption cue whose frames intersect a marquee range. */
+/** Resolve every visible caption cue whose frames intersect a marquee range (or lie on one side of a playhead). */
 export function captionSelectionsInFrameRange(
   trackId: TrackId,
   captions: CaptionsData,
@@ -67,6 +70,7 @@ export function captionSelectionsInFrameRange(
   fps: number,
   rangeStartFrame: number,
   rangeEndFrame: number,
+  boundaryMode: 'intersect' | 'within' = 'intersect',
 ): CaptionSelectionRef[] {
   if (!captions.enabled) return [];
   const lo = Math.min(rangeStartFrame, rangeEndFrame);
@@ -104,7 +108,9 @@ export function captionSelectionsInFrameRange(
     .filter(({ start, end }) => {
       const startFrame = Math.max(0, Math.round(start * fps / 1000));
       const endFrame = Math.max(startFrame + 1, Math.round(end * fps / 1000));
-      return endFrame > lo && startFrame < hi;
+      return boundaryMode === 'within'
+        ? startFrame >= lo && endFrame <= hi
+        : endFrame > lo && startFrame < hi;
     })
     .sort((a, b) => a.start - b.start
       || a.end - b.end
@@ -127,6 +133,39 @@ export function allCaptionSelections(state: TimelineState): CaptionSelectionRef[
       ? captionSelectionsInFrameRange(trackId, captions, state.items, state.fps, 0, Number.MAX_SAFE_INTEGER)
       : [];
   });
+}
+
+/** Select every visible cue on unlocked caption tracks before or after `playheadFrame`. */
+export function selectableCaptionSelectionsAtPlayheadSide(
+  state: TimelineState,
+  playheadFrame: number,
+  side: 'before' | 'after',
+): CaptionSelectionRef[] {
+  const frame = Math.max(0, Math.round(playheadFrame));
+  const lo = side === 'before' ? 0 : frame;
+  const hi = side === 'before' ? frame : Number.MAX_SAFE_INTEGER;
+  if (side === 'before' && frame <= 0) return [];
+  return timelineTrackIds(state).flatMap((trackId) => {
+    if (trackKind(state, trackId) !== 'caption' || state.tracks?.[trackId]?.locked) return [];
+    const captions = captionsOnTrack(state, trackId);
+    return captions
+      ? captionSelectionsInFrameRange(trackId, captions, state.items, state.fps, lo, hi, 'within')
+      : [];
+  });
+}
+
+/** Fallback caption inspector target when no clip or cue is explicitly selected. */
+export function resolveFirstCaptionSelection(state: TimelineState): SelectedCaptionInspector | null {
+  for (const trackId of timelineTrackIds(state)) {
+    if (trackKind(state, trackId) !== 'caption') continue;
+    const captions = captionsOnTrack(state, trackId);
+    if (!captions?.enabled) continue;
+    const first = captionSelectionsInFrameRange(trackId, captions, state.items, state.fps, 0, Number.MAX_SAFE_INTEGER)[0];
+    if (!first) continue;
+    const resolved = resolveCaptionSelection(state, first);
+    if (resolved) return resolved;
+  }
+  return null;
 }
 
 export function resolveCaptionSelection(
@@ -152,7 +191,7 @@ export function resolveCaptionSelection(
         cueIndex,
         cue,
         rows,
-        preset,
+        preset: { ...preset, ...cue.fontOverride },
         layout: captions.layout,
       },
     } : null;
@@ -172,7 +211,7 @@ export function resolveCaptionSelection(
       cueId: cue.id!,
       cueIndex,
       cue,
-      preset: entry.style ? { ...preset, ...entry.style } : preset,
+      preset: { ...preset, ...entry.style, ...captions.cueFonts?.[captionFontKey(cue.id, undefined)!] },
       layout: {
         ...captions.layout,
         anchor: entry.anchor ?? captions.layout?.anchor,
@@ -181,6 +220,7 @@ export function resolveCaptionSelection(
         scale: entry.scale ?? captions.layout?.scale,
         rotation: entry.rotation ?? captions.layout?.rotation,
         opacity: entry.opacity ?? captions.layout?.opacity,
+        widthRatio: entry.widthRatio ?? captions.layout?.widthRatio,
       },
     },
   };

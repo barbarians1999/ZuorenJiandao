@@ -52,7 +52,7 @@ function InspectorHeader({ panel }: { panel: InspectorPanelProps }) {
       <span className={`cc-insp-chevron${panel.collapsed ? ' closed' : ''}`}><Icon name="chevronDown" size={12} /></span>
       <span className="cc-insp-heading">
         <span className="cc-insp-title">{caption ? t('字幕属性') : t('片段属性')}</span>
-        {caption ? <span className="cc-insp-title-name" title={caption.target.cue.text}>{caption.target.cue.text}</span>
+        {caption ? (panel.collapsed && <span className="cc-insp-title-name" title={caption.target.cue.text}>{caption.target.cue.text}</span>)
           : item && <span className="cc-insp-title-name" title={item.name}>{count > 1 ? t('{n} 个片段', { n: count }) : item.name}</span>}
       </span>
       {item?.denoisedSrc && <span className="cc-insp-pill">{t('人声隔离')}</span>}
@@ -62,7 +62,9 @@ function InspectorHeader({ panel }: { panel: InspectorPanelProps }) {
 
 export function InspectorPanel(panel: InspectorPanelProps) {
   const t = useT();
-  const [activeTab, setActiveTab] = useState<InspectorTab>('basic');
+  const [localTab, setLocalTab] = useState<InspectorTab>('basic');
+  const activeTab = panel.activeTab ?? localTab;
+  const setActiveTab = panel.onActiveTabChange ?? setLocalTab;
   const playhead = useInspectorPlayhead(panel.getPlayhead, panel.playerRef);
   const item = panel.selectedItem;
   const schema = item ? panel.templates.find((template) => template.id === item.templateId)?.propSchema ?? [] : [];
@@ -87,7 +89,7 @@ export function InspectorPanel(panel: InspectorPanelProps) {
         {!panel.collapsed && (panel.selectedCaption && panel.onCaptionUpdate
           ? <CaptionInspectorControls selection={panel.selectedCaption} onUpdate={panel.onCaptionUpdate} />
           : item ? <InspectorContent panel={panel} item={item} schema={schema} playheadLocal={playheadLocal} activeTab={activeTab} onTabChange={setActiveTab} />
-          : <div className="cc-insp-body"><div className="cc-insp-muted">{t('选中时间线上的片段以编辑属性。')}</div></div>)}
+          : <div className="cc-insp-body"><div className="cc-insp-muted">{t('选中时间线片段或字幕后，可在此调整大小、描边、位置与形状。')}</div></div>)}
       </section>
     </HistoryGestureProvider>
   );

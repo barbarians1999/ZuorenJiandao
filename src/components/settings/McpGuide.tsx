@@ -162,7 +162,7 @@ export function McpGuideDialog({ onClose }: { onClose: () => void }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             <strong style={{ fontSize: 14 }}>{t('外部 Agent 接入 (MCP)')}</strong>
             <span style={{ color: theme.textMuted, fontSize: 11.5 }}>
-              {t('Streamable HTTP · 与内置 Agent 共享编辑工具')}
+              {t('Streamable HTTP · 从 Codex 等外部客户端操作剪辑')}
             </span>
           </div>
           <button type="button" onClick={onClose} style={{ marginLeft: 'auto', padding: '3px 9px' }}>{t('关闭')}</button>
@@ -212,15 +212,15 @@ export function McpGuideDialog({ onClose }: { onClose: () => void }) {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={cardStyle}>
-            <span style={{ fontSize: 12, fontWeight: 600 }}>{t('内置 Agent 与外部 MCP')}</span>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>{t('外部 MCP 编辑会话')}</span>
             <div style={{ color: theme.textMuted, fontSize: 12, lineHeight: 1.55 }}>
-              {t('内置 Agent 会先生成可预览的修改提案，由你应用或拒绝；外部 MCP 使用独立编辑会话，manual 模式等待审核，auto 模式在 review 时直接应用。两者都只通过 EditorCore 命令修改工程。')}
+              {t('在 Codex 中下达命令；外部 MCP 使用独立编辑会话，manual 模式等待你审核提案，auto 模式在 review 时应用修改。工程修改通过 EditorCore 命令执行，软件不内置聊天模型。')}
             </div>
           </div>
           <div style={cardStyle}>
-            <span style={{ fontSize: 12, fontWeight: 600 }}>{t('连接本地模型')}</span>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>{t('模型由外部客户端管理')}</span>
             <div style={{ color: theme.textMuted, fontSize: 12, lineHeight: 1.55 }}>
-              {t('打开 设置 → Agent 模型 → Agent 大脑 → OpenAI，填写本地或兼容服务的 API URL 和模型；按服务选择 Responses API 或 Chat Completions API，再点“测试并读取模型”。仅在服务要求时填写 API Key。')}
+              {t('模型、账号和 AI API 在 Codex 等外部客户端配置。左人剪刀仅提供剪辑工具和 MCP 连接，不需要填写 AI API 密钥。')}
             </div>
           </div>
         </div>

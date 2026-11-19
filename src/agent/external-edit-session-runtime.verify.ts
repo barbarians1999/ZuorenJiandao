@@ -310,7 +310,8 @@ assert(!isExternalDraftTool('load_skill'));
 const askModeToolNames = new Set(ASK_MODE_TOOL_SCHEMAS.map((tool) => tool.name));
 assert(askModeToolNames.has('load_skill'), 'Q&A mode exposes the current skill reader');
 assert(askModeToolNames.has('read_project'), 'Q&A mode exposes project inspection');
-assert(askModeToolNames.has('search_stock_media'), 'Q&A mode exposes read-only stock search');
+assert(!askModeToolNames.has('search_stock_media'), 'retired online stock search is not exposed');
+assert(askModeToolNames.has('search_media'), 'Q&A mode retains local media search');
 assert(!askModeToolNames.has('edit_captions'), 'Q&A mode excludes draft edits');
 assert(!askModeToolNames.has('submit_render_job'), 'Q&A mode excludes live side effects');
 assert(

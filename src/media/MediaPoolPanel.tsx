@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useMusicAnalysisCards } from '../audio/intelligence/useMusicAnalysisCards';
 import { useT } from '../i18n/locale';
-import type { MediaAsset, MediaAssetRelinkPatch, MediaFolder } from '../editor/types';
+import type { MediaAsset, MediaFolder } from '../editor/types';
+import { isFontAsset } from '../../shared/desktop-fonts';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useFocusReturn } from '../hooks/useFocusReturn';
 import { useMediaPoolRelink } from './useMediaPoolRelink';
@@ -10,7 +11,7 @@ import { MediaPoolToolbar, type MediaToolbarMenu } from './MediaPoolToolbar';
 import type { SemanticMatch } from './semantic-search/types';
 import { filterMediaAssets, type MediaSortKey, type MediaTypeFilter } from './mediaPoolFilter';
 import { MobileUploadDialog } from './MobileUploadDialog';
-import type { MobileUploadRecord } from './mobileUploadApi';
+import type { MediaPoolIngestProps } from './MediaPoolIngestProps';
 import { MissingMediaBanner, MusicModelsNotice, RelinkAllDialog } from './MediaPoolOverlays';
 import {
   MediaPoolDialogs,
@@ -19,7 +20,8 @@ import {
   type MediaPromptState,
 } from './MediaPoolDialogs';
 import { MediaPoolGrid, type MediaGridEntry } from './MediaPoolGrid';
-import { useAssetMenu, type AssetMenuPosition } from './useAssetMenu';
+import { useAssetMenu } from './useAssetMenu';
+import { useMediaPoolFolderMenu } from './useMediaPoolFolderMenu';
 import { assetMenuSelectionIds, batchAssetRename } from './assetMenuSelection';
 import { MediaPoolMenus } from './MediaPoolMenus';
 import { PoolTranscriptViewer } from './TranscriptViewerDialog';
@@ -28,31 +30,26 @@ import { toggleMediaView } from './mediaView';
 import { resolveMediaPoolShortcut } from './mediaPoolShortcutScope';
 import { useMediaPoolFileImport } from './useMediaPoolFileImport';
 import type { UseDirectoryImportState } from './useDirectoryImport';
-interface MediaPoolPanelProps {
+import { MediaSourceRangePanel } from './MediaSourceRangePanel';
+import { resolveMediaSourceRange, type MediaSourceRange, type MediaSourceRanges } from '../editor/mediaSourceRange';
+import './mediaSourceRange.css';
+
+function rangeSourceKey(asset: MediaAsset, fps: number): string {
+  return JSON.stringify([asset.id, asset.src, asset.sourceRevision, asset.durationInFrames, fps]);
+}
+interface MediaPoolPanelProps extends MediaPoolIngestProps {
   initialType?: MediaTypeFilter;
   purpose?: 'bgm';
+  importRequested?: boolean;
+  onImportRequestHandled?: () => void;
   semanticScopeId: string;
   assets: MediaAsset[];
   folders: MediaFolder[];
   fps: number;
   usedAssetIds: ReadonlySet<string>;
   offlineAssetIds: ReadonlySet<string>;
-  onAssetLoadError: (asset: MediaAsset) => void;
-  onImport: (
-    file: File,
-    onProgress?: (ratio: number) => void,
-    lifecycle?: {
-      onPlaceholder?: (asset: MediaAsset) => void;
-      onAssetUpdated?: (asset: MediaAsset) => void;
-      onFailure?: (asset: MediaAsset | null, error: unknown) => void;
-    },
-  ) => Promise<MediaAsset>;
-  onImportMobile: (record: MobileUploadRecord) => Promise<void>;
   directoryImport: UseDirectoryImportState;
   directoryImportError: string | null;
-  onAddAsset: (asset: MediaAsset) => void;
-  onAddAssetsToTimeline?: (assets: MediaAsset[]) => void;
-  onAddAssetsToChat?: (assets: MediaAsset[]) => void;
   onCreateFolder: (name: string, parentId?: string) => string;
   onRenameFolder: (id: string, name: string) => void;
   onDeleteFolder: (id: string) => void;
@@ -65,28 +62,53 @@ interface MediaPoolPanelProps {
   onRemoveAsset?: (id: string) => void;
   onRemoveAssets?: (ids: string[]) => void;
   onPasteAssets?: (assets: MediaAsset[], folderId?: string) => void;
-  /** Relink File replaces an offline/missing asset and its clip srcs. */
-  onRelinkAsset?: (id: string, next: MediaAssetRelinkPatch) => void;
   /** Add a solid-color clip. */
   onAddSolid?: () => void;
+  onAddShape?: (shape: 'rectangle' | 'ellipse') => void;
+  onAddMosaic?: () => void;
   /** Start (or retry) ASR for one asset from the pool UI. */
   onTranscribe: (asset: MediaAsset) => void;
 }
 
 export function MediaPoolPanel({
-  initialType = 'all', purpose,
-  semanticScopeId, assets, folders, fps, usedAssetIds, offlineAssetIds, onAssetLoadError,
-  onImport, onImportMobile, directoryImport, directoryImportError, onAddAsset, onAddAssetsToTimeline, onAddAssetsToChat, onCreateFolder, onRenameFolder,
-  onDeleteFolder, onMoveAssets, onRenameAsset, onRenameAssets, onSetFavorite, onSetAssetsFavorite, onRemoveAsset, onRemoveAssets, onPasteAssets, onRelinkAsset, onAddSolid, onTranscribe,
+  initialType = 'all', purpose, importRequested = false, onImportRequestHandled,
+  semanticScopeId, assets: projectAssets, folders, fps, usedAssetIds, offlineAssetIds, onAssetLoadError,
+  onImport, onImportMobile, directoryImport, directoryImportError, onAddAsset: addAssetToTimeline, onAddAssetsToTimeline: addAssetsToTimeline, onCreateFolder, onRenameFolder,
+  onDeleteFolder, onMoveAssets, onRenameAsset, onRenameAssets, onSetFavorite, onSetAssetsFavorite, onRemoveAsset, onRemoveAssets, onPasteAssets, onRelinkAsset, onAddSolid, onAddShape, onAddMosaic, onTranscribe,
 }: MediaPoolPanelProps) {
   const t = useT();
+  const assets = useMemo(() => projectAssets.filter((asset) => !isFontAsset(asset)), [projectAssets]);
   const musicAnalysis = useMusicAnalysisCards(assets);
   const [error, setError] = useState<string | null>(null);
+  const [sourceAssetId, setSourceAssetId] = useState<string | null>(null);
+  const [markedRanges, setMarkedRanges] = useState<Record<string, { key: string; range: MediaSourceRange }>>({});
+  useEffect(() => { setSourceAssetId(null); setMarkedRanges({}); }, [semanticScopeId]);
+  const sourceRanges = useMemo<MediaSourceRanges>(() => Object.fromEntries(assets.flatMap((asset) => {
+    const saved = Object.hasOwn(markedRanges, asset.id) ? markedRanges[asset.id] : undefined;
+    return saved?.key === rangeSourceKey(asset, fps) ? [[asset.id, saved.range]] : [];
+  })), [assets, fps, markedRanges]);
+  const sourceAsset = assets.find((asset) => asset.id === sourceAssetId && (asset.kind === 'video' || asset.kind === 'audio'));
+  const onAddAsset = useCallback((asset: MediaAsset) => {
+    try { addAssetToTimeline(asset, resolveMediaSourceRange(asset, sourceRanges[asset.id])); setError(null); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  }, [addAssetToTimeline, sourceRanges]);
+  const onAddAssetsToTimeline = useMemo(() => addAssetsToTimeline ? (targets: MediaAsset[]) => {
+    try { addAssetsToTimeline(targets, sourceRanges); setError(null); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  } : undefined, [addAssetsToTimeline, sourceRanges]);
   const fileImport = useMediaPoolFileImport({ onImport, onMoveAssets, onCreateFolder, setError, t });
   const {
     inputRef, busy, setBusy, uploadRatio, canPickDirectory,
     pickFiles, pickDirectory, handleDrop,
   } = fileImport;
+  const importHandled = useRef(false);
+  useEffect(() => {
+    if (!importRequested) { importHandled.current = false; return; }
+    if (importHandled.current) return;
+    importHandled.current = true;
+    inputRef.current?.click();
+    onImportRequestHandled?.();
+  }, [importRequested, inputRef, onImportRequestHandled]);
   const { available: canWatchDirectory, busy: watchBusy, activeWatch, start: startWatch, stop: stopWatch } = directoryImport;
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<MediaSortKey>('newest');
@@ -100,14 +122,13 @@ export function MediaPoolPanel({
     open: openAssetMenuAt,
     close: closeAssetMenu,
   } = useAssetMenu();
-  const [folderMenuId, setFolderMenuId] = useState<string | null>(null);
-  const [folderMenuPos, setFolderMenuPos] = useState<AssetMenuPosition | null>(null);
   // Two-step deletion: first click asks for confirmation, reopening the menu resets it
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>();
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [assetClipboard, setAssetClipboard] = useState<MediaAsset[]>([]);
   const [blankMenuPos, setBlankMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const { folderMenuId, folderMenuPos, closeFolderMenu, openFolderMenu } = useMediaPoolFolderMenu(closeAssetMenu, setBlankMenuPos);
   const [promptState, setPromptState] = useState<MediaPromptState | null>(null);
   const [promptValue, setPromptValue] = useState('');
   const [deleteState, setDeleteState] = useState<MediaFolderDeleteState | null>(null);
@@ -161,18 +182,6 @@ export function MediaPoolPanel({
       onSubmit: (name) => setCurrentFolderId(onCreateFolder(name, currentFolderId)),
     });
   };
-  const closeFolderMenu = useCallback(() => {
-    setFolderMenuId(null);
-    setFolderMenuPos(null);
-  }, []);
-  useEffect(() => {
-    if (!folderMenuId) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeFolderMenu();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [closeFolderMenu, folderMenuId]);
   const folderIsEmpty = useCallback((folderId: string) => (
     !assets.some((asset) => asset.folderId === folderId)
     && !folders.some((folder) => folder.parentId === folderId)
@@ -194,28 +203,6 @@ export function MediaPoolPanel({
   const deleteFolder = () => {
     if (currentFolder) requestDeleteFolder(currentFolder);
   };
-  const openFolderMenu = useCallback((
-    id: string,
-    anchor: HTMLElement,
-    point?: { x: number; y: number },
-  ) => {
-    closeAssetMenu();
-    setBlankMenuPos(null);
-    const rect = anchor.getBoundingClientRect();
-    const panel = anchor.closest('.cc-media-pool')?.getBoundingClientRect();
-    const menuWidth = 152;
-    const anchorX = point?.x ?? rect.left;
-    const anchorTop = point?.y ?? rect.top;
-    const anchorBottom = point?.y ?? rect.bottom;
-    const left = Math.min(
-      (panel?.right ?? window.innerWidth) - menuWidth - 8,
-      Math.max((panel?.left ?? 0) + 8, anchorX),
-    );
-    setFolderMenuId(id);
-    setFolderMenuPos(anchorBottom > window.innerHeight / 2
-      ? { bottom: window.innerHeight - anchorTop + 4, left }
-      : { top: anchorBottom + 4, left });
-  }, [closeAssetMenu]);
   const toggleSelected = useCallback((id: string) => setSelected((old) => {
     const next = new Set(old);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -288,6 +275,11 @@ export function MediaPoolPanel({
     : undefined;
   const gridEntries = useMemo<MediaGridEntry[]>(() => [
     ...(showFolders && !currentFolderId && onAddSolid ? [{ kind: 'solid' as const }] : []),
+    ...(showFolders && !currentFolderId && onAddShape ? [
+      { kind: 'shape-rectangle' as const },
+      { kind: 'shape-ellipse' as const },
+    ] : []),
+    ...(showFolders && !currentFolderId && onAddMosaic ? [{ kind: 'mosaic' as const }] : []),
     ...(showFolders && !currentFolderId ? [{ kind: 'favorites' as const }] : []),
     ...(showFolders && currentFolder ? [{
       kind: 'parent' as const,
@@ -296,7 +288,7 @@ export function MediaPoolPanel({
     }] : []),
     ...(showFolders ? childFolders.map((folder) => ({ kind: 'folder' as const, folder })) : []),
     ...visible.map((asset) => ({ kind: 'asset' as const, asset })),
-  ], [childFolders, currentFolder, currentFolderId, onAddSolid, parentFolder?.name, showFolders, t, visible]);
+  ], [childFolders, currentFolder, currentFolderId, onAddSolid, onAddShape, onAddMosaic, parentFolder?.name, showFolders, t, visible]);
   const openFolder = useCallback((id: string) => setCurrentFolderId(id), []);
   const openParent = useCallback(() => {
     setCurrentFolderId(currentFolder?.parentId);
@@ -335,7 +327,7 @@ export function MediaPoolPanel({
       tabIndex={-1}
       onKeyDown={handleMediaPoolKeyDown}
       onPointerDownCapture={(event) => {
-        if (!(event.target as HTMLElement).closest('button, input, select, textarea, [contenteditable="true"], [data-music-analysis-control]')) {
+        if (!(event.target as HTMLElement).closest('button, input, select, textarea, [contenteditable="true"], [data-music-analysis-control], .cc-source-range')) {
           event.currentTarget.focus({ preventScroll: true });
         }
       }}
@@ -352,7 +344,7 @@ export function MediaPoolPanel({
         });
       }}
     >
-      <input ref={inputRef} type="file" multiple hidden onChange={(event) => void pickFiles(event.target.files, currentFolderId)} />
+      <input ref={inputRef} type="file" accept={purpose === 'bgm' ? 'audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus' : undefined} multiple hidden onChange={(event) => void pickFiles(event.target.files, currentFolderId)} />
       <input ref={relinkInputRef} type="file" hidden onChange={(event) => void pickRelinkFile(event.target.files)} />
       {purpose === 'bgm' && <div className="cc-media-purpose"><strong>{t('添加背景音乐')}</strong><span>{t('导入本机 MP3 或 WAV，双击或拖到音轨，再调整音量和淡入淡出。')}</span></div>}
       <MediaPoolToolbar
@@ -376,6 +368,8 @@ export function MediaPoolPanel({
         watchingFolder={activeWatch?.directoryName ?? null} watchBusy={watchBusy}
         onMobileUpload={(restoreFocus) => { modalFocus.remember(restoreFocus); setMobileUploadOpen(true); }}
         onAddSolid={() => onAddSolid?.()}
+        onAddShape={onAddShape}
+        onAddMosaic={onAddMosaic}
         onCreateFolder={createFolder}
         onViewChange={() => setView(toggleMediaView)}
         onMenuChange={setMenu}
@@ -398,7 +392,12 @@ export function MediaPoolPanel({
       </div>}
       {(error ?? directoryImportError) && <div className="cc-media-error">{error ?? directoryImportError}</div>}
       {busy && <div className="cc-media-status">{t('正在导入素材…')}</div>}
-      {assets.length > 0 && <div className="cc-media-export-guide">{t('点击素材右上角“⋯”：图片、视频和音频可下载原文件，MG 可导出透明 MOV。')}</div>}
+
+      {sourceAsset && !missing.has(sourceAsset.id) && <MediaSourceRangePanel
+        key={rangeSourceKey(sourceAsset, fps)} asset={sourceAsset} fps={fps} purpose={purpose}
+        range={sourceRanges[sourceAsset.id] ?? { srcInFrame: 0, durationInFrames: Math.max(1, Math.round(sourceAsset.durationInFrames)) }}
+        onChange={(range) => setMarkedRanges((current) => ({ ...current, [sourceAsset.id]: { key: rangeSourceKey(sourceAsset, fps), range } }))}
+        onAdd={() => onAddAsset(sourceAsset)} onClose={() => setSourceAssetId(null)} />}
 
       <MediaPoolGrid
         entries={gridEntries}
@@ -411,6 +410,10 @@ export function MediaPoolPanel({
         musicAnalysis={musicAnalysis}
         assetMenu={assetMenu}
         canRelink={!!onRelinkAsset}
+        dragPurpose={purpose}
+        sourceRanges={sourceRanges}
+        sourcePreviewOpen={!!sourceAsset}
+        onOpenSourceRange={(id) => { closeAssetMenu(); setSourceAssetId(id); setSelected(new Set([id])); }}
         onOpenFolder={openFolder}
         onOpenParent={openParent}
         onDropTransfer={(transfer, folderId) => void handleDrop(transfer, folderId)}
@@ -418,6 +421,8 @@ export function MediaPoolPanel({
         onMoveAssets={(ids, folderId) => onMoveAssets(ids, folderId)}
         onOpenFavorites={openFavorites}
         onAddSolid={onAddSolid}
+        onAddShape={onAddShape}
+        onAddMosaic={onAddMosaic}
         onAddAsset={onAddAsset}
         onLoadError={markMissing}
         onLoadSuccess={clearMissing}
@@ -453,7 +458,6 @@ export function MediaPoolPanel({
           transcribe: (targets) => targets.filter((asset) => (asset.kind === 'audio' || asset.kind === 'video') && asset.transcribeStatus !== 'running' && asset.transcribeStatus !== 'done').forEach((asset) => onTranscribe(asset)),
           viewTranscript: (asset) => openTranscriptViewer(asset.id),
           move: onMoveAssets, addToTimeline: onAddAssetsToTimeline, addAsset: onAddAsset,
-          addToChat: onAddAssetsToChat,
         }}
         blank={{
           position: blankMenuPos, clipboard: assetClipboard, visibleIds, selected,

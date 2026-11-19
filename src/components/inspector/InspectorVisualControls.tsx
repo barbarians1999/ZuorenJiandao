@@ -1,16 +1,26 @@
 import type { ReactNode } from 'react';
 import './InspectorVisualControls.css';
+import './clip-region-controls.css';
 import { theme } from '../../theme';
-import type { ClipEffect, ClipEffectValue, ClipFilters, TimelineItem } from '../../editor/types';
-import { ALL_FX as FX_EFFECTS, LUT_EFFECTS } from '../../gl/fx/effects';
+import type { ClipEffect, ClipEffectValue, ClipFilters, ClipMask, TimelineItem } from '../../editor/types';
+import { DEFAULT_CLIP_MASK } from '../../editor/clipMask';
+import {
+  ALL_FX as FX_EFFECTS,
+  FX_IDS as SHADER_FX_IDS,
+  LUT_EFFECTS,
+  LUT_IDS,
+} from '../../gl/fx/effects';
 import type { SelectedPreviewStatus } from '../../gl/previewAdapter';
 import { useT } from '../../i18n/locale';
-import { ColorParamInput, SliderRow } from './InspectorKeyframeControls';
+import { sampleKeyframes } from '../../editor/keyframes';
+import type { KfApi } from './InspectorKeyframeControls';
+import { ColorParamInput, KfCell, SliderRow } from './InspectorKeyframeControls';
 import type { AutoGradeControlProps } from './InspectorTypes';
 import { PreviewFidelityStatus } from './PreviewFidelityStatus';
 export { BackgroundFillControl } from './BackgroundFillControl';
 
-const FX_IDS = Object.keys(FX_EFFECTS);
+const SHADER_FX_SET = new Set<string>(SHADER_FX_IDS);
+const LUT_FX_SET = new Set<string>(LUT_IDS);
 const compactNumber = (value: number) => String(Number(value.toFixed(2)));
 
 // small uppercase-ish divider label between control groups.
@@ -104,6 +114,81 @@ export function FilterControl({ item, mixed, onChange, autoGrade }: {
   );
 }
 
+/** Rectangle/ellipse mask. Geometry is normalized to the composition and can
+ * use the same local-frame keyframe rail as ordinary transform channels. */
+export function MaskControl({ item, mixed, onChange, onReset, kf }: {
+  item: TimelineItem;
+  mixed?: Partial<Record<'type' | 'x' | 'y' | 'width' | 'height' | 'feather', boolean>>;
+  onChange: (mask: ClipMask | null) => void;
+  onReset: (props: readonly ('maskX' | 'maskY' | 'maskWidth' | 'maskHeight' | 'maskFeather')[]) => void;
+  kf: KfApi;
+}) {
+  const t = useT();
+  const active = item.mask ?? DEFAULT_CLIP_MASK;
+  const update = (patch: Partial<ClipMask>) => onChange({
+    ...(mixed?.type || !item.mask ? DEFAULT_CLIP_MASK : item.mask),
+    ...patch,
+  });
+  const rows: ReadonlyArray<{ key: 'x' | 'y' | 'width' | 'height' | 'feather'; prop: 'maskX' | 'maskY' | 'maskWidth' | 'maskHeight' | 'maskFeather'; label: string; min: number; max: number; step: number; defaultValue: number }> = [
+    { key: 'x', prop: 'maskX', label: t('左侧'), min: 0, max: 1, step: 0.01, defaultValue: 0 },
+    { key: 'y', prop: 'maskY', label: t('顶部'), min: 0, max: 1, step: 0.01, defaultValue: 0 },
+    { key: 'width', prop: 'maskWidth', label: t('宽度'), min: 0.001, max: 1, step: 0.01, defaultValue: 1 },
+    { key: 'height', prop: 'maskHeight', label: t('高度'), min: 0.001, max: 1, step: 0.01, defaultValue: 1 },
+    { key: 'feather', prop: 'maskFeather', label: t('羽化'), min: 0, max: 0.5, step: 0.005, defaultValue: 0 },
+  ];
+  const row = (definition: typeof rows[number]) => {
+    const kfs = item.keyframes?.[definition.prop];
+    const base = active[definition.key] ?? definition.defaultValue;
+    const value = kfs?.length ? sampleKeyframes(kfs, kf.localFrame) : base;
+    const mixedValue = mixed?.[definition.key];
+    return (
+      <div key={definition.prop} className="cc-insp-control-line">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <SliderRow
+            label={definition.label}
+            val={value}
+            mixed={mixedValue}
+            min={definition.min}
+            max={definition.max}
+            step={definition.step}
+            fmt={`${Math.round(value * 100)}%`}
+            inputScale={100}
+            disabled={!!kfs?.length && !kf.inRange}
+            disabledReason={t('把播放头移进这个片段才能改这里的关键帧')}
+            onReset={() => kfs?.length ? onReset([definition.prop]) : update({ [definition.key]: definition.defaultValue })}
+            resetDisabled={!mixedValue && !kfs?.length && (!item.mask || Math.abs(base - definition.defaultValue) < 1e-6)}
+            onChange={(next) => {
+              if (!kfs?.length) update({ [definition.key]: next });
+              else if (kf.inRange) kf.set(definition.prop, kf.localFrame, next);
+            }}
+          />
+        </div>
+        <KfCell kfs={kfs} localFrame={kf.localFrame} inRange={kf.inRange} punchValue={value}
+          onSet={(frame, next, easing) => kf.set(definition.prop, frame, next, easing)}
+          onRemove={(frame) => kf.remove(definition.prop, frame)} onSeekLocal={kf.seekLocal} />
+      </div>
+    );
+  };
+  return (
+    <div className="cc-clip-region-control">
+      <div className="cc-region-presets" aria-label={t('蒙版形状')}>
+        {(['none', 'rectangle', 'ellipse'] as const).map((type) => <button key={type} type="button"
+          aria-pressed={!mixed?.type && (item.mask?.type ?? 'none') === type}
+          onClick={() => type === 'none' ? onChange(null) : onChange({
+            ...(mixed?.type || !item.mask ? { ...DEFAULT_CLIP_MASK, x: .2, y: .2, width: .6, height: .6 } : item.mask), type,
+          })}>
+          <span className={`cc-region-sample mask-${type}`} aria-hidden="true" />
+          {t({ none: '无', rectangle: '矩形', ellipse: '椭圆' }[type])}
+        </button>)}
+      </div>
+      {mixed?.type && <p className="cc-region-note">{t('所选片段的蒙版不同，点击形状统一应用。')}</p>}
+      <p className="cc-region-note">{t('在预览画面拖动蒙版内部移动，拉动四角或四边调整大小。右侧参数用于精确调整；位置和羽化支持关键帧。')}</p>
+      {item.mask && rows.map(row)}
+      <p className="cc-region-note">{t('坐标相对于画布；羽化相对于画布短边')}</p>
+    </div>
+  );
+}
+
 
 
 // Per-clip WebGL effect stack (effects / builtin:fx-*). Order is render
@@ -112,6 +197,7 @@ export function EffectsControl({ item, onChange, previewStatus }: { item: Timeli
   const t = useT();
   const effects = item.effects ?? [];
   const active = effects.filter((fx) => fx.assetId in FX_EFFECTS);
+  const customFxIds = Object.keys(FX_EFFECTS).filter((id) => !SHADER_FX_SET.has(id) && !LUT_FX_SET.has(id));
   const addEffect = (assetId: string) => {
     if (assetId) onChange([...effects, { id: `fx_${crypto.randomUUID()}`, assetId, overrides: {} }]);
   };
@@ -133,8 +219,18 @@ export function EffectsControl({ item, onChange, previewStatus }: { item: Timeli
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <select value="" onChange={(e) => addEffect(e.target.value)}
         style={{ width: '100%', background: theme.panelAlt, color: theme.text, border: `0.5px solid ${theme.border}`, borderRadius: 6, padding: '5px 7px', fontSize: 12 }}>
-        <option value="">{t('＋ 添加特效…')}</option>
-        {FX_IDS.map((id) => <option key={id} value={id}>{t(FX_EFFECTS[id].name)}</option>)}
+        <option value="">{t('＋ 添加特效或 LUT…')}</option>
+        <optgroup label={t('画面特效')}>
+          {SHADER_FX_IDS.map((id) => <option key={id} value={id}>{t(FX_EFFECTS[id].name)}</option>)}
+        </optgroup>
+        <optgroup label={t('调色 LUT')}>
+          {LUT_IDS.map((id) => <option key={id} value={id}>{t(LUT_EFFECTS[id].name)}</option>)}
+        </optgroup>
+        {customFxIds.length > 0 && (
+          <optgroup label={t('扩展特效')}>
+            {customFxIds.map((id) => <option key={id} value={id}>{t(FX_EFFECTS[id].name)}</option>)}
+          </optgroup>
+        )}
       </select>
       {active.length === 0 && <div style={{ fontSize: 10.5, color: theme.textDim }}>{t('尚未添加特效。')}</div>}
       {active.length > 0 && <PreviewFidelityStatus status={previewStatus} />}

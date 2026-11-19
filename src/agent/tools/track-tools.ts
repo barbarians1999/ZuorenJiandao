@@ -28,6 +28,7 @@ function describe(state: TimelineState, id: TrackId) {
     name: config.name ?? null,
     hidden: kind === 'caption' ? !captionsOnTrack(state, id)?.enabled : config.hidden ?? false,
     muted: config.muted ?? false,
+    soloed: config.soloed ?? false,
     locked: config.locked ?? false,
     role: config.role ?? null,
     audioRouting: config.audioRouting ?? null,
@@ -64,15 +65,21 @@ export async function execTrackTool(name: string, args: Args, ctx: AgentContext)
       if (kind !== 'video' && kind !== 'audio' && kind !== 'caption') return { error: 'create requires json.trackType = video, audio, or caption' };
       const count = Math.max(1, Math.min(32, Math.round(Number(data.count) || 1)));
       const role = data.role === 'anchor' || data.role === 'follower' ? data.role as TrackRole : undefined;
-      const duckDepthDb = typeof (data.audioRouting as Args | undefined)?.duckDepthDb === 'number'
-        ? Math.max(-60, Math.min(0, Number((data.audioRouting as Args).duckDepthDb))) : undefined;
+      const routing = data.audioRouting as Args | undefined;
+      const duckDepthDb = typeof routing?.duckDepthDb === 'number'
+        ? Math.max(-60, Math.min(0, Number(routing.duckDepthDb))) : undefined;
+      const gainDb = typeof routing?.gainDb === 'number'
+        ? Math.max(-60, Math.min(12, Number(routing.gainDb))) : undefined;
       const created: TrackId[] = [];
       for (let index = 0; index < count; index++) {
         created.push(ctx.commands.createTrack(kind, {
           name: typeof data.name === 'string' ? data.name : undefined,
           role,
           order: typeof data.order === 'number' ? Math.round(data.order) + index : undefined,
-          audioRouting: duckDepthDb === undefined ? undefined : { duckDepthDb },
+          audioRouting: duckDepthDb === undefined && gainDb === undefined ? undefined : {
+            ...(duckDepthDb !== undefined ? { duckDepthDb } : {}),
+            ...(gainDb !== undefined ? { gainDb } : {}),
+          },
         }));
       }
       const after = await waitForTracks(ctx, created);
@@ -88,14 +95,22 @@ export async function execTrackTool(name: string, args: Args, ctx: AgentContext)
       if (typeof data.order === 'number') patch.order = Math.round(data.order);
       if (typeof data.hidden === 'boolean') patch.hidden = data.hidden;
       if (typeof data.muted === 'boolean') patch.muted = data.muted;
+      if (typeof data.soloed === 'boolean') patch.soloed = data.soloed;
       if (typeof data.locked === 'boolean') patch.locked = data.locked;
       if (typeof data.name === 'string') patch.name = data.name.trim();
       if (data.role === null || data.role === 'anchor' || data.role === 'follower') patch.role = data.role as TrackRole | null;
       const routing = data.audioRouting as Args | undefined;
-      if (routing && (routing.duckDepthDb === null || typeof routing.duckDepthDb === 'number')) {
-        patch.audioRouting = { duckDepthDb: routing.duckDepthDb === null ? null : Math.max(-60, Math.min(0, Number(routing.duckDepthDb))) };
+      if (routing) {
+        const routingPatch: NonNullable<TrackUpdate['audioRouting']> = {};
+        if (routing.duckDepthDb === null || typeof routing.duckDepthDb === 'number') {
+          routingPatch.duckDepthDb = routing.duckDepthDb === null ? null : Math.max(-60, Math.min(0, Number(routing.duckDepthDb)));
+        }
+        if (routing.gainDb === null || typeof routing.gainDb === 'number') {
+          routingPatch.gainDb = routing.gainDb === null ? null : Math.max(-60, Math.min(12, Number(routing.gainDb)));
+        }
+        if (Object.keys(routingPatch).length) patch.audioRouting = routingPatch;
       }
-      if (!Object.keys(patch).length) return { error: 'update json must include order, hidden, muted, locked, name, role, or audioRouting' };
+      if (!Object.keys(patch).length) return { error: 'update json must include order, hidden, muted, soloed, locked, name, role, or audioRouting' };
       ctx.commands.updateTrack(id, patch);
       const after = ctx.getState();
       return { ok: true, track: describe(after, id), tracks: list(after) };

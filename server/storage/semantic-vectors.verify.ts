@@ -96,6 +96,15 @@ async function main(): Promise<void> {
     assert.equal(reopened.length, 1, 'vectors must survive a connection reopen');
     assert.equal(reopened[0]!.assetId, 'asset-1');
 
+    // ── graceful no-op when sqlite store is disabled ──
+    process.env.OPENCHATCUT_SQLITE_STORE = '0';
+    resetSemanticVectorsForTests();
+    assert.deepEqual(pruneSemanticVectors('project-a', []), {
+      staleModelRemoved: false,
+      staleSourceRemoved: false,
+    });
+    clearSemanticVectors('project-a');
+
     console.log('✓ semantic-vectors verify: upsert/replace/search/scope-isolation/prune/clear/reopen all passed');
   } finally {
     if (previousEnv === undefined) delete process.env.OPENCHATCUT_SQLITE_STORE;

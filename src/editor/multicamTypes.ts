@@ -1,8 +1,8 @@
 import type { TimelineItem } from './clipTypes.js';
 
-export type TimelineLinkMode = 'linked' | 'sync-lock';
+export type TimelineLinkMode = 'linked' | 'sync-lock' | 'group';
 
-/** Linked A/V or sync-lock membership. Offsets are defined by the anchor item. */
+/** Linked A/V, sync-lock, or ordinary selection/move group membership. */
 export interface TimelineLinkGroup {
   id: string;
   itemIds: string[];

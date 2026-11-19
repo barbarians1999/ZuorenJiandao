@@ -3,6 +3,7 @@ import type { CaptionsData } from '../captions/types';
 import type { IconName } from '../components/icons';
 import {
   captionTrackEntries,
+  timelineDuration,
   type ProjectDoc,
   type TimelineItem,
   type TimelineState,
@@ -45,7 +46,7 @@ import {
 } from './useExportWorkflow';
 
 export const EXPORT_TABS = [
-  { key: 'video', label: '成片', summary: 'MP4 / WebM', icon: 'film' },
+  { key: 'video', label: '成片', summary: 'MP4 / WebM / MOV', icon: 'film' },
   { key: 'audio', label: '音轨', summary: 'MP3', icon: 'music' },
   { key: 'mg', label: '动态图层', summary: 'ProRes 4444', icon: 'sparkles' },
   { key: 'subtitles', label: '字幕稿', summary: 'SRT / TXT', icon: 'captions' },
@@ -112,6 +113,7 @@ export interface ExportWorkflowModel {
   resetFeedback: () => void;
   selectedJobId: string | null;
   cancelJob: (jobId: string) => void;
+  clearTerminal: () => void;
   viewJob: (jobId: string | null) => void;
   run: () => Promise<void>;
   toggleAutoQa: (enabled: boolean) => void;
@@ -191,13 +193,15 @@ function outputName(base: string, tab: ExportTab, video: ExportVideoSettings, su
   return mgOutput;
 }
 
-export function useExportDialogModel({ state, project, projectId, projectName, exportJobs, onClose }: {
+export function useExportDialogModel({ state, project, projectId, projectName, exportJobs, onClose, zoneIn = null, zoneOut = null }: {
   state: TimelineState;
   project: ProjectDoc;
   projectId: string;
   projectName: string;
   exportJobs: ExportJobStore;
   onClose: () => void;
+  zoneIn?: number | null;
+  zoneOut?: number | null;
 }): ExportDialogModel {
   const t = useT();
   const [tab, setTab] = useState<ExportTab>('video');
@@ -209,9 +213,18 @@ export function useExportDialogModel({ state, project, projectId, projectName, e
   const mgItems = useMemo(() => state.items.filter((item) => item.kind === 'motion-graphic'), [state.items]);
   const includeAvailableMg = effectiveIncludeMg(includeMg, mgItems);
   const base = sanitizeFileName(projectName, 'export');
+  const exportRange = useMemo(() => {
+    if (zoneIn == null || zoneOut == null) return {};
+    const duration = timelineDuration(state);
+    if (duration < 1) return {};
+    const startFrame = Math.max(0, Math.min(duration - 1, Math.round(zoneIn)));
+    const endFrameExclusive = Math.max(startFrame + 1, Math.min(duration, Math.round(zoneOut)));
+    return endFrameExclusive > startFrame ? { startFrame, endFrameExclusive } : {};
+  }, [state, zoneIn, zoneOut]);
   const workflow = useExportWorkflow({
     state, project, timelineId: project.activeTimelineId, projectId, projectName, base, tab, codec: video.codec, resolution: video.resolution,
     fps: video.fps, requestedVideoBitrate: video.requestedBitrate,
+    ...exportRange,
     subtitleFormat: subtitles.format, subtitleCaptions: subtitles.captions,
     nleFormat, includeMg: includeAvailableMg, mgItems, onClose,
   }, exportJobs);

@@ -1,4 +1,7 @@
 import { isBackgroundFillActive } from '../../editor/backgroundFill';
+import { normalizeClipMask, resolveMaskAt } from '../../editor/clipMask';
+import { compositionMosaicRect, parseCompositionMosaic, type CompositionMosaic } from '../../editor/compositionMosaic';
+import { measureTextClipRect } from './previewTextGeometry';
 import {
   flexCropVisibleRect,
   compactFlexCrop,
@@ -17,6 +20,7 @@ import {
   isVisualItemKind,
   timelineTrackIds,
   trackKind,
+  type ClipMask,
   type FlexCrop,
   type ClipTransform,
   type KeyframeProp,
@@ -109,6 +113,7 @@ export function visiblePreviewCandidates(state: TimelineState, absoluteFrame: nu
     .filter((item) => (
       isVisualItemKind(item.kind)
       && visualTracks.includes(item.track)
+      && item.pictureDisabled !== true
       && !state.tracks?.[item.track]?.hidden
       && !state.tracks?.[item.track]?.locked
       && absoluteFrame >= item.startFrame
@@ -127,21 +132,46 @@ export function visiblePreviewCandidates(state: TimelineState, absoluteFrame: nu
   }));
 }
 
-function previewBaseRect(state: TimelineState, item: TimelineItem): PreviewRect {
+function intersectPreviewRects(a: PreviewRect, b: PreviewRect): PreviewRect {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.width, b.x + b.width);
+  const y2 = Math.min(a.y + a.height, b.y + b.height);
+  if (x2 <= x1 || y2 <= y1) return { x: x1, y: y1, width: 0, height: 0 };
+  return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+}
+
+function previewBaseRect(state: TimelineState, item: TimelineItem, localFrame = 0): PreviewRect {
   if (state.width <= 0 || state.height <= 0) return { x: 0, y: 0, width: 0, height: 0 };
   const canvas = { x: 0, y: 0, width: state.width, height: state.height };
-  let content = canvas;
-  if (item.kind !== 'solid') {
-    const sourceWidth = item.width && item.width > 0 ? item.width : state.width;
-    const sourceHeight = item.height && item.height > 0 ? item.height : state.height;
-    content = visibleVisualFrameRect(
-      { width: state.width, height: state.height },
-      { width: sourceWidth, height: sourceHeight },
-      isBackgroundFillActive(state, item) ? 'contain' : (state.fit ?? 'contain'),
-    );
+  if (item.kind === 'mosaic') {
+    const region = parseCompositionMosaic(item.mosaic);
+    return region ? compositionMosaicRect(region, state.width, state.height) : canvas;
   }
-
   const crop = item.transform?.crop;
+  if (item.kind === 'solid') {
+    const mask = item.mask ? resolveMaskAt(item, localFrame, { width: state.width, height: state.height }) : undefined;
+    const content = mask
+      ? {
+          x: mask.x * state.width,
+          y: mask.y * state.height,
+          width: Math.max(1, mask.width * state.width),
+          height: Math.max(1, mask.height * state.height),
+        }
+      : canvas;
+    return crop ? intersectPreviewRects(content, flexCropVisibleRect(crop, state.width, state.height, canvas)) : content;
+  }
+  if (item.kind === 'text') {
+    const content = measureTextClipRect(state, item);
+    return crop ? intersectPreviewRects(content, flexCropVisibleRect(crop, state.width, state.height, canvas)) : content;
+  }
+  const sourceWidth = item.width && item.width > 0 ? item.width : state.width;
+  const sourceHeight = item.height && item.height > 0 ? item.height : state.height;
+  const content = visibleVisualFrameRect(
+    { width: state.width, height: state.height },
+    { width: sourceWidth, height: sourceHeight },
+    isBackgroundFillActive(state, item) ? 'contain' : (state.fit ?? 'contain'),
+  );
   if (!crop) return content;
   return flexCropVisibleRect(crop, state.width, state.height, content);
 }
@@ -174,7 +204,7 @@ const applyTransform = (
 };
 
 export function previewCandidateGeometry(state: TimelineState, candidate: PreviewCandidate): PreviewCandidateGeometry {
-  const baseRect = previewBaseRect(state, candidate.item);
+  const baseRect = previewBaseRect(state, candidate.item, candidate.localFrame);
   const rawCorners = [
     { x: baseRect.x, y: baseRect.y },
     { x: baseRect.x + baseRect.width, y: baseRect.y },
@@ -207,7 +237,7 @@ const inverseTransform = (
 
 export function hitPreviewCandidates(state: TimelineState, absoluteFrame: number, point: PreviewPoint): PreviewCandidate[] {
   return visiblePreviewCandidates(state, absoluteFrame).filter((candidate) => {
-    const rect = previewBaseRect(state, candidate.item);
+    const rect = previewBaseRect(state, candidate.item, candidate.localFrame);
     if (!rect.width || !rect.height) return false;
     const local = inverseTransform(state, point, candidate.transform);
     return local.x >= rect.x && local.x <= rect.x + rect.width
@@ -381,6 +411,94 @@ export function edgeCropPreviewTransform(
     top = fy / state.height;
   }
   return { crop: compactFlexCrop({ left, top, right, bottom }) };
+}
+
+const clampUnit = (value: number, min = 0, max = 1): number => Math.max(min, Math.min(max, value));
+
+/**
+ * Resize a `solid` shape item's clip mask from an edge handle while keeping the opposite edge fixed.
+ */
+export function edgeResizeClipMask(
+  state: Pick<TimelineState, 'width' | 'height'>,
+  transform: EffectivePreviewTransform,
+  startMask: ClipMask,
+  currentPoint: PreviewPoint,
+  edge: PreviewScaleEdge,
+): ClipMask {
+  const base = normalizeClipMask(startMask) ?? startMask;
+  if (state.width <= 0 || state.height <= 0) return base;
+  const local = inverseTransform(state, currentPoint, transform);
+  const nx = clampUnit(local.x / state.width);
+  const ny = clampUnit(local.y / state.height);
+  const minSpan = 0.01;
+  let left = clampUnit(base.x);
+  let right = clampUnit(base.x + base.width);
+  let top = clampUnit(base.y);
+  let bottom = clampUnit(base.y + base.height);
+  if (edge === 'e') {
+    right = clampUnit(nx, Math.min(1, left + minSpan), 1);
+    if (right - left < minSpan) left = Math.max(0, right - minSpan);
+  } else if (edge === 'w') {
+    left = clampUnit(nx, 0, Math.max(0, right - minSpan));
+    if (right - left < minSpan) right = Math.min(1, left + minSpan);
+  } else if (edge === 's') {
+    bottom = clampUnit(ny, Math.min(1, top + minSpan), 1);
+    if (bottom - top < minSpan) top = Math.max(0, bottom - minSpan);
+  } else {
+    top = clampUnit(ny, 0, Math.max(0, bottom - minSpan));
+    if (bottom - top < minSpan) bottom = Math.min(1, top + minSpan);
+  }
+  const next: ClipMask = {
+    ...base,
+    x: left,
+    y: top,
+    width: Math.max(minSpan, right - left),
+    height: Math.max(minSpan, bottom - top),
+  };
+  return normalizeClipMask(next) ?? next;
+}
+
+/**
+ * Resize a composition mosaic item's region from an edge handle without touching `transform.crop`.
+ */
+export function edgeResizeCompositionMosaic(
+  state: Pick<TimelineState, 'width' | 'height'>,
+  transform: EffectivePreviewTransform,
+  startMosaic: CompositionMosaic,
+  currentPoint: PreviewPoint,
+  edge: PreviewScaleEdge,
+): CompositionMosaic {
+  if (state.width <= 0 || state.height <= 0) return startMosaic;
+  const local = inverseTransform(state, currentPoint, transform);
+  const nx = clampUnit(local.x / state.width);
+  const ny = clampUnit(local.y / state.height);
+  const minSpan = 0.02;
+  let left = clampUnit(startMosaic.centerX - startMosaic.width / 2);
+  let right = clampUnit(startMosaic.centerX + startMosaic.width / 2);
+  let top = clampUnit(startMosaic.centerY - startMosaic.height / 2);
+  let bottom = clampUnit(startMosaic.centerY + startMosaic.height / 2);
+  if (edge === 'e') {
+    right = clampUnit(nx, Math.min(1, left + minSpan), 1);
+    if (right - left < minSpan) left = Math.max(0, right - minSpan);
+  } else if (edge === 'w') {
+    left = clampUnit(nx, 0, Math.max(0, right - minSpan));
+    if (right - left < minSpan) right = Math.min(1, left + minSpan);
+  } else if (edge === 's') {
+    bottom = clampUnit(ny, Math.min(1, top + minSpan), 1);
+    if (bottom - top < minSpan) top = Math.max(0, bottom - minSpan);
+  } else {
+    top = clampUnit(ny, 0, Math.max(0, bottom - minSpan));
+    if (bottom - top < minSpan) bottom = Math.min(1, top + minSpan);
+  }
+  const width = clampUnit(right - left, 0.01, 1);
+  const height = clampUnit(bottom - top, 0.01, 1);
+  return {
+    ...startMosaic,
+    centerX: clampUnit(left + width / 2, 0, 1),
+    centerY: clampUnit(top + height / 2, 0, 1),
+    width,
+    height,
+  };
 }
 
 /** @deprecated Prefer edgeCropPreviewTransform — edge handles crop, they do not stretch. */

@@ -21,7 +21,10 @@ export type GlslTransitionType =
   | 'circle-wipe'
   | 'radial-blur'
   | 'glitch-cut'
-  | 'dip-to-color';
+  | 'dip-to-color'
+  | 'mosaic-reveal'
+  | 'blinds-reveal'
+  | 'split-slide';
 
 /** Audio-only transitions (preset `trAudioCrossFade`) — no picture. */
 export type AudioTransitionType = 'audio-cross-fade';
@@ -35,6 +38,7 @@ export const GLSL_TRANSITION_TYPES: ReadonlySet<string> = new Set<string>([
   'cross-dissolve', 'dip-to-black', 'soft-wipe', 'whip-pan', 'flash', 'luma-blend',
   'page-curl', 'rack-focus', 'organic-dissolve', 'impact-shake', 'anticipation-zoom', 'clean-line-wipe',
   'circle-wipe', 'radial-blur', 'glitch-cut', 'dip-to-color',
+  'mosaic-reveal', 'blinds-reveal', 'split-slide',
   'custom-shader', // takes the GL render path; frag comes from the item, not GLSL_TRANSITIONS
 ]);
 
@@ -73,6 +77,9 @@ export const TRANSITION_LABELS: Record<TransitionType, string> = {
   'radial-blur': '径向模糊转场',
   'glitch-cut': '故障切换转场',
   'dip-to-color': '闪色转场',
+  'mosaic-reveal': '棋盘消散转场',
+  'blinds-reveal': '百叶开合转场',
+  'split-slide': '双向分屏转场',
   /** preset.name.trAudioCrossFade */
   'audio-cross-fade': '音频交叉淡化',
   /** submit_shader-generated custom transition (per-item label in customLabel) */
@@ -97,6 +104,9 @@ export const TRANSITION_ORDER: readonly GlslTransitionType[] = [
   'radial-blur',
   'glitch-cut',
   'dip-to-color',
+  'mosaic-reveal',
+  'blinds-reveal',
+  'split-slide',
 ];
 
 /** Audio transition catalog (trAudioCrossFade). */

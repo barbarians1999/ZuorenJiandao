@@ -26,6 +26,7 @@ export interface ExportRoutePlan {
 
 interface ServerCapabilities {
   h264?: ExportEngineInfo;
+  directCut?: ExportEngineInfo;
   renderConcurrency?: number;
 }
 
@@ -42,13 +43,18 @@ function unknownServerEngine(): ExportEngineInfo {
   return { id: 'local-renderer', label: '本机兼容渲染', hardware: false, transport: 'server' };
 }
 
-async function loadServerCapabilities(signal?: AbortSignal): Promise<ServerCapabilities> {
+async function loadServerCapabilities(options: BrowserExportOptions): Promise<ServerCapabilities> {
   try {
-    const response = await fetch('/export/capabilities', { signal });
+    const { state, project, timelineId, codec, resolution, fps, startFrame, endFrameExclusive, videoBitrate, signal } = options;
+    const response = await fetch('/export/capabilities', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state, ...(project && timelineId ? { project, timelineId } : {}),
+        format: 'video', codec, resolution, fps, startFrame, endFrameExclusive, videoBitrate }),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(16000)]) : AbortSignal.timeout(16000) });
     if (!response.ok) return {};
     return await response.json() as ServerCapabilities;
   } catch (error) {
-    if (isAbortError(error)) throw error;
+    options.signal?.throwIfAborted();
     return {};
   }
 }
@@ -81,7 +87,7 @@ function loadPerformance(): PerformanceStore {
 }
 
 function performanceKey(engine: ExportEngineInfo): string {
-  return `${engine.transport}:${engine.id}`;
+  return `${engine.transport}:${engine.id}${engine.renderRoute ? `:${engine.renderRoute}` : ''}`;
 }
 
 function measuredRoute(browser: ExportEngineInfo, server: ExportEngineInfo): 'browser' | 'server' | null {
@@ -92,8 +98,13 @@ function measuredRoute(browser: ExportEngineInfo, server: ExportEngineInfo): 'br
   return browserSample.workPerMillisecond >= serverSample.workPerMillisecond ? 'browser' : 'server';
 }
 
-export function chooseSupportedRoute(browser: BrowserExportInspection, server: ExportEngineInfo) {
+export function chooseSupportedRoute(browser: BrowserExportInspection, server: ExportEngineInfo, directCut?: ExportEngineInfo) {
   const web = browserEngine(browser.status === 'supported' ? browser.powerEfficient : undefined);
+  if (directCut?.renderRoute === 'direct-cut' || directCut?.renderRoute === 'hybrid') {
+    const hybrid = directCut.renderRoute === 'hybrid';
+    return { route: 'server' as const, engine: { ...directCut, label: `${hybrid ? '局部合成快导' : '快速剪切'} · ${directCut.label}` },
+      reason: hybrid ? '普通画面直接处理，仅标题区间逐帧合成' : '此工程支持本机快速剪切，无需逐帧网页合成' };
+  }
   if (browser.status === 'unsupported') {
     return { route: 'server' as const, engine: server, reason: browser.reason };
   }
@@ -108,7 +119,7 @@ export function chooseSupportedRoute(browser: BrowserExportInspection, server: E
 export async function planVideoExportRoute(options: BrowserExportOptions): Promise<ExportRoutePlan> {
   const [browser, capabilities] = await Promise.all([
     inspectBrowser(options),
-    loadServerCapabilities(options.signal),
+    loadServerCapabilities(options),
   ]);
   const server = options.codec === 'h264' ? capabilities.h264 ?? unknownServerEngine() : unknownServerEngine();
   const browserEngineInfo = browserEngine(browser.status === 'supported' ? browser.powerEfficient : undefined);
@@ -133,7 +144,7 @@ export async function planVideoExportRoute(options: BrowserExportOptions): Promi
     browser,
     browserEngine: browserEngineInfo,
     serverEngine: server,
-    ...chooseSupportedRoute(browser, server),
+    ...chooseSupportedRoute(browser, server, options.codec === 'h264' ? capabilities.directCut : undefined),
   };
 }
 

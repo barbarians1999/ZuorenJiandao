@@ -1,4 +1,4 @@
-import type { TimelineItem } from '../editor/types';
+import type { TimelineItem, TimelineLinkGroup, TrackFlags } from '../editor/types';
 import type { FxClip } from '../components/timeline/ClipContextMenu';
 import type { EditMode } from '../components/timeline/timelineUtil';
 
@@ -15,6 +15,8 @@ export interface TimelineShortcutApi {
   splitAtPlayhead: () => void;
   nudgeSelected: (deltaFrames: number) => void;
   trimSelectedToPlayhead: (side: 'start' | 'end') => void;
+  selectBeforePlayhead: () => void;
+  selectAllAfterPlayhead: () => void;
   selectAfterPlayhead: () => void;
   selectUnderPlayhead: () => void;
   gotoEdit: (dir: 1 | -1) => void;
@@ -46,5 +48,5 @@ export interface TimelineShortcutApi {
 }
 
 export type ItemClipboard =
-  | { kind: 'item'; item: TimelineItem; /** multi-copy payload (optional) */ multi?: TimelineItem[] }
+  | { kind: 'item'; item: TimelineItem; tracks?: Partial<Record<string, TrackFlags>>; sourceMainTrackId?: string | null; groups?: TimelineLinkGroup[]; /** multi-copy payload (optional) */ multi?: TimelineItem[] }
   | null;

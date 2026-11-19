@@ -86,12 +86,16 @@ function regionPixels(region: TrackingRequest['region'], width: number, height: 
   return { x, y, width: regionWidth, height: regionHeight };
 }
 
-function sampleFrames(durationInFrames: number): number[] {
+export function sampleFrames(durationInFrames: number): number[] {
   const interval = Math.max(2, Math.ceil(durationInFrames / MAX_SAMPLES));
   const frames: number[] = [];
   for (let frame = 0; frame < durationInFrames; frame += interval) frames.push(frame);
   const last = Math.max(0, durationInFrames - 1);
-  if (frames.at(-1) !== last) frames.push(last);
+  if (frames.at(-1) !== last) {
+    // The endpoint is part of the persisted track's 150-point budget.
+    if (frames.length === MAX_SAMPLES) frames[frames.length - 1] = last;
+    else frames.push(last);
+  }
   return frames;
 }
 

@@ -2,13 +2,17 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { theme, themeAlpha } from '../../theme';
 import type { EditorCommands } from '../../editor/store';
 import { removeItemsFromState } from '../../editor/multiSelect';
-import { setLinkGroup, unlinkItems } from '../../editor/linkGroups';
+import { setLinkGroup, unlinkItems, groupedItemIds, groupTimelineItems, ungroupTimelineItems } from '../../editor/linkGroups';
+import { attachToMainClip, mainTrackId, planMagneticDelete } from '../../editor/magneticTimeline';
+import { planExpandSubdraft, planIndependentSubdraft, type SubdraftOperation } from '../../editor/subdraftOperations';
 import { canMulticamItem, runMulticamSync } from '../../multicam/sync';
-import { TRANSITION_LABELS, ZOOM_SHAPE_LABELS, type TimelineItem, type TimelineState, type TransitionItem } from '../../editor/types';
+import { TRANSITION_LABELS, ZOOM_SHAPE_LABELS, type ProjectDoc, type TimelineItem, type TimelineState, type TransitionItem } from '../../editor/types';
 import { ALL_FX, LUT_EFFECTS } from '../../gl/fx/effects';
 import { Icon, type IconName } from '../icons';
 import { useT } from '../../i18n/locale';
-import { contextReferenceItems } from './clipContextSelection';
+import { canSplitTimelineItemAtFrame } from '../../editor/splitEligibility';
+import { sceneDetectionUnavailable } from '../../scene-detection/apply';
+import { detachAudio, detachAudioUnavailable } from '../../editor/detachAudio';
 
 // speed presets for the variable speed submenu
 const SPEED_PRESETS = [0.25, 0.5, 1, 1.5, 2, 4] as const;
@@ -22,7 +26,7 @@ function matchesSpeedPreset(rate: number, preset: number): boolean {
   return Math.abs(rate - preset) < SPEED_PRESET_EPSILON;
 }
 
-// Clip right-click menu. AI multi-camera synchronization: client audio alignment (src/multicam).
+// Clip right-click menu. Multi-camera synchronization: client audio alignment (src/multicam).
 
 /** effects copied from a clip (the clip's effects[] stack) */
 export interface FxClip {
@@ -43,6 +47,8 @@ interface ClipContextMenuProps {
   commands: EditorCommands;
   /** Active timeline — needed for multi-select batch delete */
   timeline: TimelineState;
+  /** Required for graph-aware subdraft operations; never synthesize a partial document. */
+  projectDoc?: ProjectDoc;
   /** Current multi-selection (includes item when right-clicked inside the set) */
   selectedIds: string[];
   fxClip: FxClip | null;
@@ -53,23 +59,34 @@ interface ClipContextMenuProps {
   /** Turn to video → bake to a video clip in place */
   onConvertToVideo: (item: TimelineItem) => void;
   onAddComment: (item: TimelineItem, frame: number, clientX: number, clientY: number) => void;
-  /** Add the clicked clip or its complete multi-selection as structured AI references. */
-  onAddToChat: (items: TimelineItem[]) => void;
   /** Pick a local replacement for this media clip. */
   onRelinkFile: (item: TimelineItem) => void;
+  /** Open local scene detection for this video clip. */
+  onDetectScenes: (item: TimelineItem) => void;
+  onCopy?: () => void;
+  onPaste?: () => void;
 }
 
 const PASTE_HINT = '⌘⌥V';
 
-export function ClipContextMenu({ item, transitions, x, y, playhead, commands, timeline, selectedIds, fxClip, onCopyFx, onClose, onExportMg, onConvertToVideo, onAddComment, onAddToChat, onRelinkFile }: ClipContextMenuProps) {
+export function ClipContextMenu({ item, transitions, x, y, playhead, commands, timeline, projectDoc, selectedIds, fxClip, onCopyFx, onClose, onExportMg, onConvertToVideo, onAddComment, onRelinkFile, onDetectScenes, onCopy, onPaste }: ClipContextMenuProps) {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const applySubdraftOperation = (planner: typeof planExpandSubdraft) => {
+    if (!projectDoc) return;
+    const result: SubdraftOperation = planner(projectDoc, item.id, (prefix) => `${prefix}_${crypto.randomUUID()}`);
+    if (!result.ok) { window.alert(t(result.error)); return; }
+    commands.applyDoc(result.doc);
+    commands.selectItems(result.itemIds);
+  };
   // Right-click on a multi-selected clip → batch ops on the whole set (NLE convention).
-  const batchIds = selectedIds.includes(item.id) && selectedIds.length > 1 ? selectedIds : [item.id];
-  const referenceItems = contextReferenceItems(item.id, selectedIds, timeline.items);
+  const batchIds = groupedItemIds(timeline, selectedIds.includes(item.id) && selectedIds.length > 1 ? selectedIds : [item.id]);
   const batchN = batchIds.length;
+  const selectedVideos = timeline.items.filter(clip => batchIds.includes(clip.id) && clip.kind === 'video');
+  const detachCount = selectedVideos.filter(clip => !clip.audioDetached).length;
+  const detachDisabledReason = detachAudioUnavailable(timeline, batchIds);
   // Multicam: need ≥2 selected video/audio with media
   const multicamIds = (batchN > 1 ? batchIds : selectedIds.length > 1 ? selectedIds : [])
     .map((id) => timeline.items.find((x) => x.id === id))
@@ -87,6 +104,20 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
     : timeline.multicamGroups?.find((group) => group.angles.some((angle) => angle.itemId === item.id));
   const linkedGroup = timeline.linkGroups?.find((group) => group.mode === 'linked' && group.itemIds.includes(item.id));
   const syncLockGroup = timeline.linkGroups?.find((group) => group.mode === 'sync-lock' && group.itemIds.includes(item.id));
+  const ordinaryGroup = timeline.linkGroups?.some((group) => group.mode === 'group' && group.itemIds.some((id) => batchIds.includes(id)));
+  const attachable = attachToMainClip({ ...timeline, interaction: { ...timeline.interaction,
+    linkage: true, linkedKinds: ['text', 'video', 'image', 'audio', 'other'],
+  } }, { ...item, mainClipId: undefined });
+  const removeSelection = (ripple: boolean) => {
+    if (timeline.interaction?.magnet && timeline.items.some((clip) => batchIds.includes(clip.id) && clip.track === mainTrackId(timeline))) {
+      const plan = planMagneticDelete(timeline, batchIds);
+      if (plan.error) window.alert(plan.error);
+      else if (plan.state !== timeline) commands.applyState(plan.state);
+    } else if (batchN === 1) {
+      if (ripple) commands.rippleDeleteItem(batchIds[0]!);
+      else commands.removeItem(batchIds[0]!);
+    } else commands.applyState(removeItemsFromState(timeline, batchIds, ripple));
+  };
   const toggleRelationship = (mode: 'linked' | 'sync-lock') => {
     const existing = mode === 'linked' ? linkedGroup : syncLockGroup;
     const next = existing
@@ -176,10 +207,12 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
       remove: () => commands.removeTransition(tr.id),
     })),
   ];
-  const inside = playhead > item.startFrame && playhead < item.startFrame + item.durationInFrames;
+  const inside = canSplitTimelineItemAtFrame(item, playhead, !!timeline.tracks?.[item.track]?.locked);
   const isVisual = item.kind !== 'audio';
   const isDom = item.kind === 'motion-graphic' || item.kind === 'text'; // DOM clips → alpha MG export
   const canSpeed = item.kind === 'video' || item.kind === 'audio' || item.kind === 'sequence';
+  const sceneDetectionDisabledReason = sceneDetectionUnavailable(timeline, item);
+  const canDetectScenes = !sceneDetectionDisabledReason;
   const canRelink = !timeline.tracks?.[item.track]?.locked && !!item.src && ['video', 'audio', 'image', 'gif', 'svg'].includes(item.kind);
   const rate = item.playbackRate ?? 1;
   const displayedRate = displaySpeedRate(rate);
@@ -205,11 +238,11 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
   };
 
   return (
-    <div ref={ref} style={style}>
+    <div ref={ref} className="cc-clip-context-menu" style={style}>
       <Item label={t('添加评论')} icon="clipboard" onClick={run(() => onAddComment(item, reviewFrame, x, y))} />
       <Sep />
       <Item
-        label={syncBusy ? t('多机位同步中…') : t('AI 多机位同步')}
+        label={syncBusy ? t('多机位同步中…') : t('多机位同步')}
         icon="users"
         disabled={!multicamReady || syncBusy}
         onClick={() => { void runMulticam(); }}
@@ -245,8 +278,42 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
         onClick={run(() => toggleRelationship('sync-lock'))}
       />
       <Sep />
-      <Item label={t('复制')} icon="copy" shortcut="⌘C" onClick={run(() => commands.duplicateItem(item.id))} />
-      <Item label={t('切分')} icon="scissors" shortcut="C" disabled={!inside} onClick={run(() => commands.splitItem(item.id, playhead))} />
+      <Item label={t('复制')} icon="copy" shortcut="Ctrl+C" disabled={!onCopy} onClick={run(() => onCopy?.())} />
+      <Item label={t('粘贴到播放头')} icon="clipboard" shortcut="Ctrl+V" disabled={!onPaste} onClick={run(() => onPaste?.())} />
+      <Item label={t('组合所选片段')} icon="users" shortcut="Ctrl+G" disabled={batchN < 2}
+        onClick={run(() => commands.applyState(groupTimelineItems(timeline, batchIds, crypto.randomUUID())))} />
+      <Item label={t('取消组合')} icon="unlock" shortcut="Ctrl+Shift+G" disabled={!ordinaryGroup}
+        onClick={run(() => commands.applyState(ungroupTimelineItems(timeline, batchIds)))} />
+      {item.track !== mainTrackId(timeline) && <Item
+        label={item.mainClipId ? t('取消跟随主片段') : t('绑定到下方主片段')}
+        icon={item.mainClipId ? 'unlock' : 'users'}
+        title={t('绑定后，开启联动时随主片段移动和删除；单独移动这个片段不会反向拖动主轨')}
+        disabled={!!timeline.tracks?.[item.track]?.locked || (!item.mainClipId && !attachable.mainClipId)}
+        onClick={run(() => commands.applyState({ ...timeline, items: timeline.items.map((clip) => clip.id === item.id
+          ? { ...clip, mainClipId: item.mainClipId ? undefined : attachable.mainClipId } : clip) }))}
+      />}
+      <Item label={t('创建子草稿（合并所选片段）')} icon="film" onClick={run(() => {
+        const result = commands.createSubdraft(batchIds);
+        if (!result.ok) window.alert(t(result.error));
+      })} />
+      {item.kind === 'sequence' && item.timelineId && <Item label={t('打开子草稿编辑')} icon="film" onClick={run(() => commands.switchTimeline(item.timelineId!))} />}
+      {item.kind === 'sequence' && <>
+        <Item label={t('制作独立副本（只修改这一处）')} icon="copy"
+          title={t('复制内部所有嵌套子草稿；原始媒体共用，不影响其他位置的同一子草稿')}
+          disabled={!projectDoc || !!timeline.tracks?.[item.track]?.locked}
+          onClick={run(() => applySubdraftOperation(planIndependentSubdraft))} />
+        <Item label={t('展开为原片段')} icon="film"
+          title={t('将当前显示的源范围展开到时间线，保留原子草稿，可一次撤销')}
+          disabled={!projectDoc || !!timeline.tracks?.[item.track]?.locked}
+          onClick={run(() => applySubdraftOperation(planExpandSubdraft))} />
+      </>}
+      <Item label={t('切分')} icon="scissors" shortcut="Ctrl+B" disabled={!inside} onClick={run(() => commands.splitItem(item.id, playhead))} />
+      {selectedVideos.length > 0 && <Item label={detachCount > 1 ? t('分离音频（{n} 个视频）', { n: detachCount }) : t('分离音频')} icon="volume"
+        disabled={!!detachDisabledReason} title={detachDisabledReason ? t(detachDisabledReason) : undefined}
+        onClick={run(() => commands.applyState(detachAudio(timeline, batchIds, (prefix) => `${prefix}_${crypto.randomUUID()}`)))} />}
+      <Item label={t('智能分割镜头')} icon="sparkles" disabled={!canDetectScenes}
+        title={sceneDetectionDisabledReason ? t(sceneDetectionDisabledReason) : undefined}
+        onClick={run(() => onDetectScenes(item))} />
       <Sep />
       <Item label={applied.length ? t('已应用效果（{n}）', { n: applied.length }) : t('已应用效果')} icon="filter" chevron disabled={applied.length === 0}
         onClick={applied.length ? () => setShowApplied((v) => !v) : undefined} />
@@ -282,11 +349,6 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
         </div>
       )}
       <Sep />
-      <Item
-        label={batchN > 1 ? t('添加到 AI 对话框（{n}）', { n: batchN }) : t('添加到 AI 对话框')}
-        icon="sparkles"
-        onClick={run(() => onAddToChat(referenceItems))}
-      />
       <Item label={t('重新链接文件')} icon="folder" disabled={!canRelink} onClick={run(() => onRelinkFile(item))} />
       <Sep />
       <Item label={t('导出 MG 动画')} icon="download" disabled={!isDom} onClick={run(() => onExportMg(item))} />
@@ -297,20 +359,14 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
         icon="trash"
         danger
         shortcut="⌫"
-        onClick={run(() => {
-          if (batchN === 1) commands.removeItem(batchIds[0]!);
-          else commands.applyState(removeItemsFromState(timeline, batchIds, false));
-        })}
+        onClick={run(() => removeSelection(false))}
       />
       <Item
         label={batchN > 1 ? t('波纹删除（{n}）', { n: batchN }) : t('波纹删除（合缝）')}
         icon="trash"
         danger
         shortcut="⇧⌫"
-        onClick={run(() => {
-          if (batchN === 1) commands.rippleDeleteItem(batchIds[0]!);
-          else commands.applyState(removeItemsFromState(timeline, batchIds, true));
-        })}
+        onClick={run(() => removeSelection(true))}
       />
     </div>
   );
@@ -325,11 +381,11 @@ function Sep() {
   return <div style={{ height: 0.5, background: theme.border, margin: '5px 6px' }} />;
 }
 
-function Item({ label, icon, shortcut, disabled, danger, pro, chevron, onClick }: {
-  label: string; icon: IconName; shortcut?: string; disabled?: boolean; danger?: boolean; pro?: boolean; chevron?: boolean; onClick?: () => void;
+function Item({ label, icon, shortcut, disabled, danger, pro, chevron, title, onClick }: {
+  label: string; icon: IconName; shortcut?: string; disabled?: boolean; danger?: boolean; pro?: boolean; chevron?: boolean; title?: string; onClick?: () => void;
 }) {
   return (
-    <button disabled={disabled} onClick={onClick}
+    <button disabled={disabled} title={title} onClick={onClick}
       style={{
         display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', background: 'none', border: 'none',
         borderRadius: 6, padding: '7px 9px', fontSize: 12.5, cursor: disabled ? 'default' : 'pointer',

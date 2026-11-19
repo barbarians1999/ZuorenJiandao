@@ -3,6 +3,7 @@ import { resolveTimelineRenderPlan, sequenceGraphError } from '../editor/sequenc
 import { recordExport } from '../persist/exportHistoryStore';
 import {
   browserScaledExportDimensions,
+  exportVideoWithFallback,
   isAbortError,
   renderTimelineInBrowser,
   type BrowserExportAttempt,
@@ -56,13 +57,20 @@ export function validateVideoExportSequenceGraph(options: Pick<UseExportWorkflow
   if (error) throw new ExportFailureError(createSequenceGraphExportFailure(error), { cause: error });
 }
 
-function exportDuration(options: UseExportWorkflowOptions): number {
+function fullExportDuration(options: UseExportWorkflowOptions): number {
   return options.project && options.timelineId
     ? resolveTimelineRenderPlan(options.project, options.timelineId).durationInFrames
     : timelineDuration(options.state);
 }
 
-function browserProgress(context: VideoExportContext): NonNullable<BrowserExportOptions['onProgress']> {
+function exportDuration(options: UseExportWorkflowOptions): number {
+  const full = fullExportDuration(options);
+  const start = options.startFrame ?? 0;
+  const end = options.endFrameExclusive ?? full;
+  return Math.max(1, Math.min(full, end) - Math.max(0, start));
+}
+
+export function browserProgress(context: VideoExportContext): NonNullable<BrowserExportOptions['onProgress']> {
   return (snapshot) => {
     context.setRenderEngine('browser');
     const percent = Math.min(98, Math.max(1, Math.round(snapshot.progress * 98)));
@@ -70,16 +78,17 @@ function browserProgress(context: VideoExportContext): NonNullable<BrowserExport
     context.setProgress((current) => current ? {
       ...current,
       phase: 'rendering',
+      renderingStartedAt: current.renderingStartedAt ?? Date.now(),
       percent: Math.max(current.percent, percent),
       processedFrames: snapshot.encodedFrames,
-      totalFrames: Math.max(1, exportDuration(context.options)),
+      totalFrames: Math.max(1, Math.round(exportDuration(context.options) * context.options.fps / context.options.state.fps)),
       detail: context.t('WebCodecs 浏览器加速'),
     } : current);
   };
 }
 
 function browserOptions(context: VideoExportContext, signal: AbortSignal): BrowserExportOptions {
-  const { state, project, timelineId, codec, resolution, fps, requestedVideoBitrate } = context.options;
+  const { state, project, timelineId, codec, resolution, fps, requestedVideoBitrate, startFrame, endFrameExclusive } = context.options;
   return {
     state,
     project,
@@ -87,6 +96,8 @@ function browserOptions(context: VideoExportContext, signal: AbortSignal): Brows
     codec,
     resolution,
     fps,
+    ...(startFrame !== undefined ? { startFrame } : {}),
+    ...(endFrameExclusive !== undefined ? { endFrameExclusive } : {}),
     videoBitrate: requestedVideoBitrate,
     signal,
     onProgress: browserProgress(context),
@@ -109,6 +120,7 @@ function switchToServer(context: VideoExportContext, engine: ExportEngineInfo, r
     ...current,
     phase: 'preparing',
     percent: 0,
+    renderingStartedAt: undefined,
     processedFrames: undefined,
     totalFrames: undefined,
     detail: context.t('浏览器快导不可用：{reason}，已切换兼容渲染', { reason: context.t(reason) }),
@@ -124,6 +136,7 @@ function switchToBrowser(context: VideoExportContext, engine: ExportEngineInfo, 
     ...current,
     phase: 'preparing',
     percent: 0,
+    renderingStartedAt: undefined,
     processedFrames: undefined,
     totalFrames: undefined,
     detail: context.t('本机渲染失败：{reason}，已切换 WebCodecs', { reason }),
@@ -211,7 +224,7 @@ export async function saveBrowserResult(
   recordExportPerformance(engine, {
     width: dimensions.width,
     height: dimensions.height,
-    frames: Math.max(1, Math.round(timelineDuration(state) * context.options.fps / state.fps)),
+    frames: Math.max(1, Math.round(exportDuration(context.options) * context.options.fps / state.fps)),
     elapsedMs: performance.now() - startedAt,
   });
   const destinationId = exportHistoryDestinationId(context.destination);
@@ -245,21 +258,16 @@ async function runBrowserThenServer(
   plan: ExportRoutePlan,
 ): Promise<void> {
   const startedAt = performance.now();
-  let attempt: BrowserExportAttempt;
-  try {
-    attempt = await runBrowserRoute(context, controller, plan.browserEngine);
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-    switchToServer(context, plan.serverEngine, error instanceof Error ? error.message : '浏览器快导失败');
-    await context.exportServerVideo(controller.signal);
-    return;
+  const result = await exportVideoWithFallback({
+    browser: () => runBrowserRoute(context, controller, plan.browserEngine),
+    server: () => context.exportServerVideo(controller.signal),
+    onFallback: (reason) => switchToServer(context, plan.serverEngine, reason),
+    signal: controller.signal,
+  });
+  if (result.engine === 'browser') {
+    // Delivery failure must never rerender or silently change export routes.
+    await saveBrowserResult(context, result.attempt, plan.browserEngine, startedAt, controller.signal);
   }
-  if (attempt.status === 'rendered') {
-    await saveBrowserResult(context, attempt, plan.browserEngine, startedAt, controller.signal);
-    return;
-  }
-  switchToServer(context, plan.serverEngine, attempt.reason);
-  await context.exportServerVideo(controller.signal);
 }
 
 async function runServerThenBrowser(
@@ -267,18 +275,33 @@ async function runServerThenBrowser(
   controller: AbortController,
   plan: ExportRoutePlan,
 ): Promise<void> {
+  let originalError: unknown;
   try {
     await context.exportServerVideo(controller.signal);
     return;
   } catch (error) {
+    controller.signal.throwIfAborted();
     if (isAbortError(error)) throw error;
+    // Native/hybrid already performs its one encoder fallback internally. A
+    // disk/source/render error must not silently start a second long export.
+    if (plan.engine.renderRoute) throw error;
     if (!isServerRenderError(error) || plan.browser.status !== 'supported') throw error;
     const reason = error.message || '本机渲染失败';
+    originalError = error;
     switchToBrowser(context, plan.browserEngine, reason);
   }
   const startedAt = performance.now();
-  const attempt = await runBrowserRoute(context, controller, plan.browserEngine);
-  if (attempt.status !== 'rendered') throw new Error(attempt.reason);
+  let attempt: BrowserExportAttempt;
+  try {
+    attempt = await runBrowserRoute(context, controller, plan.browserEngine);
+    if (attempt.status !== 'rendered') throw new Error(attempt.reason);
+  } catch (error) {
+    controller.signal.throwIfAborted();
+    if (isAbortError(error)) throw error;
+    throw new AggregateError([originalError, error],
+      `本机渲染失败：${originalError instanceof Error ? originalError.message : String(originalError)}；WebCodecs 回退失败：${error instanceof Error ? error.message : String(error)}`,
+      { cause: error });
+  }
   await saveBrowserResult(context, attempt, plan.browserEngine, startedAt, controller.signal);
 }
 

@@ -88,9 +88,41 @@ MODEL-OPT-PLAN.md
 /scripts/*
 !/scripts/sync-mediapipe.mjs
 !/scripts/package-windows.mjs
+!/scripts/verify-packaged-isolated.mjs
+!/scripts/generated-edit-benchmark.mts
+!/scripts/run-standard-verification.mjs
+!/scripts/verification-report.mjs
+!/scripts/verification-manifest.json
+!/scripts/verification-inventory.mjs
+!/scripts/verification-runner.mjs
+!/scripts/verification-process.mjs
+!/scripts/benchmark-result-identity.mjs
+!/scripts/desktop-workflow-host.mjs
+!/scripts/chapter-render-bundle.mjs
+!/scripts/chapter-render-bundle.d.mts
+!/scripts/test-artifacts.mjs
+!/scripts/verify-jianying-workflow.mjs
+!/scripts/font-animation-short-probe.mjs
+!/scripts/jianying-workflow-ui-server.mjs
+!/scripts/jianying-workflow-electron.mts
+!/scripts/launch-mask-drag-ui.mjs
+!/scripts/verify-mask-drag-regression.mjs
+!/scripts/fixtures/
+/scripts/fixtures/*
+!/scripts/fixtures/jianying-workflow-ui.tsx
+!/scripts/fixtures/jianying-workflow-ui.html
+!/scripts/fixtures/mask-drag-ui.tsx
+!/scripts/fixtures/mask-drag-ui.html
+!/scripts/chapter-render-frames.mjs
+!/scripts/chapter-transition-audit.mjs
+!/scripts/long-video-*.mts
+!/scripts/long-video-*.mjs
+!/scripts/long-video-*.tsx
+!/scripts/long-video-*.ts
+!/scripts/long-video-*.html
 # Stable regressions are *.verify.* by convention (see the *.check.* rule
 # above), so they are never local-only.
-!/scripts/*.verify.mjs
+!/scripts/*.verify.*
 
 # Local marketing assets and drafts
 /marketing/
@@ -107,3 +139,13 @@ public/whisper-cli/
 
 # Agent tooling local state (Command Code taste captures)
 .commandcode/
+
+# Local workspace caches, stray artifacts, and downloaded runtime archives
+/.codegraph/
+/.caption-inline-qa/
+/scratch/
+/tracking/
+/whisper-bin-*.zip
+/({accept
+/({i
+/({type

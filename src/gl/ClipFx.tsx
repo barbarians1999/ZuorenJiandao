@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AbsoluteFill, Img, continueRender, delayRender, getRemotionEnvironment, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Img, cancelRender, continueRender, delayRender, getRemotionEnvironment, useCurrentFrame, useVideoConfig } from 'remotion';
 import { Video as MediaVideo } from '@remotion/media';
 import { createGlRuntime, type GlRuntime } from './runtime';
 import { cubeSettled, ensureCube } from './fx/cube';
@@ -10,6 +10,7 @@ import type { SelectedPreviewFallbackReason, SelectedPreviewStatusListener } fro
 import type { AspectFit, TimelineItem } from '../editor/types';
 import { sourceFrameAt } from '../editor/sourceLimit';
 import { glEffects } from './clipEffects';
+import { hasPrivacyMosaic, mosaicEffectsAt, mosaicPresentation } from '../editor/mosaic';
 
 // One video/image clip rendered through a builtin:fx-* single-input WebGL pass.
 // Mounts a hidden, frame-synced media
@@ -65,14 +66,18 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
   const frame = useCurrentFrame() + frameOffset;
   const { fps } = useVideoConfig();
   const isRendering = getRemotionEnvironment().isRendering;
+  const protectedSource = hasPrivacyMosaic(item);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sourceLayerRef = useRef<HTMLDivElement | null>(null);
+  const protectionLayerRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<GlRuntime | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const failedAdapterRef = useRef<{ definitionKey: string; reason: SelectedPreviewFallbackReason } | null>(null);
   const stagedRenderKeyRef = useRef<string | null>(null);
   const hasRenderedRef = useRef(false);
+  const renderedKeyRef = useRef<string | null>(null);
   const [hasRendered, setHasRendered] = useState(false);
+  const [privacyFailure, setPrivacyFailure] = useState(false);
   const trimBefore = sourceFrameAt(item, frameOffset);
 
   const staging = useMemo(() => {
@@ -82,23 +87,29 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
     return c;
   }, [width, height]);
 
-  const active = useMemo(() => glEffects(item), [item]);
+  const active = useMemo(() => glEffects({ ...item, effects: mosaicEffectsAt(item, frame, fit, { width, height }) }), [item, frame, fit, width, height]);
   const definitionKey = useMemo(
     () => active.map(({ def }) => `${def.id}:${def.frag}`).join('\u0000'),
     [active],
   );
+  // Shader parameter changes do not require another decoded video frame.
+  // A paused MediaVideo does not emit onVideoFrame again just for a slider.
+  const mediaKey = useMemo(
+    () => JSON.stringify([item.src, trimBefore, item.playbackRate, frame, fit, width, height]),
+    [item.src, trimBefore, item.playbackRate, frame, fit, width, height],
+  );
   const renderKey = useMemo(
-    () => JSON.stringify([frame, fit, width, height, active.map(({ fx }) => [fx.id, fx.overrides])]),
-    [frame, fit, width, height, active],
+    () => JSON.stringify([mediaKey, active.map(({ fx }) => [fx.id, fx.overrides])]),
+    [mediaKey, active],
   );
   const onVideoFrame = useCallback(
     (source: CanvasImageSource) => {
       const ctx = staging.getContext('2d');
       if (!ctx) return;
       drawFit(ctx, source, fit);
-      stagedRenderKeyRef.current = renderKey;
+      stagedRenderKeyRef.current = mediaKey;
     },
-    [fit, renderKey, staging],
+    [fit, mediaKey, staging],
   );
 
   useEffect(() => {
@@ -140,6 +151,7 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
       : null;
     if (priorFailure) {
       report('fallback', priorFailure);
+      if (protectedSource && isRendering) cancelRender(new Error(`Mosaic could not render: ${priorFailure}`));
       finish();
       return () => finish();
     }
@@ -155,7 +167,7 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
     const tick = () => {
       const decodedVideo = item.kind !== 'image';
       const mediaReady = decodedVideo
-        ? stagedRenderKeyRef.current === renderKey
+        ? stagedRenderKeyRef.current === mediaKey
         : !!imageRef.current?.complete;
       if (!mediaReady) { reportWaiting(); raf = requestAnimationFrame(tick); return; }
       if (active.some(({ def }) => def.cube && !cubeSettled(def.cube))) { reportWaiting(); raf = requestAnimationFrame(tick); return; }
@@ -170,10 +182,12 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
           fps,
         );
         runtime.renderFxChain(shaderFrame.passes, staging);
+        renderedKeyRef.current = renderKey;
         // Make the freshly drawn canvas authoritative before unblocking export;
         // React state then preserves the same choice for subsequent renders.
         canvas.style.opacity = '1';
         if (sourceLayerRef.current) sourceLayerRef.current.style.opacity = '0';
+        if (protectionLayerRef.current) protectionLayerRef.current.style.display = 'none';
         if (!isRendering && !hasRenderedRef.current) {
           hasRenderedRef.current = true;
           setHasRendered(true);
@@ -185,12 +199,19 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
         disposeRuntimeSlot(runtimeRef);
         report('fallback', reason);
         console.error('[clip-fx]', error);
+        if (protectedSource) {
+          renderedKeyRef.current = null;
+          canvas.style.opacity = '0';
+          if (protectionLayerRef.current) protectionLayerRef.current.style.display = 'flex';
+          setPrivacyFailure(true);
+          if (isRendering) cancelRender(error instanceof Error ? error : new Error(String(error)));
+        }
       }
       finish();
     };
     tick();
     return () => { cancelAnimationFrame(raf); finish(); };
-  }, [active, definitionKey, fit, staging, item.id, item.kind, frame, fps, isRendering, renderKey, onPreviewStatus]);
+  }, [active, definitionKey, fit, staging, item.id, item.kind, frame, fps, isRendering, mediaKey, renderKey, onPreviewStatus, protectedSource]);
 
   useEffect(() => () => {
     disposeRuntimeSlot(runtimeRef);
@@ -200,13 +221,23 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
   // falling back to the raw source layer would flash the UNFILTERED frame for
   // the 1-2 frames until the new frame's shader pass is ready. The first
   // (never-drawn) load still falls back to the honest source while media loads.
-  const showingShaderFrame = hasRendered;
-  if (active.length === 0) return null;
+  const showingShaderFrame = hasRendered && (!protectedSource || renderedKeyRef.current === renderKey);
+  const presentation = mosaicPresentation({ protectedSource, readyForCurrentFrame: showingShaderFrame });
+  if (active.length === 0) return <AbsoluteFill>
+    {item.kind === 'image'
+      // impeccable-disable-next-line broken-image -- Remotion Img component, src comes from item runtime injection
+      ? <Img src={item.src!} style={{ width: '100%', height: '100%', objectFit: fit }} />
+      : <MediaVideo src={item.src!} trimBefore={trimBefore} playbackRate={item.playbackRate ?? 1} muted
+          headless={isRendering} style={{ width: '100%', height: '100%' }} objectFit={fit} />}
+  </AbsoluteFill>;
   return (
     <AbsoluteFill>
+      {protectedSource && <AbsoluteFill ref={protectionLayerRef} style={{ display: presentation.showProtection ? 'flex' : 'none', backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14 }}>
+        {privacyFailure ? '打码暂不可用，已隐藏画面；可关闭后重新应用' : '正在准备打码画面…'}
+      </AbsoluteFill>}
       {/* The source is the honest Player fallback while media/GL is unavailable.
           Once this exact frame+parameter key is drawn, only the GL canvas shows. */}
-      <AbsoluteFill ref={sourceLayerRef} style={{ opacity: showingShaderFrame ? 0 : 1, pointerEvents: 'none' }}>
+      <AbsoluteFill ref={sourceLayerRef} style={{ opacity: presentation.showSource ? 1 : 0, pointerEvents: 'none' }}>
         {item.kind === 'image'
           // impeccable-disable-next-line broken-image -- Remotion Img component, src comes from item runtime injection
           ? <Img ref={imageRef} src={item.src!} style={{ width: '100%', height: '100%', objectFit: fit }} />

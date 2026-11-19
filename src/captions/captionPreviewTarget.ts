@@ -1,6 +1,7 @@
 import type { TimelineItem } from '../editor/types';
 import type { CaptionStyle, CaptionStyleOverride } from './styles';
 import { buildCues, cueTextPatch, type CueRow } from './captionCues';
+import { hasCaptionCueStartedAt } from './captionPages';
 import { buildLaneGroups } from './lanes';
 import { isManualCaptionEntry, removeManualCue, updateManualCue } from './manualCaptions';
 import { effectivePreset } from './renderStyles';
@@ -48,11 +49,12 @@ const NUDGE_DELTAS: Record<CaptionPreviewNudgeDirection, { x: number; y: number 
 
 const roundedRatio = (value: number): number => Math.round(value * 10_000) / 10_000;
 
-function activeCueIndex(rows: CueRow[], ms: number): number {
+function activeCueIndex(rows: CueRow[], ms: number, fps: number): number {
   for (let index = rows.length - 1; index >= 0; index -= 1) {
-    if (ms < rows[index]!.start) continue;
-    const until = rows[index + 1]?.start ?? rows[index]!.end + LINGER_MS;
-    return ms < until ? index : -1;
+    const prevEnd = index > 0 ? rows[index - 1]!.end : undefined;
+    if (!hasCaptionCueStartedAt(rows[index]!.start, ms, fps, prevEnd)) continue;
+    const next = rows[index + 1];
+    return next || ms < rows[index]!.end + LINGER_MS ? index : -1;
   }
   return -1;
 }
@@ -78,6 +80,7 @@ function manualTarget(captions: CaptionsData, items: TimelineItem[], fps: number
             anchor: group.anchor,
             offsetXRatio: group.offsetXRatio,
             offsetYRatio: group.offsetYRatio,
+            widthRatio: group.widthRatio,
             scale: group.scale,
             rotation: group.rotation,
             opacity: group.opacity,
@@ -86,7 +89,7 @@ function manualTarget(captions: CaptionsData, items: TimelineItem[], fps: number
       return {
         kind: 'manual', laneId: lane.entry.id, cueId: cue.id, cueIndex, cue, layout,
         key: `manual:${lane.entry.id}:${cue.id}`,
-        preset: lane.entry.style ? { ...basePreset, ...lane.entry.style } : basePreset,
+        preset: { ...basePreset, ...lane.entry.style, ...lane.fontOverride },
       };
     }
   }
@@ -108,10 +111,10 @@ export function findCaptionPreviewTarget(
     if (manual) return manual;
   }
   const rows = singleRows ?? buildCues(captions, items, fps);
-  const cueIndex = activeCueIndex(rows, ms);
+  const cueIndex = activeCueIndex(rows, ms, fps);
   const cue = rows[cueIndex];
   return cue
-    ? { kind: 'single', key: `single:${cue.id}`, pageId: cue.id, cue, cueIndex, rows, preset: effectivePreset(captions), layout: captions.layout }
+    ? { kind: 'single', key: `single:${cue.id}`, pageId: cue.id, cue, cueIndex, rows, preset: { ...effectivePreset(captions), ...cue.fontOverride }, layout: captions.layout }
     : null;
 }
 
@@ -166,6 +169,7 @@ export function captionPreviewLayoutPatch(
           anchor: nextLayout.anchor,
           offsetXRatio: nextLayout.offsetXRatio,
           offsetYRatio: nextLayout.offsetYRatio,
+          widthRatio: nextLayout.widthRatio,
           scale: nextLayout.scale,
           rotation: nextLayout.rotation,
           opacity: nextLayout.opacity,
@@ -186,6 +190,7 @@ export function captionPreviewLayoutResetPatch(
         anchor: _anchor,
         offsetXRatio: _offsetXRatio,
         offsetYRatio: _offsetYRatio,
+        widthRatio: _widthRatio,
         scale: _scale,
         rotation: _rotation,
         opacity: _opacity,

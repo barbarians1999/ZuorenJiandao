@@ -1,72 +1,72 @@
-import { useMemo, useState } from 'react';
-import type { CaptionsData, CaptionPacing, CaptionTemplate } from './types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CaptionsData } from './types';
 import type { TimelineItem, TrackId } from '../editor/types';
 import type { TranscriptVariant } from '../transcript/types';
 import { CaptionCueEditor } from './CaptionCueEditor';
-import { CAPTION_STYLES, captionStyleFor } from './styles';
+import { captionStyleFor } from './styles';
 import { isTranslationStale } from './translate';
 import { theme } from '../theme';
 import { useT } from '../i18n/locale';
 import { ManualCaptionEditor } from './ManualCaptionEditor';
 import { beginCaptionStylePointerDrag } from './captionStyleDrag';
-import { captionTemplatePatch } from './captionTemplatePatch';
-import { CaptionMotionControls } from './CaptionMotionControls';
+import { BASIC_CAPTION_STYLE, basicCaptionPatch } from './basicCaptionStyle';
+import { CaptionFontPicker } from './CaptionFontPicker';
+import type { CaptionSelectOptions, CaptionSelectionRef } from './captionSelection';
 
 interface CaptionsControlsProps {
+  projectId?: string;
+  timelineId?: string;
   captionTrackId?: TrackId;
+  draftKey?: string;
   captions: CaptionsData | null;
   /** translation / correction variants of the caption's source transcript (main-line language picker) */
   sourceVariants?: TranscriptVariant[];
   /** The sentence-by-sentence editing list needs to recalculate the same paging as the rendering layer, which requires timeline items + fps */
   items: TimelineItem[];
   fps: number;
+  showList?: boolean;
+  showStyleDetails?: boolean;
+  playheadMs?: number;
+  playing?: boolean;
+  selectedCaptions?: readonly CaptionSelectionRef[];
+  captionActivationRequest?: { selection: CaptionSelectionRef; nonce: number };
+  onCaptionActivationConsumed?: (nonce: number) => void;
+  onSelectCaption?: (selection: CaptionSelectionRef | null, options?: CaptionSelectOptions) => void;
+  onSelectCaptionRange?: (selections: CaptionSelectionRef[], options: { additive: boolean; preserveWithItems: boolean }) => void;
+  reviewRequest?: { ms: number; serial: number };
   /** Sentence-by-sentence editing: click-to-sentence preview (timeline ms) */
   onSeekMs?: (ms: number) => void;
   onCreateManual: () => void;
+  focusManualLane?: string | null;
+  onManualFocused?: () => void;
   getPlayheadMs?: () => number;
   onUpdate: (patch: Partial<CaptionsData>) => void;
+  onLiveUpdate?: (patch: Partial<CaptionsData> | null) => void;
   /** Completely remove captions (hide and clear overlay status) */
   onRemove?: () => void;
-  onTranslate: (lang: string) => void;
-  translating: boolean;
-  translateError: string | null;
 }
-
-const PACINGS: { v: CaptionPacing; label: string; hint: string }[] = [
-  { v: 'phrase', label: '按句/短语', hint: '一次显示一句话，适合纪录片口播' },
-  { v: 'word', label: '逐词高亮', hint: '当前说到的词会变色，像卡拉 OK' },
-];
-
-/** Translation target = second line language. When the spoken broadcast is in Chinese, it will be translated into English by default. Do not select "Chinese" again. */
-const TRANSLATE_TO: { id: string; label: string }[] = [
-  { id: 'English', label: '英文' },
-  { id: '日本語', label: '日文' },
-  { id: 'Español', label: '西班牙文' },
-  { id: 'Français', label: '法文' },
-  { id: '한국어', label: '韩文' },
-];
 
 // Independent caption workspace: style, rhythm, manual captions and translation are all edited here.
 export function CaptionsControls({
-  captionTrackId, captions, sourceVariants = [], items, fps, onSeekMs, onCreateManual, getPlayheadMs, onUpdate, onRemove, onTranslate, translating, translateError,
+  projectId, timelineId, captionTrackId, draftKey, captions, sourceVariants = [], items, fps, reviewRequest, onSeekMs, onCreateManual, focusManualLane, onManualFocused, getPlayheadMs, onUpdate, onLiveUpdate, onRemove,
+  showList = true, showStyleDetails = true, playheadMs, playing, selectedCaptions, captionActivationRequest, onCaptionActivationConsumed,
+  onSelectCaption, onSelectCaptionRange,
 }: CaptionsControlsProps) {
   const t = useT();
-  const [bilingualOpen, setBilingualOpen] = useState(!!captions?.bilingual || !!captions?.translation);
+  const [optionsOpen, setOptionsOpen] = useState(!showList);
+  const lastShowList = useRef(showList);
+  useEffect(() => {
+    if (lastShowList.current !== showList) setOptionsOpen(!showList);
+    if (focusManualLane) setOptionsOpen(true);
+    lastShowList.current = showList;
+  }, [showList, focusManualLane]);
   const style = captions ? captionStyleFor(captions.template) : null;
-  const pacingMeta = PACINGS.find((p) => p.v === (captions?.pacing ?? 'phrase')) ?? PACINGS[0]!;
   // Translation cues carry absolute timeline ms; re-timing the source leaves
   // them pinned to the old positions, so say so rather than showing drift.
   const translationStale = useMemo(
     () => (captions ? isTranslationStale(captions, items, fps) : false),
     [captions, items, fps],
   );
-
-  const translateLang = useMemo(() => {
-    const cur = captions?.translationLang;
-    if (cur && TRANSLATE_TO.some((l) => l.id === cur || l.label === cur)) return cur;
-    // never default to Chinese — source VO is already Chinese
-    return 'English';
-  }, [captions?.translationLang]);
 
   return (
     <div className="cc-cap-panel open standalone">
@@ -118,12 +118,22 @@ export function CaptionsControls({
             <p className="cc-cap-hint warn">{t('字幕已关闭，预览/导出都不会烧录。再点「显示」或勾选即可恢复。')}</p>
           )}
 
+          {showList && <CaptionCueEditor projectId={projectId} timelineId={timelineId} captionTrackId={captionTrackId} draftKey={draftKey} captions={captions} items={items} fps={fps} reviewRequest={reviewRequest}
+            playheadMs={playheadMs} playing={playing} selectedCaptions={selectedCaptions} captionActivationRequest={captionActivationRequest}
+            onCaptionActivationConsumed={onCaptionActivationConsumed} onSelectCaption={onSelectCaption}
+            onSelectCaptionRange={onSelectCaptionRange} onUpdate={onUpdate} onLiveUpdate={onLiveUpdate} onSeekMs={onSeekMs} />}
+
+          {showStyleDetails && <details className="cc-caption-list-options" open={optionsOpen} onToggle={(event) => {
+            if (event.target === event.currentTarget) setOptionsOpen(event.currentTarget.open);
+          }}>
+          <summary>{t('字幕样式与手动添加')}</summary>
+
           {/* Style: color block + Chinese name */}
           <div className="cc-cap-field">
             <div className="cc-cap-label">{t('样式外观')}</div>
             <div className="cc-cap-styles" role="listbox" aria-label={t('字幕样式')}>
-              {CAPTION_STYLES.map((s) => {
-                const active = captions.template === s.id;
+              {[BASIC_CAPTION_STYLE].map((s) => {
+                const active = captions.template === s.id && captions.styleOverride?.color === '#ffffff';
                 return (
                   <button
                     key={s.id}
@@ -132,7 +142,7 @@ export function CaptionsControls({
                     aria-selected={active}
                     className={`cc-cap-style${active ? ' selected' : ''}`}
                     title={`${t(s.labelZh)} — ${t(s.hint)} · ${t('拖到预览画面任意位置新建字幕')}`}
-                    onClick={() => onUpdate(captionTemplatePatch(captions, s.id as CaptionTemplate))}
+                    onClick={() => onUpdate(basicCaptionPatch(captions))}
                     onPointerDown={(event) => {
                       if (!captionTrackId) return;
                       beginCaptionStylePointerDrag(event.nativeEvent, { trackId: captionTrackId, template: s.id });
@@ -156,30 +166,8 @@ export function CaptionsControls({
             {style && <p className="cc-cap-hint">{t(style.labelZh)}：{t(style.hint)} · {t('可拖到预览画面任意位置新建并编辑字幕')}</p>}
           </div>
 
-          {/* Rhythm*/}
-          <div className="cc-cap-field">
-            <div className="cc-cap-label">{t('显示节奏')}</div>
-            <div className="cc-cap-pills">
-              {PACINGS.map((p) => (
-                <button
-                  key={p.v}
-                  type="button"
-                  className={`cc-cap-pill${captions.pacing === p.v ? ' selected' : ''}`}
-                  onClick={() => onUpdate({ pacing: p.v })}
-                >
-                  {t(p.label)}
-                </button>
-              ))}
-            </div>
-            <p className="cc-cap-hint">{t(pacingMeta.hint)}</p>
-          </div>
+          <CaptionFontPicker captions={captions} onUpdate={onUpdate} />
 
-          <CaptionMotionControls
-            value={captions.motionPreset}
-            onChange={(motionPreset) => onUpdate({ motionPreset })}
-          />
-
-          <ManualCaptionEditor captions={captions} items={items} onUpdate={onUpdate} getPlayheadMs={getPlayheadMs} onSeekMs={onSeekMs} />
 
           {/* caption language (text variant): Change the main caption line to a translation/correction variant, leaving the timeline unchanged.
 Variants are generated by Agent's manage_transcript translate. Here you only select which one to display.*/}
@@ -200,64 +188,16 @@ Variants are generated by Agent's manage_transcript translate. Here you only sel
             </div>
           )}
 
-          {/* Bilingual: folded, translated into English by default*/}
-          <div className="cc-cap-bilingual">
-            <button
-              type="button"
-              className="cc-cap-bilingual-toggle"
-              onClick={() => setBilingualOpen((v) => !v)}
-              aria-expanded={bilingualOpen}
-            >
-              <span>{t('双语第二行（可选）')}</span>
-              <span className="cc-cap-hint">{bilingualOpen ? t('收起') : t('展开')}</span>
-            </button>
-            {bilingualOpen && (
-              <div className="cc-cap-bilingual-body">
-                <p className="cc-cap-hint">
-                  {t('第一行仍是原文（中文口播）。第二行是')}<strong>{t('翻译')}</strong>{t('，请选目标语言（不要选中文）。')}
-                </p>
-                <div className="cc-cap-translate-row">
-                  <select
-                    value={translateLang}
-                    disabled={translating}
-                    onChange={(e) => onTranslate(e.target.value)}
-                    className="cc-cap-select"
-                  >
-                    {TRANSLATE_TO.map((l) => (
-                      <option key={l.id} value={l.id}>{t(l.label)}（{l.id}）</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="cc-cap-btn primary sm"
-                    disabled={translating}
-                    onClick={() => onTranslate(translateLang)}
-                  >
-                    {translating ? t('翻译中…') : captions.translation ? t('重新翻译') : t('生成翻译')}
-                  </button>
-                </div>
-                {captions.translation && (
-                  <label className="cc-cap-toggle">
-                    <input
-                      type="checkbox"
-                      checked={!!captions.bilingual}
-                      onChange={(e) => onUpdate({ bilingual: e.target.checked })}
-                    />
-                    <span>{t('显示翻译第二行（{lang}）', { lang: captions.translationLang ?? translateLang })}</span>
-                  </label>
-                )}
-                {translationStale && (
-                  <div className="cc-cap-hint warn">
-                    {t('原文时间已改变，翻译行仍停留在旧位置，建议重新翻译。')}
-                  </div>
-                )}
-                {translateError && <div className="cc-cap-error">{translateError}</div>}
-              </div>
-            )}
-          </div>
+          {captions.translation && <div className="cc-cap-bilingual">
+            <label className="cc-cap-toggle">
+              <input type="checkbox" checked={!!captions.bilingual} onChange={(event) => onUpdate({ bilingual: event.target.checked })} />
+              <span>{t('显示已有双语第二行')} ({captions.translationLang})</span>
+            </label>
+            {translationStale && <div className="cc-cap-hint warn">{t('原文时间已改变，请重新校对已有翻译时间。')}</div>}
+          </div>}
+          <ManualCaptionEditor captions={captions} items={items} fps={fps} onUpdate={onUpdate} getPlayheadMs={getPlayheadMs} onSeekMs={onSeekMs} focusManualLane={optionsOpen ? focusManualLane : null} onManualFocused={onManualFocused} showCueList={false} showSrtImport={false} />
+          </details>}
 
-          {/* Manually change the caption text sentence by sentence (same channel as agent display_text)*/}
-          <CaptionCueEditor captions={captions} items={items} fps={fps} onUpdate={onUpdate} onSeekMs={onSeekMs} />
         </div>
       )}
     </div>

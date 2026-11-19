@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
-import { ensureLocaleDict } from '../i18n/dictRegistry';
-import { setLocale, t } from '../i18n/locale';
+import { t } from '../i18n/locale';
 import {
   CONTEXT_OVERFLOW_GUIDANCE_ZH,
   contextOverflowGuidance,
@@ -25,20 +24,6 @@ const compacted = 'The recent conversation is still too large after context comp
   assert.equal(extractOverflowOriginal(mapped!), firstRound, 'the original must round-trip exactly');
   assert.ok(contextOverflowGuidance(compacted)?.startsWith(t(CONTEXT_OVERFLOW_GUIDANCE_ZH)),
     'post-compaction overflow must map too');
-}
-
-// ── en: the guidance follows the current locale and still round-trips ────────
-{
-  setLocale('en');
-  await ensureLocaleDict('en');
-  assert.notEqual(t(CONTEXT_OVERFLOW_GUIDANCE_ZH), CONTEXT_OVERFLOW_GUIDANCE_ZH,
-    'the en dictionary must translate the overflow guidance');
-  const mapped = contextOverflowGuidance(firstRound);
-  assert.ok(mapped?.startsWith(t(CONTEXT_OVERFLOW_GUIDANCE_ZH)),
-    'en users get the localized guidance, not the Chinese original');
-  assert.equal(extractOverflowOriginal(mapped!), firstRound,
-    'en-composed overflow messages round-trip too');
-  setLocale('zh');
 }
 
 assert.equal(extractOverflowOriginal('plain error text'), null, 'plain text has no embedded original');

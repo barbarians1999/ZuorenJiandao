@@ -68,6 +68,8 @@ export interface ChatPanelProps {
   onImportMedia: ChatMediaImporter;
   /** Open the settings dialog, optionally on a specific vendor page (capability-gap banner, missing-pack button). */
   onOpenSettings?: (route?: string) => void;
+  /** Open the deterministic paste-transcript caption workflow without sending a chat message. */
+  onOpenPasteTranscript: () => void;
 }
 
 export interface ChatComposerController {

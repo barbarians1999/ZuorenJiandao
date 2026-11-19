@@ -14,6 +14,8 @@ const object = { ok: true };
 const recoveryInstructions = mcpServerInstructions('test-baseline', 'compatibility');
 assert.match(recoveryInstructions, /list_edit_sessions/);
 assert.match(recoveryInstructions, /recover_edit_session/);
+assert.match(recoveryInstructions, /stale MCP binding.*without closing the transport/);
+assert.match(recoveryInstructions, /initialize a new MCP connection/);
 assert.equal(toStructuredContent(object), object);
 assert.deepEqual(toStructuredContent([{ id: 1 }]), { result: [{ id: 1 }] });
 assert.deepEqual(toStructuredContent(null), { result: null });

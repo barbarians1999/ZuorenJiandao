@@ -9,6 +9,7 @@ import { activeCaptionPages, buildCaptionPages } from './captionPages';
 import { captionFlowStyle, captionTextStyle, containerStyle, effectivePreset } from './renderStyles';
 import { buildCaptionWordRuns } from './captionWordRuns';
 import { captionPageMotionStyle, captionWordMotionStyle } from './captionMotion';
+import { isManualCaptionEntry } from './manualCaptions';
 
 const CAPTION_OVERLAY_STYLE = { pointerEvents: 'none', zIndex: 1 } as const;
 const CAPTION_WORD_RUN_STYLE = {
@@ -20,21 +21,23 @@ const CAPTION_WORD_RUN_STYLE = {
 
 // Renders the active caption page for the current frame. Lives inside the
 // Remotion composition, so it shows in the Player preview AND burns into export.
-export function CaptionsLayer({ captions, items }: { captions: CaptionsData; items: TimelineItem[] }) {
+export function CaptionsLayer({ captions, items, hiddenKey }: { captions: CaptionsData; items: TimelineItem[]; hiddenKey?: string | null }) {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const ms = (frame / fps) * 1000; // absolute timeline ms (words already re-timed)
   // Multi-lane scope(sourceEntries)→ lane engine; otherwise single-stream old path (bytes unchanged)
-  if (captions.sourceEntries?.length) return <MultiLaneCaptions captions={captions} items={items} ms={ms} width={width} height={height} />;
-  return <SingleStreamCaptions captions={captions} items={items} ms={ms} width={width} height={height} fps={fps} />;
+  if (captions.sourceEntries?.length) return <MultiLaneCaptions captions={captions} items={items} ms={ms} width={width} height={height} hiddenKey={hiddenKey} />;
+  return <SingleStreamCaptions captions={captions} items={items} ms={ms} width={width} height={height} fps={fps} hiddenKey={hiddenKey} />;
 }
 
-function SingleStreamCaptions({ captions, items, ms, width, height, fps }: { captions: CaptionsData; items: TimelineItem[]; ms: number; width: number; height: number; fps: number }) {
-  const preset = useMemo(() => effectivePreset(captions), [captions]);
+function SingleStreamCaptions({ captions, items, ms, width, height, fps, hiddenKey }: { captions: CaptionsData; items: TimelineItem[]; ms: number; width: number; height: number; fps: number; hiddenKey?: string | null }) {
+  const basePreset = useMemo(() => effectivePreset(captions), [captions]);
 
   const pages = useMemo(() => buildCaptionPages(captions, items, fps), [captions, items, fps]);
-  const page = activeCaptionPages(pages, ms)[0]?.page;
-  if (!page) return null;
+  const identity = activeCaptionPages(pages, ms, fps)[0];
+  const page = identity?.page;
+  if (!page || !identity || (hiddenKey && hiddenKey === `single:${identity.id}`)) return null;
+  const preset = identity?.fontOverride ? { ...basePreset, ...identity.fontOverride } : basePreset;
   const curIdx = currentWordIndex(page, ms);
   const translated = captions.bilingual && captions.translation ? activeTranslation(captions.translation, ms) : null;
 
@@ -147,23 +150,34 @@ function translationStyle(template: CaptionTemplate): React.CSSProperties {
 // ──Multi-lane rendering (source three brothers positions/layout_policy/source_update)────────────────
 // lanes.ts produces "anchor group → lane page"; here it is placed group by group and rendered lane by lane (each lane has its own
 // per-source style override + karaoke highlighting). Shared block groups (anchor is not set) use captions.layout.
-function MultiLaneCaptions({ captions, items, ms, width, height }: { captions: CaptionsData; items: TimelineItem[]; ms: number; width: number; height: number }) {
+function MultiLaneCaptions({ captions, items, ms, width, height, hiddenKey }: { captions: CaptionsData; items: TimelineItem[]; ms: number; width: number; height: number; hiddenKey?: string | null }) {
   const { fps } = useVideoConfig();
   const basePreset = useMemo(() => effectivePreset(captions), [captions]);
   // Pages depend only on captions/items/fps: computed once per change, NOT per
   // animation frame. ms changes every tick and must not invalidate the whole
   // merge + pagination pipeline (the freeze for large merged source sets).
   const lanePages = useMemo(() => buildCaptionPages(captions, items, fps), [captions, items, fps]);
-  const groups = useMemo(() => laneGroupsFromPages(lanePages, captions, ms), [lanePages, captions, ms]);
+  const groups = useMemo(() => laneGroupsFromPages(lanePages, captions, ms, fps), [lanePages, captions, ms, fps]);
   if (!groups?.length) return null;
   return (
     <AbsoluteFill style={CAPTION_OVERLAY_STYLE}>
       {groups.map((g, gi) => {
+        const visibleLanes = hiddenKey
+          ? g.lanes.filter((lane) => {
+              const cueId = lane.page.words[0]?.id;
+              if (isManualCaptionEntry(lane.entry) && cueId && hiddenKey === `manual:${lane.entry.id}:${cueId}`) {
+                return false;
+              }
+              return hiddenKey !== `single:${lane.pageId}`;
+            })
+          : g.lanes;
+        if (!visibleLanes.length) return null;
         const layout: CaptionLayout | undefined = g.anchor
           ? {
               anchor: g.anchor,
               offsetXRatio: g.offsetXRatio,
               offsetYRatio: g.offsetYRatio,
+              widthRatio: g.widthRatio,
               scale: g.scale,
               rotation: g.rotation,
               opacity: g.opacity,
@@ -171,7 +185,7 @@ function MultiLaneCaptions({ captions, items, ms, width, height }: { captions: C
           : captions.layout;
         return (
           <div key={gi} style={containerStyle(basePreset, captions.template, width, height, layout)}>
-            {g.lanes.map((lane, li) => (
+            {visibleLanes.map((lane, li) => (
               <LaneCaption
                 key={lane.entry.id || li}
                 lane={lane}
@@ -201,7 +215,7 @@ function LaneCaption({
   motionPreset: CaptionsData['motionPreset'];
   ms: number;
 }) {
-  const preset: CaptionStyle = lane.entry.style ? { ...basePreset, ...lane.entry.style } : basePreset;
+  const preset: CaptionStyle = { ...basePreset, ...lane.entry.style, ...lane.fontOverride };
   const content = preset.wholeLine ? (
     <WholeLineCaption
       page={lane.page}

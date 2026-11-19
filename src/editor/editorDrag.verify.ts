@@ -19,12 +19,13 @@ class FakeDataTransfer {
 const media = new FakeDataTransfer();
 setEditorDrag({ dataTransfer: media } as unknown as React.DragEvent, {
   source: 'media', id: 'asset-1', assetIds: ['asset-1', 'asset-2', 'asset-1'],
-  name: '旅行.mp4', assetKind: 'video',
+  name: '旅行.mp4', assetKind: 'video', purpose: 'bgm',
 });
 assert.equal(hasEditorDrag({ dataTransfer: media } as unknown as React.DragEvent), true);
 const mediaPayload = parseEditorDrag({ dataTransfer: media } as unknown as React.DragEvent);
 assert.ok(mediaPayload?.source === 'media');
 assert.deepEqual(mediaAssetIds(mediaPayload), ['asset-1', 'asset-2']);
+assert.equal(mediaPayload.purpose, 'bgm');
 
 const library = new FakeDataTransfer();
 setLibraryDrag({ dataTransfer: library } as unknown as React.DragEvent, {

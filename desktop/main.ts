@@ -27,6 +27,7 @@ import { supportsDirectDesktopUpdates } from './update-service.ts';
 import { installDesktopInferenceIpc } from './native-inference-ipc.ts';
 import { detectDesktopHardwareProfile } from './native-hardware-profile.ts';
 import { installDirectoryWatchIpc } from './directory-watch-ipc.ts';
+import { installDesktopFontsIpc } from './font-library-ipc.ts';
 import {
   AGENT_IMPORT_ROOTS_KEY,
   importAgentPathsWithGrant,
@@ -40,9 +41,8 @@ import { isTranscriptWindowPayload, TRANSCRIPT_WINDOW_CHANNELS, type TranscriptW
 import {
   assertTrustedDesktopSenderUrl,
   resolveDesktopDevOrigin,
-  resolveDesktopPageUrlDecision,
 } from './page-origin.ts';
-import type { DesktopPageUrlDecision, DesktopPageUrlSurface } from './page-origin.ts';
+import { installDesktopPageGuards } from './page-guards.ts';
 import { preparePackagedRuntime } from './packaged-runtime.ts';
 import {
   describeMissingRuntimeAssets,
@@ -53,7 +53,7 @@ import {
 import { ffmpegBin } from '../server/media-binaries.ts';
 import { focusExistingWindow } from './single-instance.ts';
 import { requestProfileScopedSingleInstanceLock } from './runtime-profile.ts';
-import { applyDesktopWindowFrame, desktopWindowFrameOptions } from './window-frame.ts';
+import { applyDesktopWindowFrame, desktopWindowFrameOptions, resolveTitlebarAppearance } from './window-frame.ts';
 import { applyResponsiveWindowScale, DESKTOP_UI_SCALE_MAX, DESKTOP_UI_SCALE_MIN, installResponsiveWindowScale, parseUserUiScale } from './window-scale.ts';
 import { migrateUiScaleBase } from './ui-scale-migration.ts';
 import { resolveInitialDesktopWindowBounds } from './window-scale.ts';
@@ -107,13 +107,6 @@ function trustedDesktopHandler(
   };
 }
 
-function handOffExternalUrl(decision: DesktopPageUrlDecision): void {
-  if (decision.action !== 'open-external') return;
-  void shell.openExternal(decision.url).catch((error: unknown) => {
-    console.error('[desktop] failed to open external URL:', error);
-  });
-}
-
 function agentImportPickerDefaultPath(requestedPath: string): string {
   try {
     return existsSync(requestedPath) && statSync(requestedPath).isDirectory()
@@ -122,26 +115,6 @@ function agentImportPickerDefaultPath(requestedPath: string): string {
   } catch {
     return dirname(requestedPath);
   }
-}
-
-function installDesktopPageGuards(win: BrowserWindow, trustedOrigin: string): void {
-  const guardNavigation = (surface: Extract<DesktopPageUrlSurface, 'navigation' | 'redirect'>) => (
-    event: { preventDefault(): void },
-    requestedUrl: string,
-  ): void => {
-    const decision = resolveDesktopPageUrlDecision(requestedUrl, trustedOrigin, surface);
-    if (decision.action === 'allow') return;
-    event.preventDefault();
-    handOffExternalUrl(decision);
-  };
-
-  win.webContents.on('will-navigate', guardNavigation('navigation'));
-  win.webContents.on('will-redirect', guardNavigation('redirect'));
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    const decision = resolveDesktopPageUrlDecision(url, trustedOrigin, 'popup');
-    handOffExternalUrl(decision);
-    return { action: 'deny' };
-  });
 }
 
 function registerDesktopHandlers(trustedOrigin: string): void {
@@ -294,6 +267,12 @@ function registerDesktopHandlers(trustedOrigin: string): void {
       applyResponsiveWindowScale(win);
     }
   }));
+  ipcMain.handle('openchatcut:titlebar-appearance', trustedDesktopHandler(trustedOrigin, (event, value: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || process.platform !== 'win32') return;
+    const appearance = resolveTitlebarAppearance(value, win.webContents.getZoomFactor());
+    if (appearance) win.setTitleBarOverlay(appearance);
+  }));
   // Zoom accelerators (issue #85): step the saved UI scale and re-apply.
   ipcMain.handle('openchatcut:zoom-step', trustedDesktopHandler(trustedOrigin, async (event, step: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -374,6 +353,7 @@ async function boot(): Promise<void> {
     }),
   });
   installDirectoryWatchIpc(origin);
+  installDesktopFontsIpc(origin);
   ipcMain.handle(AGENT_LOCAL_MEDIA_CHANNEL, trustedDesktopHandler(origin,
     async (_event, request: unknown) => browseLocalMedia(request)));
   ipcMain.handle(AGENT_PATH_IMPORT_CHANNEL, trustedDesktopHandler(origin, async (event, request: unknown) => {

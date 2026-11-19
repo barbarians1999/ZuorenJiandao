@@ -190,7 +190,9 @@ export function initializeSqliteProjectStore(): Promise<SQLiteMigrationStatus> {
     if (env === '1' || existsSync(storePath())) {
       try {
         await migrateUnderLease();
-      } catch {
+      } catch (error) {
+        if (error && typeof error === 'object'
+          && 'code' in error && error.code === 'GENERATION_JOB_STORE_LOCK_CONFLICT') throw error;
         // Startup recovery is fail-open; manual runStorageMigration rejects failures.
       }
     }

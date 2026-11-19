@@ -3,6 +3,7 @@ import { AbsoluteFill, useCurrentFrame, useVideoConfig } from 'remotion';
 import type { TimelineItem } from './types';
 import { zoomAt } from './zoom';
 import { appearanceAt } from './clipFade';
+import { ClipMaskSurface } from './ClipMaskSurface';
 
 export function ClipWrapper({ item, frameOffset = 0, hiddenByCaptions = false, children }: {
   item: TimelineItem;
@@ -23,6 +24,10 @@ export function ClipWrapper({ item, frameOffset = 0, hiddenByCaptions = false, c
     );
   }
   const { clipPath, ...rest } = appearance.foregroundStyle;
+  const clippedContent = appearance.maskClipPath
+    ? <AbsoluteFill style={{ clipPath: appearance.maskClipPath }}>{foreground}</AbsoluteFill>
+    : foreground;
+  const maskedContent = <ClipMaskSurface mask={appearance.mask} width={width} height={height}>{clippedContent}</ClipMaskSurface>;
   return (
     <AbsoluteFill
       style={{
@@ -31,7 +36,7 @@ export function ClipWrapper({ item, frameOffset = 0, hiddenByCaptions = false, c
         clipPath,
       }}
     >
-      {foreground}
+      {maskedContent}
     </AbsoluteFill>
   );
 }

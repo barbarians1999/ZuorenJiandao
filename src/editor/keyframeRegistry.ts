@@ -15,8 +15,9 @@ export interface KeyframePropertyDefinition {
 }
 
 const visual = (item: TimelineItem) => item.kind !== 'audio';
-const roundableVisual = (item: TimelineItem) => item.kind !== 'audio' && item.kind !== 'text';
+const roundableVisual = (item: TimelineItem) => item.kind !== 'audio' && item.kind !== 'text' && item.kind !== 'mosaic';
 const audible = (item: TimelineItem) => item.kind === 'audio' || item.kind === 'video';
+const maskVisual = (item: TimelineItem) => item.kind !== 'audio' && !!item.mask;
 const compact = (value: number) => String(Number(value.toFixed(2)));
 const percent = (value: number) => `${compact(value)}%`;
 const scaleRange = {
@@ -79,6 +80,36 @@ export const KEYFRAME_PROPERTY_REGISTRY: Record<KeyframeProp, KeyframePropertyDe
     getBaseValue: (item) => item.transform?.borderRadius ?? 0,
     toTransformPatch: (borderRadius) => ({ borderRadius }),
     format: (value) => `${compact(value)}px`,
+  },
+  maskX: {
+    id: 'maskX', label: '遮罩左侧', valueRange: [0, 1], editorRange: [0, 1],
+    step: 0.01, defaultValue: 0, supports: maskVisual,
+    getBaseValue: (item) => item.mask?.x ?? 0,
+    format: percent,
+  },
+  maskY: {
+    id: 'maskY', label: '遮罩顶部', valueRange: [0, 1], editorRange: [0, 1],
+    step: 0.01, defaultValue: 0, supports: maskVisual,
+    getBaseValue: (item) => item.mask?.y ?? 0,
+    format: percent,
+  },
+  maskWidth: {
+    id: 'maskWidth', label: '遮罩宽度', valueRange: [0.001, 1], editorRange: [0.001, 1],
+    step: 0.01, defaultValue: 1, supports: maskVisual,
+    getBaseValue: (item) => item.mask?.width ?? 1,
+    format: percent,
+  },
+  maskHeight: {
+    id: 'maskHeight', label: '遮罩高度', valueRange: [0.001, 1], editorRange: [0.001, 1],
+    step: 0.01, defaultValue: 1, supports: maskVisual,
+    getBaseValue: (item) => item.mask?.height ?? 1,
+    format: percent,
+  },
+  maskFeather: {
+    id: 'maskFeather', label: '羽化', valueRange: [0, 0.5], editorRange: [0, 0.5],
+    step: 0.005, defaultValue: 0, supports: maskVisual,
+    getBaseValue: (item) => item.mask?.feather ?? 0,
+    format: percent,
   },
   volume: {
     id: 'volume', label: '音量', valueRange: [0, 2], editorRange: [0, 2],

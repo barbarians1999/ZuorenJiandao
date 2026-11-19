@@ -2,10 +2,12 @@ import { dirname } from 'node:path';
 import { mkdir, rename, unlink } from 'node:fs/promises';
 import {
   resolveH264RenderOptions,
+  resolveH264EncoderProfile,
   resolveH264TargetBitrate,
   type H264EncoderOutcome,
 } from '../media-acceleration.ts';
-import { ffmpegBin } from '../media-binaries.ts';
+import { ffmpegBin, ffprobeBin } from '../media-binaries.ts';
+import { resolveUploadFile } from '../media-dir.ts';
 import {
   createExportFailure,
   exportFailureFrom,
@@ -13,7 +15,7 @@ import {
   type ExportCleanupStatus,
   type ExportFailureStage,
 } from '../../src/export/exportFailure.ts';
-import type { ExportPlan } from './export-plan.ts';
+import { planExport, type ExportPlan, type ExportRequest } from './export-plan.ts';
 import {
   createRenderProgress,
   exportOutputSize,
@@ -48,8 +50,16 @@ export async function cleanupExportOutputs(paths: Array<string | null>): Promise
 
 export async function h264RenderOptions(codec: string) {
   return codec === 'h264'
-    ? resolveH264RenderOptions(ffmpegBin(), remotionFfmpegPath())
+    ? { ...await resolveH264RenderOptions(ffmpegBin(), remotionFfmpegPath()),
+      directMediaBinaries: { ffmpeg: ffmpegBin(), ffprobe: ffprobeBin(),
+        profile: await resolveH264EncoderProfile(ffmpegBin()), resolveSource: resolveDirectMediaSource } }
     : {};
+}
+
+function resolveDirectMediaSource(source: string): string | null {
+  if (!source.startsWith('/media/uploads/')) return null;
+  try { return resolveUploadFile(decodeURIComponent(source.slice('/media/uploads/'.length))); }
+  catch { return null; }
 }
 
 export async function renderExportPlan(
@@ -66,6 +76,7 @@ export async function renderExportPlan(
     await mkdir(dirname(filepath), { recursive: true });
     signal?.throwIfAborted();
     update({ phase: 'rendering', progress: 8 });
+    const renderProgress = createRenderProgress(update, plan.totalFrames, plan.retimeFps ? 84 : 90);
     const rendered = await renderTimeline({
       state: plan.state,
       project: plan.project,
@@ -76,7 +87,8 @@ export async function renderExportPlan(
       scale: plan.scale,
       videoBitrate: plan.videoBitrate,
       ...await h264RenderOptions(plan.media.codec),
-      onProgress: createRenderProgress(update, plan.totalFrames, plan.retimeFps ? 84 : 90),
+      onProgress: renderProgress,
+      onProgressStage: (phase: 'rendering' | 'finalizing') => renderProgress.setPhase(phase),
       signal,
     }) as Partial<H264EncoderOutcome>;
     signal?.throwIfAborted();
@@ -127,4 +139,21 @@ export async function renderExportPlan(
 export async function exportCapabilities() {
   const { h264Profile } = await resolveH264RenderOptions(ffmpegBin(), remotionFfmpegPath());
   return { h264: h264Profile, renderConcurrency: currentRenderConcurrency() };
+}
+
+export async function exportRouteCapabilities(body: ExportRequest | null, signal?: AbortSignal) {
+  const plan = planExport(body);
+  const capabilities = await exportCapabilities();
+  signal?.throwIfAborted();
+  // Preflight never downloads/materializes media or creates output. Unresolved
+  // references retain the existing route and are resolved at export submission.
+  const eligible = !plan.retimeFps && await remotionRender.inspectTimelineDirectExport({
+    state: plan.state, project: plan.project, timelineId: plan.timelineId, codec: plan.media.codec,
+    scale: plan.scale, frameRange: plan.frameRange, signal,
+    ffmpegExecutable: ffmpegBin(), ffprobeExecutable: ffprobeBin(),
+    resolveMediaSource: resolveDirectMediaSource,
+  });
+  return { ...capabilities, ...(eligible ? {
+    directCut: { ...await resolveH264EncoderProfile(ffmpegBin()), renderRoute: eligible },
+  } : {}) };
 }

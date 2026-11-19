@@ -8,14 +8,42 @@ import { ffmpegThreadArgs, spawnMediaProcess } from '../media-process.ts';
 import { runPreviewProcess } from '../preview-proxy.ts';
 
 export const PEAKS_PER_SECOND = 100; // source samplesPerPeak = sampleRate/100
-const MAX_PEAK_BINS = 12_000; // Reduce the density of ultra-long assets (far wider than any screen pixel width, no loss of appearance)
+const MAX_PEAK_BINS = 48_000; // Keep ~100 peaks/s up to 8 min and smooth density for hour-long media
 const PCM_RATE = 8000; // The peak envelope is sufficient and decoding is fast
-const STRIP_HEIGHT = 44;
-const MIN_STRIP_FRAMES = 8;
+const STRIP_HEIGHT = 96;
+const MIN_STRIP_FRAMES = 12;
 const MAX_STRIP_FRAMES = 32;
-const SECONDS_PER_STRIP_FRAME = 8;
+const SECONDS_PER_STRIP_FRAME = 4;
 const FFMPEG_TIMEOUT_MS = 5 * 60_000;
-const MAX_STRIP_WIDTH = 2048;
+const MAX_STRIP_WIDTH = 6144;
+
+export interface FilmstripSpec {
+  frameCount: number;
+  cellWidth: number;
+  cellHeight: number;
+  durationMs: number;
+}
+
+/** Keep the source-frame geometry deterministic so the timeline can draw the
+ * sprite without stretching thumbnails to the full media duration. */
+export function filmstripSpec(probeResult: Probe): FilmstripSpec {
+  const seconds = Math.max(0.001, probeResult.durationMs / 1000);
+  const aspect = probeResult.width > 0 && probeResult.height > 0
+    ? probeResult.width / probeResult.height
+    : 16 / 9;
+  const cellWidth = Math.min(MAX_STRIP_WIDTH, Math.max(24, Math.round(STRIP_HEIGHT * aspect)) & ~1);
+  const desiredFrames = Math.max(
+    MIN_STRIP_FRAMES,
+    Math.min(MAX_STRIP_FRAMES, Math.round(seconds / SECONDS_PER_STRIP_FRAME)),
+  );
+  const frameCount = Math.max(1, Math.min(desiredFrames, Math.floor(MAX_STRIP_WIDTH / cellWidth)));
+  return {
+    frameCount,
+    cellWidth,
+    cellHeight: STRIP_HEIGHT,
+    durationMs: probeResult.durationMs,
+  };
+}
 
 function abortError(): Error {
   const error = new Error('derivative request cancelled');
@@ -96,6 +124,17 @@ function appendPcmPeaks(chunk: Buffer, state: PeakState): void {
   }
 }
 
+export function resolveActualPeaksPerSecond(
+  peaksLength: number,
+  durationMs: number,
+  fallback = PEAKS_PER_SECOND,
+): number {
+  if (peaksLength > 0 && Number.isFinite(durationMs) && durationMs > 0) {
+    return peaksLength / (durationMs / 1000);
+  }
+  return fallback;
+}
+
 export function computePeaks(file: string, durationMs: number, signal: AbortSignal): Promise<number[]> {
   const seconds = Math.max(0.001, durationMs / 1000);
   const bins = Math.max(1, Math.min(MAX_PEAK_BINS, Math.round(seconds * PEAKS_PER_SECOND)));
@@ -136,12 +175,15 @@ export function computePeaks(file: string, durationMs: number, signal: AbortSign
   });
 }
 
-export async function buildFilmstrip(file: string, probeResult: Probe, out: string, signal: AbortSignal): Promise<void> {
+export async function buildFilmstrip(
+  file: string,
+  probeResult: Probe,
+  out: string,
+  signal: AbortSignal,
+  spec = filmstripSpec(probeResult),
+): Promise<void> {
   const seconds = Math.max(0.001, probeResult.durationMs / 1000);
-  const aspect = probeResult.width > 0 && probeResult.height > 0 ? probeResult.width / probeResult.height : 16 / 9;
-  const cellWidth = Math.max(24, Math.min(160, Math.round(STRIP_HEIGHT * aspect))) & ~1;
-  const desiredFrames = Math.max(MIN_STRIP_FRAMES, Math.min(MAX_STRIP_FRAMES, Math.round(seconds / SECONDS_PER_STRIP_FRAME)));
-  const frameCount = Math.min(desiredFrames, Math.floor(MAX_STRIP_WIDTH / cellWidth));
+  const { cellWidth, cellHeight, frameCount } = spec;
   const work = await mkdtemp(join(tmpdir(), 'cc-strip-'));
   try {
     const cells = Array.from({ length: frameCount }, (_, index) => ({
@@ -153,8 +195,8 @@ export async function buildFilmstrip(file: string, probeResult: Probe, out: stri
         '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
         ...(await resolveHwDecodeArgs(ffmpegBin(), undefined)),
         '-ss', String(cell.time), '-i', file, '-frames:v', '1',
-        '-vf', `scale=${cellWidth}:${STRIP_HEIGHT}:force_original_aspect_ratio=increase,crop=${cellWidth}:${STRIP_HEIGHT}`,
-        '-q:v', '5', cell.path,
+        '-vf', `scale=${cellWidth}:${cellHeight}:force_original_aspect_ratio=increase,crop=${cellWidth}:${cellHeight}`,
+        '-q:v', '2', cell.path,
       ], signal);
     }
     const present = cells.filter((cell) => existsSync(cell.path));
@@ -162,7 +204,7 @@ export async function buildFilmstrip(file: string, probeResult: Probe, out: stri
     await run(ffmpegBin(), [
       '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
       '-i', join(work, 'f-%03d.jpg'), '-vf', `tile=${present.length}x1`,
-      '-frames:v', '1', '-q:v', '6', out,
+      '-frames:v', '1', '-q:v', '3', out,
     ], signal);
   } finally {
     await rm(work, { recursive: true, force: true });

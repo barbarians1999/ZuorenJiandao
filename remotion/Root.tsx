@@ -1,5 +1,6 @@
 import { Composition } from 'remotion';
 import { TimelineComposition } from '../src/editor/TimelineComposition';
+import { collectOverlayCaptionTiming } from '../src/captions/overlaySpans';
 import { timelineDuration, type TimelineState } from '../src/editor/types';
 import { resolveTimelineRenderPlan } from '../src/editor/sequenceGraph';
 import { loadProjectFonts } from '../src/fonts/googleFonts';
@@ -27,15 +28,27 @@ export function Root() {
       // Metadata comes from the timeline itself — same source of truth as the
       // Player (see timelineDuration in src/editor/types.ts). Min 1 frame.
       calculateMetadata={({ props }) => {
-        const { state, project, timelineId } = props;
+        const { state, project, timelineId, __collectOverlaySpans, ...rest } = props;
         const durationInFrames = project && timelineId
           ? resolveTimelineRenderPlan(project, timelineId).durationInFrames
           : timelineDuration(state);
+        const clampedDuration = Math.max(1, durationInFrames);
+        const spanRange = __collectOverlaySpans as { rangeStart?: number; rangeEnd?: number } | undefined;
+        const overlayCaptionInfo = spanRange
+          ? collectOverlayCaptionTiming(
+            state,
+            Math.max(0, Math.floor(spanRange.rangeStart ?? 0)),
+            Math.min(clampedDuration, Math.ceil(spanRange.rangeEnd ?? clampedDuration)),
+          )
+          : undefined;
         return {
-          durationInFrames: Math.max(1, durationInFrames),
+          durationInFrames: clampedDuration,
           fps: state.fps,
           width: state.width,
           height: state.height,
+          ...(overlayCaptionInfo
+            ? { props: { state, project, timelineId, ...rest, __overlayCaptionInfo: overlayCaptionInfo } }
+            : {}),
         };
       }}
       // Fallbacks only; calculateMetadata overrides these before every render.

@@ -10,8 +10,6 @@ import {
   type SetStateAction,
 } from 'react';
 import type { PlayerRef } from '@remotion/player';
-import type { AgentReference } from '../agent/context';
-import { refreshVisualAnalysis } from '../agent/progress/visual-analysis-jobs';
 import {
   createExportJobStore,
   type ExportJobStore,
@@ -26,18 +24,10 @@ import { useEditorActions } from '../shortcuts/useEditorActions';
 import type { TimelineShortcutApi } from '../shortcuts/timelineApi';
 import type { Tpl } from '../types';
 import type { EditorCommands } from './store';
-import { revisionAfterRelink } from './mediaSourceRevision';
-import type { MediaAsset, MediaAssetRelinkPatch, ProjectDoc } from './types';
-
-export interface EditorChatSeed {
-  text: string;
-  nonce: number;
-  references?: AgentReference[];
-}
+import type { MediaAssetRelinkPatch, ProjectDoc, TimelineState } from './types';
+import { nextPasteTranscriptRequest } from './pasteTranscriptRequest';
 
 export interface EditorWorkspaceDialogs {
-  chatSeed: EditorChatSeed | null;
-  setChatSeed: Dispatch<SetStateAction<EditorChatSeed | null>>;
   showDesign: boolean;
   setShowDesign: Dispatch<SetStateAction<boolean>>;
   showVersions: boolean;
@@ -51,6 +41,8 @@ export interface EditorWorkspaceDialogs {
   setSettingsRoute: Dispatch<SetStateAction<string | undefined>>;
   shortcutApiRef: RefObject<TimelineShortcutApi | null>;
   getPlayhead: () => number;
+  pasteTranscriptRequest: number;
+  requestPasteTranscript: () => void;
 }
 
 interface EditorWorkspaceDialogsInput {
@@ -64,21 +56,22 @@ export function useEditorWorkspaceDialogs({
   doc,
   playerRef,
 }: EditorWorkspaceDialogsInput): EditorWorkspaceDialogs {
-  const [chatSeed, setChatSeed] = useState<EditorChatSeed | null>(null);
   const [showDesign, setShowDesign] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
 
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [settingsRoute, setSettingsRoute] = useState<string | undefined>(undefined);
+  const [pasteTranscriptRequest, setPasteTranscriptRequest] = useState(0);
   const shortcutApiRef = useRef<TimelineShortcutApi | null>(null);
   const getPlayhead = useCallback(() => playerRef.current?.getCurrentFrame() ?? 0, [playerRef]);
+  const requestPasteTranscript = useCallback(() => {
+    setPasteTranscriptRequest((current) => nextPasteTranscriptRequest(current));
+  }, []);
 
   useAutomaticVersions(projectId, doc);
 
   return {
-    chatSeed,
-    setChatSeed,
     showDesign,
     setShowDesign,
     showSettings,
@@ -91,12 +84,12 @@ export function useEditorWorkspaceDialogs({
     setShowShortcuts,
     shortcutApiRef,
     getPlayhead,
+    pasteTranscriptRequest,
+    requestPasteTranscript,
   };
 }
 
 export interface EditorWorkspacePanels {
-  chatCollapsed: boolean;
-  setChatCollapsed: Dispatch<SetStateAction<boolean>>;
   panelLayout: EditorPanelLayout;
   inspectorCollapsed: boolean;
   setInspectorCollapsed: Dispatch<SetStateAction<boolean>>;
@@ -110,14 +103,11 @@ interface EditorWorkspacePanelsInput {
 export function useEditorWorkspacePanels({
   commands,
 }: EditorWorkspacePanelsInput): EditorWorkspacePanels {
-  const [chatCollapsed, setChatCollapsed] = usePersistedState('cc.chatCollapsed', false);
-  const panelLayout = useEditorPanelLayout(chatCollapsed);
+  const panelLayout = useEditorPanelLayout();
   const [inspectorCollapsed, setInspectorCollapsed] = usePersistedState('cc.inspectorCollapsed', false);
   const addTemplate = useCallback((template: Tpl) => commands.addMotionGraphic(template), [commands]);
 
   return {
-    chatCollapsed,
-    setChatCollapsed,
     panelLayout,
     inspectorCollapsed,
     setInspectorCollapsed,
@@ -137,6 +127,7 @@ export interface EditorWorkspaceExportActions {
 interface EditorWorkspaceExportActionsInput {
   commands: EditorCommands;
   docRef: RefObject<ProjectDoc>;
+  stateRef: RefObject<TimelineState>;
   fps: number;
   projectId: string;
   t: typeof translate;
@@ -144,7 +135,8 @@ interface EditorWorkspaceExportActionsInput {
   setShowDesign: Dispatch<SetStateAction<boolean>>;
   setShowVersions: Dispatch<SetStateAction<boolean>>;
   setShowShortcuts: Dispatch<SetStateAction<boolean>>;
-  setChatCollapsed: Dispatch<SetStateAction<boolean>>;
+  setShowSettings: Dispatch<SetStateAction<boolean>>;
+  toggleLayout: () => void;
   selectAllTimelineContent: () => void;
 }
 
@@ -175,27 +167,6 @@ function useExportJobs(
   return [exportJobs, activeExportJobs];
 }
 
-function relinkedAsset(current: MediaAsset, next: MediaAssetRelinkPatch): MediaAsset {
-  const replacement: MediaAsset = {
-    ...current,
-    src: next.src,
-    name: next.name ?? current.name,
-    durationInFrames: next.durationInFrames ?? current.durationInFrames,
-    width: next.width ?? current.width,
-    height: next.height ?? current.height,
-    kind: next.kind ?? current.kind,
-    sourceRevision: next.sourceRevision,
-    sourceContentHash: 'sourceContentHash' in next ? next.sourceContentHash : current.sourceContentHash,
-    sourceSize: next.sourceSize,
-    sourceModifiedAt: next.sourceModifiedAt,
-    sourceFilename: 'sourceFilename' in next ? next.sourceFilename : current.sourceFilename,
-    originalFilePath: 'originalFilePath' in next ? next.originalFilePath : current.originalFilePath,
-    sourceTimecode: undefined,
-    captureClock: undefined,
-  };
-  return { ...replacement, sourceRevision: revisionAfterRelink(current, replacement) };
-}
-
 export function useEditorWorkspaceExportActions(
   input: EditorWorkspaceExportActionsInput,
 ): EditorWorkspaceExportActions {
@@ -206,10 +177,27 @@ export function useEditorWorkspaceExportActions(
     input.docRef,
   );
   const [exportOpen, setExportOpen] = useState(false);
-  const onExport = useCallback(() => setExportOpen(true), []);
+  const onExport = useCallback(() => {
+    try {
+      if (input.shortcutApiRef.current?.isPlaying?.()) {
+        input.shortcutApiRef.current?.playPause();
+      }
+    } catch { /* best effort */ }
+    setExportOpen(true);
+  }, [input.shortcutApiRef]);
+  useEffect(() => {
+    if (exportOpen) {
+      try {
+        if (input.shortcutApiRef.current?.isPlaying?.()) {
+          input.shortcutApiRef.current?.playPause();
+        }
+      } catch { /* best effort */ }
+    }
+  }, [exportOpen, input.shortcutApiRef]);
   useEditorActions({
     commands: input.commands,
     docRef: input.docRef,
+    stateRef: input.stateRef,
     fps: input.fps,
     projectId: input.projectId,
     timelineRef: input.shortcutApiRef,
@@ -217,21 +205,12 @@ export function useEditorWorkspaceExportActions(
     openDesign: () => input.setShowDesign(true),
     openHistory: () => input.setShowVersions(true),
     openShortcuts: () => input.setShowShortcuts(true),
-    toggleLayout: () => input.setChatCollapsed((value) => !value),
-    focusAgent: () => {
-      input.setChatCollapsed(false);
-      requestAnimationFrame(() => {
-        document.querySelector<HTMLTextAreaElement>('[data-cc-chat-composer]')?.focus();
-      });
-    },
+    toggleLayout: input.toggleLayout,
+    openSettings: () => input.setShowSettings(true),
     selectAll: input.selectAllTimelineContent,
   });
   const relinkMediaAsset = useCallback((id: string, next: MediaAssetRelinkPatch) => {
-    const current = input.docRef.current.assets.find((asset) => asset.id === id);
     input.commands.relinkMediaAsset(id, next);
-    if (!current) return;
-    const replacement = relinkedAsset(current, next);
-    if (replacement.kind !== 'audio') refreshVisualAnalysis(replacement);
   }, [input.commands, input.docRef]);
   return { exportJobs, activeExportJobs, exportOpen, setExportOpen, onExport, relinkMediaAsset };
 }

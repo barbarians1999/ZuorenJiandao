@@ -75,25 +75,6 @@ export async function buildTranslation(
 // count in the same order. Exported so the transcript translation VARIANT builder
 // (src/agent/transcript-tools.ts) reuses the exact same LLM path — one line per
 // source word in, one target string per word out (word-aligned in full context).
-export async function translateLines(lines: string[], lang: string): Promise<string[]> {
-  const phrases = lines;
-  const numbered = phrases.map((p, i) => `${i + 1}. ${p}`).join('\n');
-  // Translation is an explicit send boundary; do not load the AI client at editor startup.
-  const { generateAgentText } = await import('../agent/client');
-  const text = (await generateAgentText({
-    maxOutputTokens: 8000,
-    system: `You are a subtitle translator. Translate each numbered line into ${lang}. Keep it natural and concise (subtitle length). Return ONLY a JSON array of strings — one per input line, same order and same count, no numbering, no extra prose.`,
-    prompt: numbered,
-  })).trim();
-  const clean = text.replace(/^\s*```[a-zA-Z]*\s*\n?/, '').replace(/\n?```\s*$/, '').trim();
-  let arr: unknown;
-  try {
-    arr = JSON.parse(clean);
-  } catch {
-    // fall back to line-splitting if the model didn't return clean JSON
-    arr = clean.split('\n').map((l) => l.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
-  }
-  if (!Array.isArray(arr)) throw new Error('translation did not return a list');
-  // pad/truncate to keep 1:1 alignment with the source phrases
-  return phrases.map((_, i) => String(arr[i] ?? ''));
+export async function translateLines(_lines: string[], _lang: string): Promise<string[]> {
+  throw new Error('Embedded AI translation was removed. Supply translated text from Codex.');
 }

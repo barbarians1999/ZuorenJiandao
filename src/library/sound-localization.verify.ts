@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SOUND_EFFECTS, SOUND_GROUPS } from '../audio/soundLibrary';
-import { EN } from '../i18n/dict/en';
+import { SOUND_EFFECTS } from '../audio/soundLibrary';
 import { ZH_DATA } from '../i18n/dict/zh';
 
 const missingNames = SOUND_EFFECTS
@@ -14,16 +13,6 @@ assert.deepEqual(
   'every built-in sound effect must have a Chinese display name',
 );
 
-const mismatchedGroupNames = SOUND_GROUPS
-  .filter((group) => EN[group.name] !== group.nameEn)
-  .map((group) => group.name);
-
-assert.deepEqual(
-  mismatchedGroupNames,
-  [],
-  'every sound group must have an English display name',
-);
-
 const browserSource = readFileSync(new URL('./SoundBrowser.tsx', import.meta.url), 'utf8');
 
 assert.match(browserSource, /\{t\(g\.name\)\}/, 'sound group chips must render through the active locale');
@@ -31,6 +20,8 @@ assert.doesNotMatch(browserSource, /\{g\.name\}/, 'sound group chips must not re
 assert.match(browserSource, /tData\(s\.name\)/, 'Chinese sound names must participate in search');
 assert.match(browserSource, /const displayName = tData\(sound\.name\)/, 'sound rows must derive a localized display name');
 assert.match(browserSource, /cc-sound-name[^>]*>\{displayName\}/, 'sound rows must render the localized display name');
+assert.match(browserSource, /<span>\{t\('添加'\)\}<\/span>/, 'the add-to-timeline action must be visible without relying on a plus icon');
+assert.match(browserSource, /点「试听」预听；点「添加」放到播放头/, 'sound browsing instructions must explain audition and placement');
 assert.match(browserSource, /\{ n: list\.length \}/, 'the footer must report the active search/category result count');
 assert.doesNotMatch(
   browserSource,

@@ -4,7 +4,10 @@ export type ShortcutSurface =
   | 'agent-chat'
   | 'agent-input'
   | 'inspector'
+  | 'preview'
   | 'other';
+
+const PREVIEW_SHORTCUTS = new Set(['seek-back', 'seek-fwd', 'prev-edit', 'next-edit']);
 
 const PROJECT_SHORTCUTS = new Set([
   'undo',
@@ -12,10 +15,13 @@ const PROJECT_SHORTCUTS = new Set([
   'save-version',
   'keyboard-shortcuts',
   'ask-ai',
+  'select-before-playhead',
+  'select-after-playhead',
 ]);
 
 export function shortcutAllowedForSurface(actionId: string, surface: ShortcutSurface): boolean {
   if (PROJECT_SHORTCUTS.has(actionId)) return true;
+  if (surface === 'preview') return PREVIEW_SHORTCUTS.has(actionId);
   return surface === 'timeline';
 }
 
@@ -28,6 +34,7 @@ export function shortcutSurfaceFromTarget(target: EventTarget | null): ShortcutS
     || surface === 'agent-chat'
     || surface === 'agent-input'
     || surface === 'inspector'
+    || surface === 'preview'
   ) return surface;
   return 'other';
 }

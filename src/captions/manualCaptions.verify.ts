@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { captionPages, captionsToSrt } from './exportCaptions';
 import { buildLaneGroups } from './lanes';
 import {
-  appendDroppedManualCaption, appendManualCue, appendManualCueToFirstLane, appendManualLane, isManualCaptionEntry,
-  newManualCaptions, placeManualCueTiming, removeManualCue, resizeManualCue, updateManualCue,
+  appendDroppedManualCaption, appendManualCue, appendManualCueToFirstLane, appendManualLane,
+  areCaptionCuesAdjacent, isManualCaptionEntry, newManualCaptions, placeManualCueTiming,
+  removeManualCue, resizeManualCue, rollAdjacentManualCues, updateManualCue,
 } from './manualCaptions';
 
 let captions = newManualCaptions();
@@ -29,6 +30,11 @@ captions = { ...captions, ...resizeManualCue(captions, laneId, 0, 'start', -500)
 assert.equal(captions.sourceEntries![0]!.words![0]!.start, 700, 'left edge extends earlier');
 captions = { ...captions, ...resizeManualCue(captions, laneId, 0, 'end', 2_000) };
 assert.equal(captions.sourceEntries![0]!.words![0]!.end, 3_000, 'right edge stops at the next cue');
+let shortLegacy = newManualCaptions();
+const shortLane = shortLegacy.sourceEntries![0]!.id;
+shortLegacy = { ...shortLegacy, ...appendManualCue(shortLegacy, shortLane, '短旧字幕', 0, 100) };
+shortLegacy = { ...shortLegacy, ...resizeManualCue(shortLegacy, shortLane, 0, 'end', -500, 30) };
+assert.equal(shortLegacy.sourceEntries![0]!.words![0]!.end, 500, 'short legacy cue cannot be shortened below 15 frames at 30fps');
 
 const secondLane = appendManualLane(captions, []);
 captions = { ...captions, ...secondLane };
@@ -60,5 +66,19 @@ assert.deepEqual(placeManualCueTiming(occupied, 1_050, 150), { start: 1_050, end
 assert.deepEqual(placeManualCueTiming(occupied, 950, 200), { start: 1_000, end: 1_200 }, '压到前邻居尾部 → 贴边恰好填满间隙');
 assert.deepEqual(placeManualCueTiming(occupied, 5_000, 700), { start: 5_000, end: 5_700 }, '可越过邻居跳到远处开阔区');
 assert.deepEqual(placeManualCueTiming([], -500, 800), { start: 0, end: 800 }, '空 lane:负落点钳到 0,时长保持');
+
+assert.equal(areCaptionCuesAdjacent(1_000, 1_020, 30), true);
+assert.equal(areCaptionCuesAdjacent(1_000, 1_300, 30), false);
+let adjacent = newManualCaptions();
+const rollLane = adjacent.sourceEntries![0]!.id;
+adjacent = { ...adjacent, ...appendManualCue(adjacent, rollLane, '前一句', 1_000, 2_000) };
+adjacent = { ...adjacent, ...appendManualCue(adjacent, rollLane, '后一句', 2_000, 3_000) };
+const rolled = rollAdjacentManualCues(adjacent, rollLane, 0, 1, 250);
+assert.ok(rolled?.sourceEntries);
+const rolledWords = rolled.sourceEntries!.find((entry) => entry.id === rollLane)?.words ?? [];
+assert.deepEqual(rolledWords.map((w) => [w.start, w.end]), [[1_000, 2_250], [2_250, 3_000]]);
+const noShortRoll = rollAdjacentManualCues(adjacent, rollLane, 0, 1, -2_000, 30)!;
+const noShortWords = noShortRoll.sourceEntries!.find((entry) => entry.id === rollLane)?.words ?? [];
+assert.ok(noShortWords.every((word) => word.end - word.start >= 500), 'roll preserves the half-second minimum');
 
 console.log('manualCaptions.check: ok');

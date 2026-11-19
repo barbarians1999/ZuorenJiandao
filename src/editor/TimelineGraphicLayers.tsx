@@ -1,7 +1,9 @@
-import { AbsoluteFill } from 'remotion';
+import { AbsoluteFill, useCurrentFrame } from 'remotion';
 import { getCompiledTemplate } from '../template-host';
 import type { AspectFit, TimelineItem, Watermark } from './types';
 import { VisualClipSurface } from './TimelineMediaLayer';
+import { resolveTextStyle, textBackgroundColor, textShadowValue, titleAnimationStyle, titleGraphemes } from './textStyles';
+import { animationProgress } from './clipAnimation';
 
 export function SolidLayer({ item, canvasW, canvasH, borderRadius }: {
   item: TimelineItem;
@@ -36,33 +38,60 @@ export function WatermarkLayer({ watermark, canvasH }: { watermark: Watermark; c
   return <AbsoluteFill style={{ pointerEvents: 'none' }}><div style={style}>{watermark.text}</div></AbsoluteFill>;
 }
 
-export function TextLayer({ item, canvasW, canvasH, fit }: {
+export function TextLayer({ item, canvasW, canvasH, fit, frameOffset = 0 }: {
   item: TimelineItem;
   canvasW: number;
   canvasH: number;
   fit: AspectFit;
+  frameOffset?: number;
 }) {
   const dw = item.width ?? 1920;
   const dh = item.height ?? 1080;
   const scale = fit === 'cover' ? Math.max(canvasW / dw, canvasH / dh) : Math.min(canvasW / dw, canvasH / dh);
-  const props = item.props ?? {};
-  const align = (props.align === 'left' || props.align === 'right' ? props.align : 'center') as 'left' | 'center' | 'right';
+  const style = resolveTextStyle(item.props ?? {});
+  const progress = animationProgress(useCurrentFrame() + frameOffset, item.durationInFrames,
+    style.entrance === 'none' ? 0 : style.entranceFrames, style.exit === 'none' ? 0 : style.exitFrames);
+  const entranceStyle = titleAnimationStyle(style.entrance, progress.entrance, style.letterSpacing);
+  const exitStyle = titleAnimationStyle(style.exit, progress.exit, style.letterSpacing);
+  const typingProgress = Math.min(style.entrance === 'typewriter' ? progress.entrance : 1, style.exit === 'typewriter' ? progress.exit : 1);
+  const graphemes = typingProgress < 1 ? titleGraphemes(style.text) : [];
+  const align = style.align;
   const justify = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
       <div style={{ width: dw, height: dh, flexShrink: 0, transform: `scale(${scale})`, display: 'flex', alignItems: 'center', justifyContent: justify, padding: '0 96px', boxSizing: 'border-box' }}>
-        <div style={{ color: String(props.color ?? '#ffffff'), fontSize: Number(props.fontSize ?? 96), fontWeight: Number(props.fontWeight ?? 700), textAlign: align, width: '100%', fontFamily: 'Geist, system-ui, -apple-system, sans-serif', textShadow: '0 3px 16px rgba(0,0,0,0.55)', whiteSpace: 'pre-wrap', lineHeight: 1.2 }}>{String(props.text ?? '文字')}</div>
+        <div style={{ maxWidth: '100%', ...entranceStyle }}><div style={{ maxWidth: '100%', ...exitStyle }}><div style={{
+          color: style.color,
+          fontSize: style.fontSize,
+          fontWeight: style.fontWeight,
+          textAlign: align,
+          maxWidth: '100%',
+          fontFamily: style.fontFamily,
+          fontStyle: style.fontStyle,
+          textDecoration: style.textDecoration,
+          letterSpacing: style.letterSpacing + (style.entrance === 'tracking' ? (1 - progress.entrance) * 24 : 0) + (style.exit === 'tracking' ? (1 - progress.exit) * 24 : 0),
+          lineHeight: style.lineHeight,
+          whiteSpace: 'pre-wrap',
+          display: 'inline-block',
+          padding: style.backgroundPadding,
+          borderRadius: style.backgroundRadius,
+          backgroundColor: textBackgroundColor(style),
+          paintOrder: 'stroke fill',
+          WebkitTextStroke: style.strokeWidth > 0 ? `${style.strokeWidth * 2}px ${style.strokeColor}` : undefined,
+          textShadow: textShadowValue(style),
+        }}>{typingProgress === 1 ? style.text : graphemes.map((glyph, index) => <span key={index} style={{ visibility: index < Math.floor(graphemes.length * typingProgress) ? 'visible' : 'hidden' }}>{glyph}</span>)}</div></div></div>
       </div>
     </AbsoluteFill>
   );
 }
 
-export function ItemLayer({ item, canvasW, canvasH, fit, borderRadius }: {
+export function ItemLayer({ item, canvasW, canvasH, fit, borderRadius, frameOffset = 0 }: {
   item: TimelineItem;
   canvasW: number;
   canvasH: number;
   fit: AspectFit;
   borderRadius: number;
+  frameOffset?: number;
 }) {
   const dw = item.width ?? 1920;
   const dh = item.height ?? 1080;
@@ -73,7 +102,7 @@ export function ItemLayer({ item, canvasW, canvasH, fit, borderRadius }: {
       <VisualClipSurface item={item} fit={fit} canvasW={canvasW} canvasH={canvasH} borderRadius={borderRadius}>
         <div style={{ position: 'absolute', inset: 0, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
           <div style={{ width: dw, height: dh, position: 'relative', flexShrink: 0, transform: `scale(${scale})` }}>
-            <Template item={{ props: item.props ?? {}, width: dw, height: dh }} />
+            <Template item={{ props: item.props ?? {}, width: dw, height: dh, durationInFrames: item.durationInFrames, frameOffset }} />
           </div>
         </div>
       </VisualClipSurface>

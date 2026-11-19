@@ -2,12 +2,11 @@ import assert from 'node:assert/strict';
 import { createElement, createRef } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
-import { ensureLocaleDict, setLocale, tData } from '../../i18n/locale.ts';
+import { ensureLocaleDict, tData } from '../../i18n/locale.ts';
 import { TEMPLATES } from '../../editor/initial.ts';
 import type { RefItem } from './ChatComposer.tsx';
 
-setLocale('zh');
-// Dictionaries are fetched per locale (see i18n/dictRegistry.ts); tData() only
+// Load the Chinese legacy-name map (see i18n/dictRegistry.ts); tData() only
 // resolves once the active one has landed, exactly as main.tsx awaits at boot.
 await ensureLocaleDict('zh');
 for (const template of TEMPLATES) {
@@ -29,6 +28,9 @@ const originalRefs = structuredClone(selectedRefs);
 const testLocaleId = '\0template-reference-localization-test-locale';
 const vite = await createServer({
   appType: 'custom',
+  // SSR markup assertions do not need a browser dependency prebundle. Avoid
+  // scanning generated release HTML (including linked test outputs on D:).
+  optimizeDeps: { noDiscovery: true, include: [] },
   plugins: [{
     name: 'template-reference-localization-test-locale',
     enforce: 'pre',
@@ -46,7 +48,7 @@ const vite = await createServer({
       `;
     },
   }],
-  server: { middlewareMode: true },
+  server: { middlewareMode: true, watch: null },
 });
 
 let composerMarkup = '';

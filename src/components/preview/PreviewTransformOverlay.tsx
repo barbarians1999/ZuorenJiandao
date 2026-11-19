@@ -8,11 +8,16 @@ import {
   type RefObject,
 } from 'react';
 import type { PlayerRef } from '@remotion/player';
-import type { FlexCrop, ClipTransform, KeyframeEasing, KeyframeProp, TimelineItem, TimelineState } from '../../editor/types';
+import type { ClipMask, FlexCrop, ClipTransform, KeyframeEasing, KeyframeProp, TimelineItem, TimelineState } from '../../editor/types';
+import { resolveMaskAt } from '../../editor/clipMask';
+import { parseCompositionMosaic, type CompositionMosaic } from '../../editor/compositionMosaic';
+import { previewMaskWrites } from './previewMask';
 import { t } from '../../i18n/locale';
 import {
   cyclePreviewCandidate,
   edgeCropPreviewTransform,
+  edgeResizeClipMask,
+  edgeResizeCompositionMosaic,
   hitPreviewCandidates,
   movePreviewTransform,
   previewCandidateGeometry,
@@ -44,7 +49,10 @@ export interface PreviewTransformOverlayProps {
   onEndHistoryGesture: () => void;
   /** Live text style edits for text / text-like MG clips. */
   onItemPropChange?: (id: string, key: string, value: unknown) => void;
-  onSeedChat?: (text: string) => void;
+  /** Resize a solid shape's clip mask directly from preview edge handles. */
+  onSetItemMask?: (id: string, mask: ClipMask | null) => void;
+  /** Resize a composition mosaic region directly from preview edge handles. */
+  onSetCompositionMosaic?: (id: string, patch: Partial<CompositionMosaic>) => void;
 }
 
 const DOUBLE_CLICK_MS = 320;
@@ -59,6 +67,10 @@ interface GestureState {
   edge?: PreviewScaleEdge;
   /** Crop snapshot at pointer-down (edge crop keeps the opposite side fixed). */
   startCrop?: FlexCrop;
+  /** Resolved mask snapshot at pointer-down for `solid` shape edge resizing. */
+  startMask?: ClipMask;
+  /** Mosaic region snapshot at pointer-down for `mosaic` edge resizing. */
+  startMosaic?: CompositionMosaic;
   /** Viewport client coords — not overlay-relative, so inspector layout cannot fake a drag. */
   startClient: PreviewPoint;
   center: PreviewPoint;
@@ -76,6 +88,10 @@ interface PendingValues {
   /** Edge crop writes the full crop object (or undefined to clear). */
   crop?: FlexCrop | undefined;
   cropTouched?: boolean;
+  /** Edge resize update for `solid` clip mask. */
+  maskUpdate?: { item: TimelineItem; localFrame: number; start: ClipMask; next: ClipMask };
+  /** Edge resize patch for `mosaic` composition region. */
+  mosaicPatch?: Partial<CompositionMosaic>;
 }
 
 const CLICK_TOLERANCE = 4;
@@ -110,7 +126,8 @@ export function PreviewTransformOverlay({
   onBeginHistoryGesture,
   onEndHistoryGesture,
   onItemPropChange,
-  onSeedChat,
+  onSetItemMask,
+  onSetCompositionMosaic,
 }: PreviewTransformOverlayProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [frame, setFrame] = useState(() => Math.round(playerRef.current?.getCurrentFrame() ?? 0));
@@ -195,7 +212,20 @@ export function PreviewTransformOverlay({
     }
     if (pending.cropTouched) patch.crop = pending.crop;
     if (Object.keys(patch).length) onSetItemTransform(pending.item.id, patch);
-  }, [onSetItemKeyframe, onSetItemTransform]);
+    if (pending.maskUpdate && onSetItemMask) {
+      const { mask, keyframes } = previewMaskWrites(
+        pending.maskUpdate.item,
+        pending.maskUpdate.localFrame,
+        pending.maskUpdate.start,
+        pending.maskUpdate.next,
+      );
+      for (const kf of keyframes) onSetItemKeyframe(pending.item.id, kf.prop, kf.frame, kf.value);
+      if (mask) onSetItemMask(pending.item.id, mask);
+    }
+    if (pending.mosaicPatch && onSetCompositionMosaic) {
+      onSetCompositionMosaic(pending.item.id, pending.mosaicPatch);
+    }
+  }, [onSetCompositionMosaic, onSetItemKeyframe, onSetItemMask, onSetItemTransform]);
 
   const queueValues = useCallback((pending: PendingValues) => {
     pendingRef.current = pending;
@@ -226,7 +256,8 @@ export function PreviewTransformOverlay({
     if (!gesture) return;
     const track = state.tracks?.[gesture.item.track];
     const stillExists = state.items.some((item) => item.id === gesture.item.id);
-    if (!stillExists || track?.hidden || track?.locked || state.selectedId !== gesture.item.id) {
+    const pictureDisabled = state.items.find((item) => item.id === gesture.item.id)?.pictureDisabled === true;
+    if (!stillExists || pictureDisabled || track?.hidden || track?.locked || state.selectedId !== gesture.item.id) {
       finishGesture(true);
     }
   }, [finishGesture, state.items, state.selectedId, state.tracks]);
@@ -260,6 +291,50 @@ export function PreviewTransformOverlay({
         ),
       });
     } else if (gesture.mode === 'crop-edge' && gesture.edge) {
+      if (gesture.item.kind === 'mosaic') {
+        if (gesture.startMosaic && onSetCompositionMosaic) {
+          const nextMosaic = edgeResizeCompositionMosaic(
+            state,
+            gesture.transform,
+            gesture.startMosaic,
+            current.composition,
+            gesture.edge,
+          );
+          queueValues({
+            item: gesture.item,
+            localFrame: gesture.localFrame,
+            values: {},
+            mosaicPatch: {
+              centerX: nextMosaic.centerX,
+              centerY: nextMosaic.centerY,
+              width: nextMosaic.width,
+              height: nextMosaic.height,
+            },
+          });
+        }
+        return;
+      }
+      if (gesture.item.kind === 'solid' && gesture.startMask && onSetItemMask) {
+        const nextMask = edgeResizeClipMask(
+          state,
+          gesture.transform,
+          gesture.startMask,
+          current.composition,
+          gesture.edge,
+        );
+        queueValues({
+          item: gesture.item,
+          localFrame: gesture.localFrame,
+          values: {},
+          maskUpdate: {
+            item: gesture.item,
+            localFrame: gesture.localFrame,
+            start: gesture.startMask,
+            next: nextMask,
+          },
+        });
+        return;
+      }
       const { crop } = edgeCropPreviewTransform(
         state,
         gesture.transform,
@@ -288,7 +363,7 @@ export function PreviewTransformOverlay({
         },
       });
     }
-  }, [queueValues, state]);
+  }, [onSetCompositionMosaic, onSetItemMask, queueValues, state]);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('[data-motion-path-interactive]'))) return;
@@ -333,6 +408,12 @@ export function PreviewTransformOverlay({
       mode,
       edge,
       startCrop: candidate.item.transform?.crop,
+      startMask: candidate.item.kind === 'solid' && candidate.item.mask
+        ? (resolveMaskAt(candidate.item, candidate.localFrame, { width: state.width, height: state.height }) ?? candidate.item.mask)
+        : undefined,
+      startMosaic: candidate.item.kind === 'mosaic'
+        ? (parseCompositionMosaic(candidate.item.mosaic) ?? undefined)
+        : undefined,
       startClient: pointClient,
       center: { x: state.width / 2, y: state.height / 2 },
       transform: candidate.transform,
@@ -395,6 +476,17 @@ export function PreviewTransformOverlay({
   });
 
   const edgeMidpoints = selection ? previewEdgeMidpoints(selection.corners) : null;
+  const selectedIsEllipse = selectedCandidate
+    ? (selectedCandidate.item.kind === 'solid' && selectedCandidate.item.mask?.type === 'ellipse')
+      || (selectedCandidate.item.kind === 'mosaic' && parseCompositionMosaic(selectedCandidate.item.mosaic)?.shape === 'ellipse')
+    : false;
+  const ellipseOutline = selection && edgeMidpoints && selectedIsEllipse ? {
+    cx: selection.center.x,
+    cy: selection.center.y,
+    rx: Math.max(0.5, Math.hypot(edgeMidpoints.e.x - selection.center.x, edgeMidpoints.e.y - selection.center.y)),
+    ry: Math.max(0.5, Math.hypot(edgeMidpoints.s.x - selection.center.x, edgeMidpoints.s.y - selection.center.y)),
+    angle: Math.atan2(edgeMidpoints.e.y - selection.center.y, edgeMidpoints.e.x - selection.center.x) * 180 / Math.PI,
+  } : null;
   const edgeHandles: Array<{ edge: PreviewScaleEdge; label: string; className: string }> = [
     { edge: 'n', label: t('裁切上边（拖入则遮住上方）'), className: 'cc-preview-transform-crop-n' },
     { edge: 's', label: t('裁切下边（拖入则遮住下方）'), className: 'cc-preview-transform-crop-s' },
@@ -431,6 +523,21 @@ export function PreviewTransformOverlay({
               strokeWidth="1.5"
               vectorEffect="non-scaling-stroke"
             />
+            {ellipseOutline && (
+              <ellipse
+                data-preview-ellipse={selectedCandidate!.item.id}
+                cx={ellipseOutline.cx}
+                cy={ellipseOutline.cy}
+                rx={ellipseOutline.rx}
+                ry={ellipseOutline.ry}
+                transform={`rotate(${ellipseOutline.angle} ${ellipseOutline.cx} ${ellipseOutline.cy})`}
+                fill="none"
+                stroke="var(--cc-accent)"
+                strokeWidth="1.5"
+                strokeDasharray="4 3"
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
             <line
               x1={rotateHandle.stem.x}
               y1={rotateHandle.stem.y}
@@ -477,7 +584,6 @@ export function PreviewTransformOverlay({
                 selection={selection}
                 composition={{ width: state.width, height: state.height }}
                 onPropChange={onItemPropChange}
-                onSeedChat={onSeedChat}
                 autoEdit={textAutoEdit}
                 onAutoEditHandled={() => setTextAutoEdit(false)}
               />

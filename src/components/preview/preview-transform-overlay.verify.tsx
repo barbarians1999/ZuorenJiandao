@@ -151,4 +151,34 @@ for (const trackPatch of [{ locked: true }, { hidden: true }]) {
   assert.doesNotMatch(markup, /data-preview-handle=/);
 }
 
+// Elliptical solid mask and mosaic item render dashed ellipse guide inside SVG without full-screen fallback.
+{
+  const shapeItem: TimelineItem = {
+    id: 'ellipse-shape',
+    track: 'V2',
+    startFrame: 0,
+    durationInFrames: 90,
+    kind: 'solid',
+    name: '椭圆形状',
+    props: { color: '#ff0000' },
+    mask: { type: 'ellipse', x: 0.25, y: 0.3, width: 0.5, height: 0.3, feather: 0 },
+  };
+  const shapeState: TimelineState = {
+    ...stateOf(),
+    selectedId: 'ellipse-shape',
+    selectedIds: ['ellipse-shape'],
+    items: [shapeItem],
+  };
+  const shapeMarkup = renderToStaticMarkup(<PreviewTransformOverlay state={shapeState} {...props} />);
+  assert.match(shapeMarkup, /data-preview-ellipse="ellipse-shape"/, '椭圆形状应在预览选框中显示椭圆虚线轮廓');
+
+  const workspaceSource = readFileSync(new URL('./PreviewWorkspace.tsx', import.meta.url), 'utf8');
+  assert.match(
+    workspaceSource,
+    /const isMosaicItem = inspector\?\.selectedItem\?\.kind === 'mosaic'/,
+    '选中独立马赛克片段时，PreviewWorkspace 不得切入不支持的逐片段滤镜遮罩/马赛克编辑模式',
+  );
+  assert.match(workspaceSource, /!isMosaicItem && activeTab === 'mosaic'/);
+}
+
 console.log('preview-transform-overlay.verify: ok (语义/皮肤/四角/四边裁切/旋转/锁定隐藏/帧范围)');

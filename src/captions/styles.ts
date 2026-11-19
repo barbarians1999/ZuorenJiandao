@@ -9,6 +9,8 @@ export interface CaptionStyle {
   /** Tell the user what this looks like in one sentence */
   hint: string;
   fontFamily: string;
+  /** Exact user/system font copied into the project's shared file assets. */
+  fontAssetId?: string | null;
   fontSize: number;
   fontWeight: number;
   /** Serializable typographic controls shared by preview and Remotion export. */

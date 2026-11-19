@@ -34,6 +34,8 @@ interface MediaPoolToolbarProps {
   busy: boolean;
   uploadRatio: number | null;
   canAddSolid: boolean;
+  onAddShape?: (shape: 'rectangle' | 'ellipse') => void;
+  onAddMosaic?: () => void;
   semanticOpenRequest?: number;
   onQueryChange: (value: string) => void;
   onSemanticResults: (matches: SemanticMatch[] | null) => void;
@@ -207,6 +209,21 @@ function ActionsMenu(props: MenuProps) {
   const popover = open && <div ref={props.lifecycle.menuRef} role="dialog" aria-label={t('更多操作')} className="cc-media-popover cc-media-actions-menu cc-media-toolbar-menu-fixed" style={props.lifecycle.actionsStyle}>
     <button onClick={() => runModal(props.onMobileUpload)}><Icon name="qrCode" size={15} />{t('手机传素材')}</button>
     {props.canAddSolid && <button onClick={() => run(props.onAddSolid, true)}><span className="cc-media-solid-icon">{t('色')}</span>{t('添加纯色')}</button>}
+    {props.onAddShape && (
+      <>
+        <button onClick={() => run(() => props.onAddShape?.('rectangle'), true)}>
+          <span className="cc-media-solid-icon" style={{ fontSize: 13 }}>▢</span>{t('添加矩形')}
+        </button>
+        <button onClick={() => run(() => props.onAddShape?.('ellipse'), true)}>
+          <span className="cc-media-solid-icon" style={{ fontSize: 13 }}>○</span>{t('添加椭圆')}
+        </button>
+      </>
+    )}
+    {props.onAddMosaic && (
+      <button onClick={() => run(() => props.onAddMosaic?.(), true)}>
+        <Icon name="grid" size={15} />{t('添加独立马赛克')}
+      </button>
+    )}
     <button onClick={() => runModal(props.onCreateFolder)}><Icon name="folderPlus" size={16} />{t('新建文件夹')}</button>
     <DirectoryImportActions
       onPickFolder={props.onPickFolder}

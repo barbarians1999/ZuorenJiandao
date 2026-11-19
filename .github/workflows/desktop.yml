@@ -72,8 +72,8 @@ jobs:
             os: windows-latest
             script: desktop:dist:win
             artifact: |
-              release/*.exe
-              release/latest-x64.yml
+              release/ZuorenJiandao-Setup-*.exe
+              release/latest.yml
               release/*.blockmap
           - name: Linux-x64
             os: ubuntu-latest
@@ -182,13 +182,13 @@ jobs:
           CC_SMOKE_RENDER: '1'
           CC_SMOKE_MCP_RECOVERY: '1'
           CC_SMOKE_RENDERER_RECOVERY: '1'
+          CC_SMOKE_EDITOR_ONLY: '1'
         run: |
           $ErrorActionPreference = 'Stop'
-          $installers = @(Get-ChildItem -LiteralPath release -Filter '*.exe' -File)
+          $installers = @(Get-ChildItem -LiteralPath release -Filter 'ZuorenJiandao-Setup-*.exe' -File)
           if ($installers.Count -ne 1) {
             throw "Expected one NSIS installer, found $($installers.Count)"
           }
-
           $installDir = Join-Path $env:RUNNER_TEMP "openchatcut-smoke-$PID"
           Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue
           $installed = $false
@@ -199,7 +199,7 @@ jobs:
               throw "NSIS installer exited with $($install.ExitCode)"
             }
 
-            $installedExe = Join-Path $installDir 'OpenChatCut.exe'
+            $installedExe = Join-Path $installDir 'ZuorenJiandao.exe'
             if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
               throw "NSIS installer did not create $installedExe"
             }
@@ -231,6 +231,10 @@ jobs:
             # proved can fail); without it the job burns the 6h runner limit.
             $smokeOut = Join-Path $env:RUNNER_TEMP 'smoke-stdout.log'
             $smokeErr = Join-Path $env:RUNNER_TEMP 'smoke-stderr.log'
+            $env:CC_SMOKE_USER_DATA_DIR = Join-Path $env:RUNNER_TEMP "zuoren-electron-data-$PID"
+            $env:OPENCHATCUT_DATA_DIR = Join-Path $env:RUNNER_TEMP "zuoren-project-data-$PID"
+            $env:NODE_PATH = ''
+            $env:NODE_OPTIONS = ''
             $smoke = Start-Process -FilePath $installedExe -PassThru `
               -RedirectStandardOutput $smokeOut -RedirectStandardError $smokeErr
             $null = $smoke.Handle  # cache the handle or ExitCode reads as null
@@ -254,9 +258,9 @@ jobs:
               (Select-String -LiteralPath $smokeOut -Pattern 'SMOKE-OK' -Quiet)
             if (-not $smokeOk) {
               if (-not $finished) {
-                throw 'Installed OpenChatCut smoke still running after 420s; killed. The last [smoke] line above is where it hung.'
+                throw 'Installed ZuorenJiandao smoke still running after 420s; killed. The last [smoke] line above is where it hung.'
               }
-              throw "Installed OpenChatCut smoke exited with $($smoke.ExitCode)"
+              throw "Installed ZuorenJiandao smoke exited with $($smoke.ExitCode)"
             }
             if (-not $finished -or $smoke.ExitCode -ne 0) {
               Write-Host 'SMOKE-OK reached; the process then wedged in Windows teardown after the forced renderer crashes and was killed. Known Electron teardown deadlock, not a smoke failure.'
@@ -339,11 +343,12 @@ jobs:
           test "$(find release-files -type f -name '*.yml' | wc -l | tr -d ' ')" = 4
           test -f release-files/latest-arm64-mac.yml
           test -f release-files/latest-x64-mac.yml
-          test -f release-files/latest-x64.yml
+          test -f release-files/latest.yml
           test -f release-files/latest-x64-linux.yml
           test -f "release-files/OpenChatCut-${EXPECTED_VERSION}-arm64.zip.blockmap"
           test -f "release-files/OpenChatCut-${EXPECTED_VERSION}-x64.zip.blockmap"
-          test -f "release-files/OpenChatCut-${EXPECTED_VERSION}-x64.exe.blockmap"
+          test -f "release-files/ZuorenJiandao-Setup-${EXPECTED_VERSION}-x64.exe.blockmap"
+          test -f "release-files/ZuorenJiandao-Setup-${EXPECTED_VERSION}-x64.exe"
 
       - name: Generate checksums
         working-directory: release-files

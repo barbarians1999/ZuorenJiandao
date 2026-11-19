@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { clearExportHistory, listExportHistory } from '../persist/exportHistoryStore';
 import type { TimelineState } from '../editor/types';
+import { CURRENT_PROJECT_VERSION } from '../../shared/project-version';
 
 import {
   browserScaledExportDimensions,
   browserTimelineBlocker,
+  createBrowserFrameDurationCallback,
   exportVideoWithFallback,
   renderTimelineInBrowser,
   type BrowserExportAttempt,
@@ -75,6 +77,23 @@ assert.equal(Math.ceil(45 * narrowCustom.scale), narrowCustom.height);
 
 
 let loaderCalls = 0;
+const feathered: TimelineState = { ...state, items: [{ ...state.items[0],
+  mask: { type: 'ellipse', x: 0, y: 0, width: 1, height: 1, feather: 0.02 } }] };
+assert.match(browserTimelineBlocker(feathered)!, /SVG/);
+assert.match(browserTimelineBlocker({ ...feathered, items: [{ ...feathered.items[0],
+  mask: { ...feathered.items[0].mask!, feather: 0 },
+  keyframes: { maskFeather: [{ frame: 0, value: 0 }, { frame: 30, value: 0.04 }] } }] })!, /SVG/);
+assert.equal(browserTimelineBlocker({ ...feathered, items: [{ ...feathered.items[0],
+  mask: { ...feathered.items[0].mask!, feather: 0 } }] }), null);
+assert.equal(browserTimelineBlocker({ ...feathered, tracks: { V1: { kind: 'video', hidden: true } } }), null);
+const nestedRoot = { ...state, id: 'root', name: 'root', order: 0, items: [{ ...state.items[0], kind: 'sequence' as const, timelineId: 'child' }] };
+const nestedProject = { version: CURRENT_PROJECT_VERSION, activeTimelineId: 'root', timelines: [nestedRoot,
+  { ...feathered, id: 'child', name: 'child', order: 1 }], assets: [], mediaFolders: [] };
+assert.match(browserTimelineBlocker(nestedRoot, nestedProject, 'root')!, /SVG/);
+const maskedAttempt = await renderTimelineInBrowser({ state: feathered, codec: 'h264', resolution: '1080p', fps: 30,
+  loadRenderer: async () => { loaderCalls++; return {} as never; } });
+assert.equal(maskedAttempt.status, 'unsupported');
+assert.equal(loaderCalls, 0, 'unsupported SVG mask must not falsely pass codec preflight');
 const retimed = await renderTimelineInBrowser({
   state,
   codec: 'h264',
@@ -159,6 +178,8 @@ assert.deepEqual(capabilityCalls[0], {
   audioBitrate: 'high',
 });
 assert.equal(renderCalls[0].container, 'mp4');
+assert.equal(renderCalls[0].hardwareAcceleration, 'no-preference',
+  'actual encoding must not require hardware when codec preflight did not');
 assert.equal(renderCalls[0].scale, browserScaledExportDimensions(state, '720p').scale);
 assert.equal((renderCalls[0].inputProps as { browserRenderer: boolean }).browserRenderer, true);
 
@@ -191,6 +212,84 @@ assert.equal(capabilityCalls[1].container, 'webm');
 assert.equal(capabilityCalls[1].audioCodec, 'opus');
 assert.equal(capabilityCalls[1].videoBitrate, 12_000_000);
 assert.equal(renderCalls[1].videoBitrate, 12_000_000);
+
+await renderTimelineInBrowser({
+  state,
+  codec: 'h264',
+  resolution: '1080p',
+  fps: 30,
+  startFrame: 10,
+  endFrameExclusive: 30,
+  loadRenderer: async () => runtime as never,
+  loadComposition,
+});
+assert.deepEqual(renderCalls[2].frameRange, [10, 29], 'browser export converts half-open range exactly once');
+
+// The real desktop MP4 had 180 samples but a zero-duration last stts entry.
+// Exercise the supported frame hook without replacing an encoder or muxer.
+const nativeVideoFrameDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'VideoFrame');
+class DurationFrame {
+  readonly timestamp: number;
+  readonly duration: number | null;
+  readonly displayWidth: number;
+  readonly displayHeight: number;
+  readonly pixels: object;
+  closed = false;
+  constructor(source: DurationFrame, init: { duration: number }) {
+    this.timestamp = source.timestamp;
+    this.duration = init.duration;
+    this.displayWidth = source.displayWidth;
+    this.displayHeight = source.displayHeight;
+    this.pixels = source.pixels;
+  }
+  close() { this.closed = true; }
+}
+Object.defineProperty(globalThis, 'VideoFrame', { configurable: true, value: DurationFrame });
+try {
+  const inputFrame = (timestamp: number) => ({
+    timestamp, duration: null, displayWidth: 1280, displayHeight: 720,
+    pixels: {}, closed: false, close() { this.closed = true; },
+  }) as DurationFrame;
+  for (const fps of [25, 30, 60, 30000 / 1001, 60000 / 1001]) {
+    const onFrame = createBrowserFrameDurationCallback(fps);
+    let totalMicroseconds = 0;
+    for (let index = 0; index < 180; index++) {
+      const input = inputFrame(Math.round(index / fps * 1_000_000));
+      const output = await onFrame(input as unknown as VideoFrame) as unknown as DurationFrame;
+      assert.notEqual(output, input);
+      assert.equal(output.timestamp, input.timestamp);
+      assert.equal(output.displayWidth, input.displayWidth);
+      assert.equal(output.displayHeight, input.displayHeight);
+      assert.equal(output.pixels, input.pixels, 'the cloned frame preserves the source pixels');
+      assert.equal(input.closed, false, 'the upstream validator owns original-frame closure');
+      assert.equal(output.closed, false, 'the upstream encoder owns returned-frame closure');
+      assert.equal(output.duration, Math.round((index + 1) / fps * 1_000_000) - input.timestamp);
+      assert.ok(output.duration! > 0, 'the final sample has a real duration');
+      totalMicroseconds += output.duration!;
+    }
+    assert.equal(totalMicroseconds, Math.round(180 / fps * 1_000_000), 'rounded durations do not accumulate drift');
+  }
+  const rangedHook = renderCalls[2].onFrame as ReturnType<typeof createBrowserFrameDurationCallback>;
+  let rangedDuration = 0;
+  for (let index = 0; index < 20; index++) {
+    const output = await rangedHook(inputFrame(Math.round(index / 30 * 1_000_000)) as unknown as VideoFrame);
+    assert.equal(output.timestamp, Math.round(index / 30 * 1_000_000), 'nonzero source range starts its output clock at zero');
+    rangedDuration += output.duration!;
+  }
+  assert.equal(rangedDuration, Math.round(20 / 30 * 1_000_000));
+  assert.equal(typeof renderCalls[0].onFrame, 'function', 'all supported browser exports receive the duration hook');
+  for (const fps of [0, -1, NaN, Infinity, -Infinity]) {
+    assert.throws(() => createBrowserFrameDurationCallback(fps), RangeError);
+  }
+  const onFrame = createBrowserFrameDurationCallback(30);
+  for (const timestamp of [-1, NaN, Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1, 17]) {
+    assert.throws(() => onFrame(inputFrame(timestamp) as unknown as VideoFrame), RangeError);
+  }
+  assert.throws(() => createBrowserFrameDurationCallback(3_000_000)(inputFrame(1) as unknown as VideoFrame), RangeError);
+} finally {
+  if (nativeVideoFrameDescriptor) Object.defineProperty(globalThis, 'VideoFrame', nativeVideoFrameDescriptor);
+  else Reflect.deleteProperty(globalThis, 'VideoFrame');
+}
 
 const unsupported = await renderTimelineInBrowser({
   state,
@@ -248,6 +347,33 @@ await assert.rejects(
   (error: unknown) => error instanceof DOMException && error.name === 'AbortError',
 );
 assert.equal(serverCalls, 2, 'cancel must never start a server fallback job');
+
+for (const failByThrowing of [false, true]) {
+  let compatibilityCalls = 0;
+  const firstError = new Error('actual encoder failure');
+  const secondError = new Error('audio mixing failure');
+  await assert.rejects(exportVideoWithFallback({
+    browser: async () => {
+      if (failByThrowing) throw firstError;
+      return { status: 'unsupported', reason: firstError.message, issues: [] };
+    },
+    server: async () => { compatibilityCalls++; throw secondError; },
+  }), (error: unknown) => error instanceof AggregateError
+    && error.errors[1] === secondError
+    && error.message.includes(firstError.message));
+  assert.equal(compatibilityCalls, 1, 'a failed fallback is never retried');
+}
+const cancelledBetweenRoutes = new AbortController();
+await assert.rejects(exportVideoWithFallback({
+  browser: async () => { cancelledBetweenRoutes.abort(); throw new Error('encoder failed'); },
+  server: async () => { serverCalls++; return 'server'; },
+  signal: cancelledBetweenRoutes.signal,
+}), { name: 'AbortError' });
+await assert.rejects(exportVideoWithFallback({
+  browser: async () => { const error = new Error('cancelled'); error.name = 'AbortError'; throw error; },
+  server: async () => { serverCalls++; return 'server'; },
+}), { name: 'AbortError' });
+assert.equal(serverCalls, 2, 'Error cancellation and signal cancellation never start fallback');
 
 interface BrowserDeliveryContextOptions {
   autoQaEnabled: boolean;

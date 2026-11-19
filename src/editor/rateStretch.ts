@@ -1,5 +1,6 @@
 import { scaleItemKeyframes } from './keyframes';
 import { timelineFramesToSourceFrames } from './sourceLimit';
+import { rebasePictureAnimationAfterTiming } from './clipAnimation';
 import type { TimelineItem, TimelineState } from './types';
 
 export type RateStretchEdge = 'left' | 'right';
@@ -36,10 +37,10 @@ export function rateStretchItem(
   const factor = next.durationInFrames / target.durationInFrames;
   return {
     ...state,
-    items: state.items.map((item) => item.id === itemId ? {
+    items: state.items.map((item) => item.id === itemId ? rebasePictureAnimationAfterTiming(item, {
       ...item,
       ...next,
       ...(item.keyframes ? { keyframes: scaleItemKeyframes(item.keyframes, factor) } : {}),
-    } : item),
+    }) : item),
   };
 }

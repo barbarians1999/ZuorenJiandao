@@ -15,6 +15,7 @@ export interface H264EncoderProfile {
   readonly label: string;
   readonly hardware: boolean;
   readonly transport: 'server';
+  readonly renderRoute?: 'direct-cut' | 'hybrid';
 }
 
 export interface H264EncoderOutcome {

@@ -3,6 +3,7 @@ import { ASR_INFERENCE_CONTRACT } from '../../shared/asr-inference-contract';
 import type { DesktopAsrBackend } from '../../shared/desktop-inference';
 import type { AsrConfig, AsrResult } from './local-asr-types';
 import { desktopNativeInferenceEnabled } from './desktop-inference-preference';
+import { cancellableTranscription, isTranscriptionCancelled, throwIfTranscriptionCancelled } from './transcriptionCancellation';
 
 export interface DesktopNativeAsrAttempt {
   readonly backend: DesktopAsrBackend;
@@ -15,6 +16,7 @@ export interface DesktopNativeAsrOptions {
   readonly language: string;
   readonly onProgress?: (progress?: number, file?: string) => void;
   readonly onFallback?: (reason: Error) => void;
+  readonly signal?: AbortSignal;
 }
 
 let requestSequence = 0;
@@ -27,28 +29,29 @@ function nextRequestId(): string {
 export async function tryDesktopNativeAsr(
   options: DesktopNativeAsrOptions,
 ): Promise<DesktopNativeAsrAttempt | null> {
+  throwIfTranscriptionCancelled(options.signal);
   if (!desktopNativeInferenceEnabled() || !options.sourcePath.startsWith('/media/uploads/')) return null;
   const api = typeof window !== 'undefined' ? window.openChatCutDesktop?.inference : undefined;
   if (!api) return null;
   try {
-    const capabilities = await api.getCapabilities();
+    const capabilities = await cancellableTranscription(() => api.getCapabilities(), options.signal);
     if (!capabilities.asr.available
       || capabilities.asr.contractId !== ASR_INFERENCE_CONTRACT.id) return null;
     const requestId = nextRequestId();
     const unsubscribe = api.subscribeProgress((progress) => {
-      if (progress.requestId === requestId) {
+      if (progress.requestId === requestId && !options.signal?.aborted) {
         options.onProgress?.(progress.progress, progress.file);
       }
     });
     try {
-      const response = await api.transcribe({
+      const response = await cancellableTranscription(() => api.transcribe({
         requestId,
         contractId: ASR_INFERENCE_CONTRACT.id,
         sourcePath: options.sourcePath,
         modelId: options.config.modelId,
         revision: options.config.revision,
         language: options.language,
-      });
+      }), options.signal, () => { void api.cancel(requestId).catch(() => undefined); });
       return {
         backend: response.backend,
         result: { text: response.text, chunks: [...response.chunks] },
@@ -57,6 +60,7 @@ export async function tryDesktopNativeAsr(
       unsubscribe();
     }
   } catch (reason) {
+    if (isTranscriptionCancelled(reason) || options.signal?.aborted) throw reason;
     options.onFallback?.(reason instanceof Error ? reason : new Error(String(reason)));
     return null;
   }

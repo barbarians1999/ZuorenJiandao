@@ -5,7 +5,8 @@
 // routing are configuration, not credentials: the explicit NON_SECRET_NAMES whitelist
 // lets keyStatus() echo their raw values (keyStatus().models) so the settings UI can
 // show and edit them.
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { atomicWriteFile } from "./plugins/project-store-durable.ts";
 import { AI_SDK_BASE_URL_FORMAT } from "./llm-config.ts";
 import { decodePersistedEnvValue, mergeEnvText } from "./env-text.ts";
@@ -458,6 +459,9 @@ export async function setKeys(patch: Record<string, unknown>): Promise<void> {
   );
   const isolated = isIsolatedDevProfile(ACTIVE_PROFILE);
   const merged = mergeEnvText(existing, clean, isolated);
+  // First launch can persist UI settings before the project store creates the
+  // profile. The atomic writer deliberately requires an existing parent.
+  await mkdir(dirname(ENV_PATH), { recursive: true, mode: 0o700 });
   await atomicWriteFile(ENV_PATH, merged, { mode: 0o600 });
   for (const [name, v] of clean) {
     if (v) {

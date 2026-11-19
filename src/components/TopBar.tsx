@@ -1,14 +1,16 @@
 import { lazy, Suspense, useState, useEffect } from 'react';
 import { theme } from '../theme';
-import { Icon } from './icons';
+import { BrandMark, Icon } from './icons';
 import { ExportHistory } from './ExportHistory';
-import { GenerationActivity } from './GenerationActivity';
 import { SkinPicker } from './settings/SkinPicker';
 import { loadMcpGuideDialog } from './settings/mcpGuideLoader';
-import { ALL_LOCALES, getLocale, setLocale, useT } from '../i18n/locale';
+import { useT } from '../i18n/locale';
 import { invokeAction, bindAction } from '../shortcuts/actionRegistry';
 import { DesktopWindowControls } from './DesktopWindowControls';
 import { TopBarIconButton } from './TopBarIconButton';
+import { ToolbarUtilities } from './ToolbarUtilities';
+import { ProjectSaveIndicator, type ProjectSaveIndicatorProps } from './ProjectSaveIndicator';
+import './editorFeedback.css';
 
 // Lazy, like the dashboard's copy of this dialog. A static import here put the
 // whole MCP guide into the editor's eager chunk and made every lazy() built on
@@ -16,40 +18,18 @@ import { TopBarIconButton } from './TopBarIconButton';
 // through the thunk for either to be split.
 const McpGuideDialog = lazy(() => loadMcpGuideDialog().then((m) => ({ default: m.McpGuideDialog })));
 
-// Language switching: The text pill displays the current language; clicking
-// cycles through the supported locales. First run defaults to the
-// system language (or English) — see i18n/locale.ts.
-export function LocaleToggle() {
-  const t = useT();
-  const locale = getLocale();
-  const next = ALL_LOCALES[(ALL_LOCALES.indexOf(locale) + 1) % ALL_LOCALES.length]!;
-  return (
-    <button
-      className="cc-tip cc-tip-r"
-      data-tip={t('切换界面语言')}
-      aria-label={t('切换界面语言')}
-      onClick={() => setLocale(next)}
-      style={{ minWidth: 30, height: 22, background: 'none', border: `0.5px solid ${theme.border}`, borderRadius: 4, cursor: 'pointer', padding: '0 5px', fontSize: 11, fontWeight: 600, letterSpacing: 0.3, color: theme.textDim, display: 'grid', placeItems: 'center' }}
-      onMouseEnter={(e) => { e.currentTarget.style.color = theme.text; e.currentTarget.style.background = theme.panelAlt; }}
-      onMouseLeave={(e) => { e.currentTarget.style.color = theme.textDim; e.currentTarget.style.background = 'none'; }}>
-      {locale === 'zh' ? '中' : locale.toUpperCase()}
-    </button>
-  );
-}
-
-interface TopBarProps {
+interface TopBarProps extends ProjectSaveIndicatorProps {
   projectId: string;
   projectName: string;
   canUndo: boolean;
   canRedo: boolean;
   exporting?: boolean;
   exportJobCount?: number;
-  onResumeGeneration?: () => Promise<void>;
   onHome?: () => void;
   onRename?: (name: string) => void;
 }
 
-export function TopBar({ projectId, projectName, canUndo, canRedo, exporting, exportJobCount = 0, onHome, onRename, onResumeGeneration }: TopBarProps) {
+export function TopBar({ projectName, canUndo, canRedo, saveStatus = 'saved', saveError, onRetrySave, exporting, exportJobCount = 0, onHome, onRename }: TopBarProps) {
   const t = useT();
   const isMacDesktop = window.openChatCutDesktop?.platform === 'darwin';
   const isWindowsDesktop = window.openChatCutDesktop?.platform === 'win32';
@@ -65,23 +45,27 @@ export function TopBar({ projectId, projectName, canUndo, canRedo, exporting, ex
   return (
     <header className={`cc-topbar cc-window-titlebar${isMacDesktop ? ' cc-window-titlebar--mac' : ''}${isWindowsDesktop ? ' cc-window-titlebar--windows' : ''}`} style={{ gridColumn: '1 / -1', gridRow: 1, position: 'relative', height: '100%', display: 'flex', alignItems: 'center', padding: '0 6px', borderBottom: `0.5px solid ${theme.border}`, background: theme.panel, gap: 4 }}>
       <DesktopWindowControls />
-      {/* home in a rounded chip + a vertical divider */}
-      <button className="cc-tip" data-tip={t('返回工程列表')} aria-label={t('返回工程列表')} onClick={onHome}
-        style={{ width: 28, height: 28, background: 'none', border: 'none', borderRadius: 4, cursor: onHome ? 'pointer' : 'default', padding: 0, lineHeight: 0, display: 'grid', placeItems: 'center', color: theme.textDim }}
+      <span className="cc-editor-brand-mark" aria-hidden="true"><BrandMark size={22} /></span>
+      {/* Keep the project-list action separate from the brand mark. */}
+      <button className="cc-topbar-home cc-tip" data-tip={t('返回工程列表')} aria-label={t('返回工程列表')} onClick={onHome}
+        style={{ width: 36, height: 36, flexShrink: 0, border: 'none', borderRadius: 6, cursor: onHome ? 'pointer' : 'default', padding: 0, lineHeight: 0, display: 'grid', placeItems: 'center', color: theme.textDim }}
         onMouseEnter={(e) => { if (onHome) { e.currentTarget.style.color = theme.text; e.currentTarget.style.background = theme.panelAlt; } }}
         onMouseLeave={(e) => { e.currentTarget.style.color = theme.textDim; e.currentTarget.style.background = 'none'; }}>
-        <Icon name="home" size={16} />
+        <Icon name="home" size={20} />
       </button>
       <span style={{ width: 1, height: 20, background: theme.border, margin: '0 4px' }} />
 
-      {/* center: project title (no collaboration on local single machine, no collaborator users icon)*/}
-      <div className="cc-topbar-title" style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', fontSize: 12, color: theme.text }}>
+      {/* Flexible project title yields space to controls instead of overlapping them. */}
+      <div className="cc-topbar-title" style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, color: theme.text }} data-cc-titlebar-control="true">
         {editing ? (
           <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
-            onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+            onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter') { e.preventDefault(); commit(); } if (e.key === 'Escape') setEditing(false); }}
             style={{ font: 'inherit', fontSize: 14, textAlign: 'center', background: theme.panelAlt, color: theme.text, border: `0.5px solid ${theme.accent}`, borderRadius: 5, padding: '2px 8px', minWidth: 200 }} />
         ) : (
-          <span onDoubleClick={() => { if (onRename) { setDraft(projectName); setEditing(true); } }} title={onRename ? t('双击重命名') : undefined} style={{ cursor: onRename ? 'text' : 'default' }}>{projectName}</span>
+          <>
+            <span onDoubleClick={() => { if (onRename) { setDraft(projectName); setEditing(true); } }} title={onRename ? t('双击重命名') : undefined} style={{ cursor: onRename ? 'text' : 'default' }}>{projectName}</span>
+            <ProjectSaveIndicator {...{ saveStatus, saveError, onRetrySave }} />
+          </>
         )}
       </div>
 
@@ -90,22 +74,27 @@ export function TopBar({ projectId, projectName, canUndo, canRedo, exporting, ex
       {/* right: undo · redo · shortcuts · history · layout · export · avatar */}
       <TopBarIconButton icon="undo" label={t('撤销')} onClick={() => invokeAction('undo', undefined, 'toolbar')} disabled={!canUndo} />
       <TopBarIconButton icon="redo" label={t('重做')} onClick={() => invokeAction('redo', undefined, 'toolbar')} disabled={!canRedo} />
-      <TopBarIconButton icon="keyboard" label={t('编辑快捷键')} onClick={() => invokeAction('keyboard-shortcuts', undefined, 'toolbar')} />
-      <TopBarIconButton icon="plug" label={t('外部 Agent 接入 (MCP)')} onClick={() => setMcpOpen(true)} />
+      <span className="cc-editor-settings-entry">
+        <TopBarIconButton icon="sliders" label={t('设置')} onClick={() => invokeAction('open-settings', undefined, 'toolbar')} />
+      </span>
       <span id="cc-agent-change-log-slot" style={{ display: 'contents' }} />
-      <TopBarIconButton icon="palette" label={t('设计风格(品牌)')} onClick={() => invokeAction('open-design', undefined, 'toolbar')} />
-      <SkinPicker />
-      <GenerationActivity projectId={projectId} onResume={onResumeGeneration} />
-      <TopBarIconButton icon="history" label={t('历史版本')} onClick={() => invokeAction('open-history', undefined, 'toolbar')} />
-      {/* self-contained: trigger + popover, global export history, zero props */}
+      <div className="cc-topbar-utility-cluster">
+      {/* This dialog owns transient state and must remain mounted while its overlay is open. */}
       <ExportHistory />
-      <LocaleToggle />
-      <TopBarIconButton icon="layoutPanel" label={t('切换面板布局')} onClick={() => invokeAction('toggle-layout', undefined, 'toolbar')} />
+      <ToolbarUtilities>
+        <div className="cc-utilities-skin-row"><SkinPicker /><span>{t('皮肤')}</span></div>
+        <TopBarIconButton icon="history" label={t('历史版本')} onClick={() => invokeAction('open-history', undefined, 'toolbar')} />
+        <TopBarIconButton icon="layoutPanel" label={t('切换面板布局')} onClick={() => invokeAction('toggle-layout', undefined, 'toolbar')} />
+        <TopBarIconButton icon="keyboard" label={t('编辑快捷键')} onClick={() => invokeAction('keyboard-shortcuts', undefined, 'toolbar')} />
+        <TopBarIconButton icon="plug" label={t('外部 Agent 接入 (MCP)')} onClick={() => setMcpOpen(true)} />
+        <TopBarIconButton icon="palette" label={t('设计风格(品牌)')} onClick={() => invokeAction('open-design', undefined, 'toolbar')} />
+      </ToolbarUtilities>
+      </div>
       <button onClick={() => invokeAction('open-export', undefined, 'toolbar')}
         className="cc-topbar-export cc-tip cc-tip-r"
-        data-tip={exporting ? t('查看后台导出任务') : t('导出 MP4')}
-        aria-label={exporting ? t('查看后台导出任务') : t('导出 MP4')}
-        style={{ minWidth: 62, height: 28, background: theme.accent, color: theme.onAccent, border: 'none', borderRadius: 6, padding: '0 10px', fontSize: 12, fontWeight: 650, cursor: 'pointer', marginLeft: 4 }}>
+        data-tip={exporting ? t('查看后台导出任务') : t('导出')}
+        aria-label={exporting ? t('查看后台导出任务') : t('导出')}
+        style={{ minWidth: 88, height: 34, background: 'var(--cc-heading-bg)', color: 'var(--cc-heading-ink)', border: 'none', borderRadius: 999, padding: '0 20px', fontSize: 14, fontWeight: 650, letterSpacing: '0.02em', cursor: 'pointer', marginLeft: 8 }}>
         {exporting ? t('{n} 个导出', { n: Math.max(1, exportJobCount) }) : t('导出')}
       </button>
       </div>

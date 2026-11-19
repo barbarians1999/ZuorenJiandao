@@ -20,7 +20,8 @@ import {
   parseDesktopAsrPreloadRequest,
   parseDesktopAsrRequest,
 } from '../shared/desktop-inference.ts';
-import { ASR_INFERENCE_CONTRACT } from '../shared/asr-inference-contract.ts';
+import { ASR_INFERENCE_CONTRACT, ASR_TRANSCRIPTION_PROGRESS } from '../shared/asr-inference-contract.ts';
+import { createWhisperProgressParser } from './native-asr-progress.ts';
 import { NativeAsrWorkerLifecycle } from './native-asr-worker-lifecycle.ts';
 import {
   nativeGgmlFileName,
@@ -136,6 +137,7 @@ function runWhisperCli(
   language: string,
   useGpu: boolean,
   signal?: AbortSignal,
+  onProgress?: (percent: number) => void,
 ): Promise<{ jsonPath: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const args = [
@@ -147,6 +149,7 @@ function runWhisperCli(
       '-sow',
       '-ojf',
       '-nt',
+      '--print-progress',
       '-of', wavPath,
     ];
     if (!useGpu) args.push('-ng');
@@ -155,6 +158,7 @@ function runWhisperCli(
       windowsHide: true,
     });
     let stderr = '';
+    const parseProgress = createWhisperProgressParser((value) => onProgress?.(value));
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
@@ -171,6 +175,7 @@ function runWhisperCli(
     signal?.addEventListener('abort', onAbort, { once: true });
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = (stderr + chunk.toString('utf8')).slice(-STDERR_LIMIT);
+      parseProgress(chunk.toString('utf8'));
     });
     child.once('error', (error) => {
       if (settled) return;
@@ -230,6 +235,7 @@ async function ensureWhisperServer(ggmlPath: string): Promise<{ child: ChildProc
     '--host', '127.0.0.1',
     '--port', String(serverPort),
     '-t', '8',
+    '--print-progress',
   ], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
   child.stderr?.resume();
   const deadline = Date.now() + SERVER_READY_TIMEOUT_MS;
@@ -254,30 +260,38 @@ async function transcribeViaServer(
   wavPath: string,
   language: string,
   signal?: AbortSignal,
+  onProgress?: (percent: number) => void,
 ): Promise<{ text: string; chunks: DesktopAsrChunk[] }> {
   const srv = await ensureWhisperServer(ggmlPath);
-  const form = new FormData();
-  form.append('file', new Blob([await readFile(wavPath)], { type: 'audio/wav' }), 'input.wav');
-  form.append('response_format', 'verbose_json');
-  if (language !== 'auto') form.append('language', language);
-  const response = await fetch(`http://127.0.0.1:${srv.port}/inference`, {
-    method: 'POST',
-    body: form,
-    signal,
-  });
-  if (!response.ok) throw new Error(`whisper-server inference failed (${response.status})`);
-  const json = await response.json() as {
-    segments?: readonly {
-      text?: string;
-      words?: readonly { word?: string; start?: number; end?: number }[];
-    }[];
-  };
-  const text = (json.segments ?? [])
-    .map((segment) => (segment.text ?? '').trim())
-    .filter(Boolean)
-    .join('\n');
-  const chunks = whisperWordsToChunks(json.segments?.flatMap((segment) => segment.words ?? []));
-  return { text, chunks };
+  const parseProgress = createWhisperProgressParser((value) => onProgress?.(value));
+  const onStderr = (chunk: Buffer) => parseProgress(chunk.toString('utf8'));
+  srv.child.stderr?.on('data', onStderr);
+  try {
+    const form = new FormData();
+    form.append('file', new Blob([await readFile(wavPath)], { type: 'audio/wav' }), 'input.wav');
+    form.append('response_format', 'verbose_json');
+    if (language !== 'auto') form.append('language', language);
+    const response = await fetch(`http://127.0.0.1:${srv.port}/inference`, {
+      method: 'POST',
+      body: form,
+      signal,
+    });
+    if (!response.ok) throw new Error(`whisper-server inference failed (${response.status})`);
+    const json = await response.json() as {
+      segments?: readonly {
+        text?: string;
+        words?: readonly { word?: string; start?: number; end?: number }[];
+      }[];
+    };
+    const text = (json.segments ?? [])
+      .map((segment) => (segment.text ?? '').trim())
+      .filter(Boolean)
+      .join('\n');
+    const chunks = whisperWordsToChunks(json.segments?.flatMap((segment) => segment.words ?? []));
+    return { text, chunks };
+  } finally {
+    srv.child.stderr?.off('data', onStderr);
+  }
 }
 
 async function transcribeWithEngine(
@@ -285,6 +299,8 @@ async function transcribeWithEngine(
   engine: LoadedEngine,
   signal?: AbortSignal,
 ): Promise<DesktopAsrResponse> {
+  const onProgress = (progress: number) => port.postMessage({ type: 'progress',
+    progress: { requestId: request.requestId, progress, file: ASR_TRANSCRIPTION_PROGRESS } });
   const samples = await extractPcm(request);
   const dir = await mkdtemp(join(tmpdir(), 'occ-asr-'));
   const wavPath = join(dir, 'input.wav');
@@ -293,7 +309,7 @@ async function transcribeWithEngine(
     // 1. Persistent whisper-server: model loaded once, Metal by default.
     try {
       const { text, chunks } = await transcribeViaServer(
-        engine.ggmlPath, wavPath, whisperLanguage(request.language), signal,
+        engine.ggmlPath, wavPath, whisperLanguage(request.language), signal, onProgress,
       );
       return {
         requestId: request.requestId,
@@ -307,13 +323,13 @@ async function transcribeWithEngine(
       let backend: DesktopAsrBackend = engine.backend;
       try {
         const { jsonPath } = await runWhisperCli(
-          engine.ggmlPath, wavPath, whisperLanguage(request.language), true, signal,
+          engine.ggmlPath, wavPath, whisperLanguage(request.language), true, signal, onProgress,
         );
         json = JSON.parse(await readFile(jsonPath, 'utf8')) as WhisperJson;
       } catch (gpuError) {
         if (engine.backend === 'native-cpu') throw gpuError;
         const { jsonPath } = await runWhisperCli(
-          engine.ggmlPath, wavPath, whisperLanguage(request.language), false, signal,
+          engine.ggmlPath, wavPath, whisperLanguage(request.language), false, signal, onProgress,
         );
         json = JSON.parse(await readFile(jsonPath, 'utf8')) as WhisperJson;
         backend = 'native-cpu';

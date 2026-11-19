@@ -1,7 +1,7 @@
 // Runnable verify for pending proposal IDB parse/round-trip:
 // `npx tsx src/persist/proposalStore.verify.ts`.
 import assert from 'node:assert';
-import { makeDraft } from '../editor/store';
+import { makeDraft, replayActions } from '../editor/store';
 import { buildOperation, buildProposal, isProposalStale } from '../agent/proposal';
 import type { ProjectDoc, Timeline } from '../editor/types';
 import { CURRENT_PROJECT_VERSION } from '../../shared/project-version';
@@ -38,7 +38,8 @@ const parsed = parseProposal(cloned);
 assert.ok(parsed, 'cloned proposal parses');
 assert.strictEqual(parsed!.title, proposal.title);
 assert.strictEqual(parsed!.options[0].operations.length, 1);
-assert.strictEqual(parsed!.options[0].operations[0].actions[0].type, 'add');
+assert.deepStrictEqual(replayActions(base, parsed!.options[0].operations[0].actions), replayActions(base, acts),
+  'the stored proposal preserves track preparation and placement together');
 assert.strictEqual(isProposalStale(parsed!, base), false, 'parsed proposal applies to same content');
 
 // Memory-store round-trip (Node has no indexedDB)

@@ -50,6 +50,7 @@ export function projectTimelineItem(
     keyframes: item.keyframes ?? null,
     transform: item.transform ?? null,
     filters: item.filters ?? null,
+    mosaic: item.mosaic ?? null,
     volume: item.volume ?? null,
     fadeInFrames: item.fadeInFrames ?? null,
     fadeOutFrames: item.fadeOutFrames ?? null,

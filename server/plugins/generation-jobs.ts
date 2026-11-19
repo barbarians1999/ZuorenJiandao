@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 import { TERMINAL } from './generation-job-types.ts';
 import type { GenerationJob } from './generation-job-types.ts';
-import { jobs } from './generation-job-store.ts';
+import { acquireGenerationJobStoreLease, jobs } from './generation-job-store.ts';
 import {
   initializeGenerationJobs,
   resumeGenerationJobDownload,
@@ -37,6 +37,8 @@ export type {
   UpdateGenerationJob,
 } from './generation-job-types.ts';
 export {
+  acquireGenerationJobStoreLease,
+  releaseGenerationJobStoreLease,
   registerGenerationCleanupPolicy,
   registerGenerationJobResumer,
   registerGenerationRetentionGuard,
@@ -118,6 +120,7 @@ export function generationProgressPlugin(): Plugin {
   return {
     name: 'openchatcut-generation-progress',
     configureServer(server) {
+      acquireGenerationJobStoreLease();
       void initializeGenerationJobs().catch((error) => {
         server.config.logger.error(`[generate:progress] failed to restore operations: ${error instanceof Error ? error.message : String(error)}`);
       });

@@ -2,6 +2,7 @@ import type {
   AspectFit,
   ClipEffect,
   ClipFilters,
+  ClipMask,
   ClipTransform,
   DesignStyle,
   KeyframeEasing,
@@ -26,19 +27,23 @@ import type {
 import type { CaptionsData } from '../captions/types';
 import type { SerializableFxDef } from '../gl/fx/uniforms';
 import type { TranscriptWord, TranscriptVariant } from '../transcript/types';
+import type { CompositionMosaic } from './compositionMosaic';
 
 // ── command actions (these map 1:1 to the future agent tools) ─────────────
 export type Action =
   | { type: 'add'; item: Omit<TimelineItem, 'startFrame'>; startFrame?: number; ripple?: boolean }
   | { type: 'updateProps'; id: string; patch: Record<string, unknown> }
+  | { type: 'setCompositionMosaic'; id: string; patch: Partial<CompositionMosaic> }
   | ({ type: 'relinkTimelineItem'; id: string } & MediaAssetRelinkPatch)
   | { type: 'move'; id: string; track?: TrackId; startFrame?: number }
   | { type: 'retime'; id: string; startFrame?: number; durationInFrames?: number; srcInFrame?: number; ripple?: boolean }
   | { type: 'slip'; id: string; deltaInFrames: number }
   | { type: 'setVolume'; id: string; volume: number }
+  | { type: 'togglePicture'; ids: string[] }
   | { type: 'setFade'; id: string; fadeInFrames?: number; fadeOutFrames?: number }
   | { type: 'setTransform'; id: string; patch: ClipTransform }
   | { type: 'setFilters'; id: string; patch: ClipFilters }
+  | { type: 'setMask'; id: string; mask: ClipMask | null }
   | { type: 'setBackgroundFill'; id: string; enabled: boolean; strength?: number }
   | { type: 'setZoom'; id: string; patch: Partial<ZoomEffect> | null }
   | { type: 'setEffects'; id: string; effects: ClipEffect[]; defs?: SerializableFxDef[] }
@@ -62,11 +67,12 @@ export type Action =
   | { type: 'clear' }
   | { type: 'addAsset'; asset: MediaAsset }
   | { type: 'setCanvas'; width: number; height: number; fit?: AspectFit }
-  | { type: 'toggleTrack'; track: TrackId; flag: 'hidden' | 'muted' | 'collapsed' | 'locked' }
-  | { type: 'track.create'; track: { id: TrackId; kind: TrackKind; name?: string; role?: TrackFlags['role']; audioRouting?: TrackFlags['audioRouting'] }; order?: number }
+  | { type: 'toggleTrack'; track: TrackId; flag: 'hidden' | 'muted' | 'soloed' | 'collapsed' | 'locked' }
+  | { type: 'track.create'; track: { id: TrackId; kind: TrackKind; visualRole?: TrackFlags['visualRole']; name?: string; role?: TrackFlags['role']; audioRouting?: TrackFlags['audioRouting'] }; order?: number }
   | { type: 'track.update'; track: TrackId; patch: TrackUpdate }
   | { type: 'track.delete'; tracks: TrackId[] }
   | { type: 'track.tighten'; track: TrackId }
+  | { type: 'track.compact' }
   | { type: 'setCaptions'; captions: CaptionsData | null; track?: TrackId }
   | { type: 'updateCaptions'; patch: Partial<CaptionsData>; track?: TrackId }
   | { type: 'setCaptionsHidden'; hidden: boolean }
@@ -95,14 +101,9 @@ export type Action =
   | { type: 'select'; id: string | null; mode?: 'replace' | 'toggle' | 'add' }
   | { type: 'selectMany'; ids: string[] }
   | { type: 'selectAll' }
+  /** Re-plan a rolling boundary against the current timeline at reducer time. */
+  | { type: 'roll'; leftId: string; rightId: string; deltaF: number }
   | { type: 'setFullState'; state: TimelineState };
-
-export const TRANSITION_RECONCILING_ACTIONS = new Set<Action['type']>([
-  'add', 'move', 'retime', 'slip', 'setSpeed', 'replaceMedia', 'relinkTimelineItem', 'duplicate', 'remove', 'split', 'clear',
-  'track.tighten', 'toggleWord', 'deleteWords', 'cleanScript', 'setGapCap',
-  'setTranscriptPlayOrder', 'reorderTrackItems', 'clearEdits', 'addTransition',
-  'setTransition', 'setFullState',
-]);
 
 // ── Project-level actions for multiple timelines ──────────────────────────
 // These operate on the ProjectDoc (the set of timelines), not on any single
@@ -115,6 +116,7 @@ export type ProjectAction =
   | { type: 'tl.delete'; id: string }
   | { type: 'tl.rename'; id: string; name: string }
   | { type: 'tl.retarget'; id: string; width: number; height: number; fit?: AspectFit }
+  | { type: 'tl.setSnapping'; id: string; snapping: boolean }
   | { type: 'tl.setHidden'; id: string; hidden: boolean }
   | { type: 'tl.setDoc'; doc: ProjectDoc }
   | { type: 'pool.createFolder'; folder: MediaFolder }
@@ -158,8 +160,3 @@ export function isHistoryControlAction(a: { type: string }): a is HistoryControl
 export type Dispatch = (a: Action | BatchAction | HistoryControlAction) => void;
 /** dispatch at the project level: per-timeline + project actions + history control */
 export type ProjectDispatch = (a: AnyAction | HistoryControlAction) => void;
-
-export const MUTATING = new Set(['add', 'updateProps', 'relinkTimelineItem', 'move', 'retime', 'slip', 'setVolume', 'setFade', 'setTransform', 'setFilters', 'setZoom', 'setEffects', 'setSpeed', 'replaceMedia', 'reframeKeyframe', 'removeReframeKeyframe', 'setKeyframe', 'removeKeyframe', 'clearKeyframes', 'addTransition', 'setTransition', 'removeTransition', 'addMarker', 'updateMarker', 'removeMarker', 'duplicate', 'remove', 'split', 'clear', 'addAsset', 'setCanvas', 'toggleTrack', 'track.create', 'track.update', 'track.delete', 'track.tighten', 'setCaptions', 'updateCaptions', 'setCaptionsHidden', 'updateWatermark', 'setItemTranscript', 'setItemVariants', 'toggleWord', 'deleteWords', 'cleanScript', 'setGapCap', 'setTranscriptPlayOrder', 'reorderTrackItems', 'clearEdits', 'fixTranscriptWord', 'renameSpeaker', 'setItemDenoise', 'setFullState',
-  // project-level (tl.switch is navigation → deliberately NOT here, so it makes no history step)
-  'tl.create', 'tl.duplicate', 'tl.delete', 'tl.rename', 'tl.retarget', 'tl.setHidden', 'tl.setDoc',
-  'pool.createFolder', 'pool.renameFolder', 'pool.deleteFolder', 'pool.moveAssets', 'pool.updateAsset', 'pool.setTranscription', 'pool.relinkAsset', 'pool.canonicalizeAsset', 'pool.removeAsset', 'design.set', 'design.patch', 'setBackgroundFill'])

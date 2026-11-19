@@ -10,7 +10,6 @@ import {
   type ExportQaReport,
 } from '../../export/quality';
 import { fetchRenderJob } from './export-tools';
-import { maybeDescribeFramesResult } from '../vision';
 
 type Args = Record<string, unknown>;
 
@@ -113,5 +112,5 @@ async function verifyExport(args: Args, ctx: AgentContext): Promise<unknown> {
 
 export async function execExportQaTool(name: string, args: Args, ctx: AgentContext): Promise<unknown> {
   if (name !== 'verify_export') return { error: `export QA tool not implemented: ${name}` };
-  return await maybeDescribeFramesResult(await verifyExport(args, ctx), 'qa-evidence');
+  return await verifyExport(args, ctx);
 }

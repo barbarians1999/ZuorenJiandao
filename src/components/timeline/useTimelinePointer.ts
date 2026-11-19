@@ -24,7 +24,13 @@ import {
 import { emitSelectionRef, resolveTimelinePick, type TimelinePickDrag } from '../../agent/selection-refs';
 import { hasOperationalTranscript } from '../../transcript/types';
 import { SNAP_PX, type Drag, type DragMode, type EditMode } from './timelineUtil';
-import { commitTimelineDragGesture, predecessorRightEdge } from './timelineDragCommit';
+import { commitTimelineDragGesture, predecessorRightEdge, planTimelineMagneticTrim } from './timelineDragCommit';
+import { groupedItemIds } from '../../editor/linkGroups';
+import { mainTrackId, planDirectionalChange, planMagneticMove } from '../../editor/magneticTimeline';
+import { canItemMoveToTrack } from '../../editor/multiSelect';
+import { linkedItemIds } from '../../editor/linkGroups';
+import { planRollingTrim } from '../../editor/rollingTrim';
+import { incrementalTimelineDragFrames } from './timelineAutoScroll';
 export { commitTimelineDragGesture } from './timelineDragCommit';
 
 export interface PenDrag {
@@ -74,6 +80,8 @@ interface PointerDeps {
   isOverChatComposer?: (clientX: number, clientY: number) => boolean;
   /** Add the frozen mixed selection to chat instead of committing a timeline move. */
   onDropSelectionToChat?: (selection: TimelineMarqueeSelection) => void;
+  onGestureStart?: (pointerId: number, clientX: number, clientY: number) => void;
+  onGestureEnd?: () => void;
 }
 
 export function useTimelinePointer(deps: PointerDeps) {
@@ -81,6 +89,7 @@ export function useTimelinePointer(deps: PointerDeps) {
     state, commands, editMode, snapping, pickMode, px,
     playheadRef, scrollRef, frameFromClientX, trackFromClientY, selectionInMarquee,
     onMarqueeCaptionSelect, selectedCaptions, isOverChatComposer, onDropSelectionToChat,
+    onGestureStart, onGestureEnd,
   } = deps;
   const [drag, setDrag, dragRef] = usePointerState<Drag | null>(null);
   // pen mode: one opacity keyframe dot being dragged (live preview, atomic commit on release)
@@ -90,6 +99,8 @@ export function useTimelinePointer(deps: PointerDeps) {
   const [pickDrag, setPickDrag, pickDragRef] = usePointerState<TimelinePickDrag | null>(null);
   /** Complete mixed selection frozen at pointer-down. */
   const dragSelectionRef = useRef<TimelineMarqueeSelection>({ itemIds: [], captionSelections: [] });
+  /** Plain click (no drag) on one already-selected clip collapses batch selection on release. */
+  const collapseDragClickRef = useRef<{ id: string; startX: number; startY: number } | null>(null);
   /** The currently sucked target is held (hysteresis) across pointermove within one drag, and cleared when released. */
   const snapHold = useRef<SnapHold | null>(null);
   const gestureSnapPoints = useRef<SnapPoint[]>([]);
@@ -103,6 +114,7 @@ export function useTimelinePointer(deps: PointerDeps) {
     const f = frameFromClientX(e.clientX);
     const trackId = origin === 'clip' ? item?.track : origin === 'lane' ? trackFromClientY(e.clientY) : undefined;
     setPickDrag({ origin, startFrame: f, endFrame: f, trackId, item });
+    onGestureStart?.(e.pointerId, e.clientX, e.clientY);
   };
   /** Start rubber-band on empty track body (clips stopPropagation so they never hit this). */
   const startMarquee = (e: React.PointerEvent) => {
@@ -120,9 +132,11 @@ export function useTimelinePointer(deps: PointerDeps) {
       x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY,
       additive,
     });
+    onGestureStart?.(e.pointerId, e.clientX, e.clientY);
   };
 
   const startDrag = (e: React.PointerEvent, id: string, mode: DragMode, baseStart: number, baseDur: number, baseTrack: TrackId, baseSrcIn = 0) => {
+    if (e.button !== 0) return;
     if (state.tracks?.[baseTrack]?.locked) return;
     const wasSelected = isItemSelected(state, id);
     const additive = e.metaKey || e.ctrlKey;
@@ -132,10 +146,20 @@ export function useTimelinePointer(deps: PointerDeps) {
       selectedCaptions,
       { shiftKey: e.shiftKey, anchorItemId: state.selectedId, items: state.items },
     );
+    const singleUnitIds = mode === 'move' ? groupedItemIds(state, [id]) : [id];
+    const unit = new Set(singleUnitIds);
     dragSelectionRef.current = mode === 'move'
-      ? additive && !wasSelected
-        ? { itemIds: [...new Set([...selectedIdsOf(state), id])], captionSelections: [...selectedCaptions] }
-        : resolvedSelection
+      ? additive
+        ? {
+            itemIds: wasSelected
+              ? selectedIdsOf(state).filter((candidate) => !unit.has(candidate))
+              : groupedItemIds(state, [...new Set([...selectedIdsOf(state), id])]),
+            captionSelections: [...selectedCaptions],
+          }
+        : {
+            itemIds: groupedItemIds(state, resolvedSelection.itemIds),
+            captionSelections: resolvedSelection.captionSelections,
+          }
       : { itemIds: [id], captionSelections: [] };
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -145,13 +169,28 @@ export function useTimelinePointer(deps: PointerDeps) {
     // Multi-select: ⌘/Ctrl toggle, ⇧ range on same track; plain click replaces.
     if (additive) {
       onMarqueeCaptionSelect([], { additive: true, preserveWithItems: true });
-      commands.selectItem(id, { mode: 'toggle' });
+      if (singleUnitIds.length > 1) {
+        commands.selectItems(dragSelectionRef.current.itemIds);
+      } else {
+        commands.selectItem(id, { mode: 'toggle' });
+      }
     } else if (e.shiftKey && state.selectedId) {
-      if (resolvedSelection.itemIds.length > 1) commands.selectItems(resolvedSelection.itemIds);
+      if (dragSelectionRef.current.captionSelections.length > 0) {
+        onMarqueeCaptionSelect(dragSelectionRef.current.captionSelections, { additive: false, preserveWithItems: true });
+      }
+      if (dragSelectionRef.current.itemIds.length > 1) commands.selectItems(dragSelectionRef.current.itemIds);
       else commands.selectItem(id);
     } else if (!wasSelected) {
-      commands.selectItem(id);
+      if (singleUnitIds.length > 1) {
+        commands.selectItems(dragSelectionRef.current.itemIds);
+      } else {
+        commands.selectItem(id);
+      }
     }
+    const hasBatchSelection = selectedIdsOf(state).length > singleUnitIds.length || selectedCaptions.length > 0;
+    collapseDragClickRef.current = mode === 'move' && !additive && !e.shiftKey && wasSelected && hasBatchSelection
+      ? { id, startX: e.clientX, startY: e.clientY }
+      : null;
     // Only start move drag when not pure multi-toggle without drag intent — still allow drag
     snapHold.current = null;
     const excluded = mode === 'move' && dragSelectionRef.current.itemIds.includes(id)
@@ -160,7 +199,33 @@ export function useTimelinePointer(deps: PointerDeps) {
     gestureSnapPoints.current = sortTimelineSnapPoints(
       collectTimelineSnapPoints(state, { excludeItemIds: excluded }),
     );
-    setDrag({ id, mode, baseStart, baseDur, baseTrack, baseSrcIn, startX: e.clientX, deltaF: 0, targetTrack: baseTrack, snapAt: null });
+    const scrollLeft = scrollRef.current?.scrollLeft ?? 0;
+    setDrag({ id, mode, baseStart, baseDur, baseTrack, baseSrcIn, startX: e.clientX, startY: e.clientY, activated: mode !== 'move', deltaF: 0,
+      rawDeltaF: 0, lastClientX: e.clientX, lastScrollLeft: scrollLeft, lastPx: px,
+      targetTrack: baseTrack, snapAt: null });
+    onGestureStart?.(e.pointerId, e.clientX, e.clientY);
+  };
+  const startRollDrag = (e: React.PointerEvent, leftId: string, rightId: string) => {
+    const liveState = commands.getState?.() ?? state;
+    const eligibility = planRollingTrim(liveState, leftId, rightId, 0);
+    if (e.button !== 0 || pickMode || eligibility.error
+      || eligibility.limitMessage && eligibility.deltaF === 0) return;
+    const left = liveState.items.find((item) => item.id === leftId);
+    if (!left || liveState.tracks?.[left.track]?.locked) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragSelectionRef.current = { itemIds: [], captionSelections: [] };
+    snapHold.current = null;
+    gestureSnapPoints.current = sortTimelineSnapPoints(
+      collectTimelineSnapPoints(liveState, { excludeItemIds: linkedItemIds(liveState, [leftId, rightId]) }),
+    );
+    const scrollLeft = scrollRef.current?.scrollLeft ?? 0;
+    setDrag({ id: leftId, rightId, mode: 'roll', baseStart: left.startFrame,
+      baseDur: left.durationInFrames, baseTrack: left.track, baseSrcIn: left.srcInFrame ?? 0,
+      startX: e.clientX, deltaF: 0, rawDeltaF: 0, lastClientX: e.clientX,
+      lastScrollLeft: scrollLeft, lastPx: px, targetTrack: left.track, snapAt: null, plannedState: liveState });
+    onGestureStart?.(e.pointerId, e.clientX, e.clientY);
   };
   // All snap targets come from the editor snap registry. Group moves exclude
   // every selected clip so members never snap to each other.
@@ -168,8 +233,10 @@ export function useTimelinePointer(deps: PointerDeps) {
     if (mode === 'slip') return { deltaF: rawDelta, snapAt: null };
     if (!snapping) return { deltaF: rawDelta, snapAt: null };
     const points = gestureSnapPoints.current;
+    const snapMode = mode === 'move' || mode === 'trim-left' ? mode : 'trim-right';
     const result = snapDraggedEdges({
-      mode, baseStart, baseDuration: baseDur, rawDelta, points,
+      mode: snapMode,
+      baseStart, baseDuration: baseDur, rawDelta, points,
       thresholdFrames: SNAP_PX / px, hold: snapHold.current,
       dynamicPlayheadFrame: playheadRef.current,
     });
@@ -204,6 +271,7 @@ export function useTimelinePointer(deps: PointerDeps) {
         : sourceFramesToTimelineFrames(it, it.srcInFrame ?? 0);
       floor = Math.max(floor, -Math.floor(sourceBacktrack));
     }
+    if (state.interaction?.magnet && it.track === mainTrackId(state)) return floor;
     return Math.max(
       floor,
       predecessorRightEdge(state, id, it.track, baseStart) - baseStart,
@@ -239,32 +307,102 @@ export function useTimelinePointer(deps: PointerDeps) {
     }
     const currentDrag = dragRef.current;
     if (!currentDrag) return;
-    const rawDelta = Math.round((clientX - currentDrag.startX) / px);
+    if (currentDrag.mode === 'move' && currentDrag.activated === false) {
+      if (Math.hypot(clientX - currentDrag.startX, clientY - (currentDrag.startY ?? clientY)) < 6) {
+        return;
+      }
+    }
+    if (collapseDragClickRef.current && (
+      Math.abs(clientX - collapseDragClickRef.current.startX) >= 3
+      || Math.abs(clientY - collapseDragClickRef.current.startY) >= 3
+    )) {
+      collapseDragClickRef.current = null;
+    }
+    const scrollLeft = scrollRef.current?.scrollLeft ?? currentDrag.lastScrollLeft ?? 0;
+    const rawDeltaF = incrementalTimelineDragFrames({
+      rawDeltaF: currentDrag.rawDeltaF ?? currentDrag.deltaF,
+      clientX, lastClientX: currentDrag.lastClientX ?? currentDrag.startX,
+      scrollLeft, lastScrollLeft: currentDrag.lastScrollLeft ?? scrollLeft,
+      pixelsPerFrame: px, lastPixelsPerFrame: currentDrag.lastPx ?? px,
+    });
+    const rawDelta = Math.round(rawDeltaF);
+    const updatedDrag = { ...currentDrag, activated: true, rawDeltaF, lastClientX: clientX, lastScrollLeft: scrollLeft, lastPx: px };
     if (currentDrag.mode === 'slip') {
-      setDrag({ ...currentDrag, deltaF: rawDelta, targetTrack: currentDrag.baseTrack, snapAt: null }, publish);
+      setDrag({ ...updatedDrag, deltaF: rawDelta, targetTrack: currentDrag.baseTrack, snapAt: null }, publish);
       return;
     }
     const snapped = applySnap(currentDrag.mode, currentDrag.baseStart, currentDrag.baseDur, rawDelta);
+    if (currentDrag.mode === 'roll') {
+      const liveState = commands.getState?.() ?? state;
+      const plan = currentDrag.rightId
+        ? planRollingTrim(liveState, currentDrag.id, currentDrag.rightId, snapped.deltaF)
+        : { state: liveState, deltaF: 0, error: '滚动裁剪缺少右侧片段。' };
+      setDrag({ ...updatedDrag, deltaF: plan.deltaF, targetTrack: currentDrag.baseTrack,
+        snapAt: plan.deltaF === snapped.deltaF ? snapped.snapAt : null,
+        plannedState: plan.state, planError: plan.error, limitMessage: plan.limitMessage }, publish);
+      return;
+    }
+    const targetTrack = currentDrag.mode === 'move' ? trackFromClientY(clientY) : currentDrag.baseTrack;
+    const draggedPrimary = state.items.find((item) => item.id === currentDrag.id);
+    const validTargetTrack = currentDrag.mode !== 'move' || targetTrack === currentDrag.baseTrack
+      || !draggedPrimary || canItemMoveToTrack(state, draggedPrimary, targetTrack);
+    const safeTrack = validTargetTrack ? targetTrack : currentDrag.baseTrack;
+    const newLanePlacement: 'top' | 'bottom' | null = null;
+    const newLaneDrop = false;
+    const magneticMove = currentDrag.mode === 'move' && state.interaction?.magnet
+      && (currentDrag.baseTrack === mainTrackId(state) || safeTrack === mainTrackId(state)
+        || state.items.some((item) => item.track === mainTrackId(state) && dragSelectionRef.current.itemIds.includes(item.id)))
+      && !newLaneDrop;
+    if (magneticMove) {
+      if (dragSelectionRef.current.captionSelections.length) {
+        setDrag({ ...updatedDrag, deltaF: 0, targetTrack, snapAt: null, plannedState: state,
+          newTrackDrop: false,
+          planError: '主轨磁吸时请单独移动画面片段。若要同时移动手工字幕，请先关闭主轨磁吸。' }, publish);
+        return;
+      }
+      const plan = planMagneticMove(state, dragSelectionRef.current.itemIds, currentDrag.id,
+        currentDrag.baseStart + snapped.deltaF, safeTrack);
+      setDrag({ ...updatedDrag, targetTrack,
+        newTrackDrop: false,
+        deltaF: (plan.insertionFrame ?? currentDrag.baseStart) - currentDrag.baseStart,
+        snapAt: plan.insertionFrame ?? null, plannedState: plan.state, planError: plan.error }, publish);
+      return;
+    }
+    const minimumDuration = Math.max(6, Math.round(state.fps * 0.5));
     const cap = currentDrag.mode === 'trim-right'
       ? trimRightCap(currentDrag.id, currentDrag.baseDur)
+      : currentDrag.mode === 'trim-left'
+        ? Math.max(0, currentDrag.baseDur - minimumDuration)
       : Infinity;
-    const floor = currentDrag.mode === 'trim-left'
-      ? trimLeftFloor(currentDrag.id, currentDrag.baseStart)
-      : -Infinity;
-    const selectionDelta = currentDrag.mode === 'move'
+    const floor = currentDrag.mode === 'trim-left' ? trimLeftFloor(currentDrag.id, currentDrag.baseStart)
+      : currentDrag.mode === 'trim-right'
+        ? currentDrag.baseDur < minimumDuration ? 0 : minimumDuration - currentDrag.baseDur
+        : -Infinity;
+    const trackShift = currentDrag.mode === 'move' && !newLaneDrop && safeTrack !== currentDrag.baseTrack
+      ? { from: currentDrag.baseTrack, to: safeTrack }
+      : null;
+    const selectionDelta = currentDrag.mode === 'move' && !newLaneDrop
       ? clampTimelineSelectionDelta(
         state,
         dragSelectionRef.current.itemIds,
         dragSelectionRef.current.captionSelections,
         snapped.deltaF,
+        trackShift,
       )
       : snapped.deltaF;
     const deltaF = Math.min(Math.max(selectionDelta, floor), cap);
     const snapAt = deltaF === snapped.deltaF ? snapped.snapAt : null;
-    const targetTrack = currentDrag.mode === 'move'
-      ? trackFromClientY(clientY)
-      : currentDrag.baseTrack;
-    setDrag({ ...currentDrag, deltaF, targetTrack, snapAt }, publish);
+    const nextDrag = { ...updatedDrag, deltaF, targetTrack, snapAt, plannedState: undefined,
+      planError: undefined, limitMessage: undefined, newTrackDrop: newLaneDrop, newTrackPlacement: newLanePlacement ?? undefined };
+    if (currentDrag.mode === 'move' && !newLaneDrop) {
+      const moved = moveTimelineSelectionByDelta(state, dragSelectionRef.current.itemIds,
+        dragSelectionRef.current.captionSelections, deltaF, trackShift);
+      const plan = state.interaction?.linkage ? planDirectionalChange(state, moved) : { state: moved };
+      setDrag({ ...nextDrag, plannedState: plan.state, planError: plan.error }, publish);
+      return;
+    }
+    const trimPlan = planTimelineMagneticTrim(state, nextDrag, editMode);
+    setDrag(trimPlan ? { ...nextDrag, plannedState: trimPlan.state, planError: trimPlan.error } : nextDrag, publish);
   };
   const flushPointerMove = (publish: boolean) => {
     if (pointerMoveRaf.current) cancelAnimationFrame(pointerMoveRaf.current);
@@ -275,6 +413,10 @@ export function useTimelinePointer(deps: PointerDeps) {
   };
   const onPointerMove = (e: React.PointerEvent) => {
     if (!marqueeRef.current && !pickDragRef.current && !penDragRef.current && !dragRef.current) return;
+    if (e.pointerType === 'mouse' && e.nativeEvent.isTrusted && (e.buttons & 1) === 0) {
+      cancelPointerGesture();
+      return;
+    }
     pendingMove.current = { clientX: e.clientX, clientY: e.clientY };
     if (pointerMoveRaf.current) return;
     pointerMoveRaf.current = requestAnimationFrame(() => flushPointerMove(true));
@@ -286,11 +428,13 @@ export function useTimelinePointer(deps: PointerDeps) {
     snapHold.current = null;
     gestureSnapPoints.current = [];
     dragSelectionRef.current = { itemIds: [], captionSelections: [] };
+    collapseDragClickRef.current = null;
     setDrag(null);
     setPenDrag(null);
     setMarquee(null);
     setPickDrag(null);
-  }, [setDrag, setMarquee, setPenDrag, setPickDrag]);
+    onGestureEnd?.();
+  }, [onGestureEnd, setDrag, setMarquee, setPenDrag, setPickDrag]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || (
@@ -300,16 +444,24 @@ export function useTimelinePointer(deps: PointerDeps) {
       event.stopPropagation();
       cancelPointerGesture();
     };
+    const onBlur = () => cancelPointerGesture();
     window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('blur', onBlur);
       if (pointerMoveRaf.current) cancelAnimationFrame(pointerMoveRaf.current);
       pointerMoveRaf.current = 0;
       pendingMove.current = null;
     };
   }, [cancelPointerGesture, dragRef, marqueeRef, penDragRef, pickDragRef]);
   const onPointerUp = (event: React.PointerEvent) => {
+    if (marqueeRef.current || pickDragRef.current || penDragRef.current
+      || (dragRef.current && (dragRef.current.mode !== 'move' || dragRef.current.activated !== false))) {
+      pendingMove.current = { clientX: event.clientX, clientY: event.clientY };
+    }
     flushPointerMove(false);
+    onGestureEnd?.();
     const currentMarquee = marqueeRef.current;
     if (currentMarquee) {
       setMarquee(null);
@@ -326,12 +478,12 @@ export function useTimelinePointer(deps: PointerDeps) {
       );
       onMarqueeCaptionSelect(selection.captionSelections, {
         additive: currentMarquee.additive,
-        preserveWithItems: selection.itemIds.length > 0,
+        preserveWithItems: selection.itemIds.length > 0 || (currentMarquee.additive && selectedIdsOf(state).length > 0),
       });
       if (currentMarquee.additive) {
-        commands.selectItems([...new Set([...selectedIdsOf(state), ...selection.itemIds])]);
+        commands.selectItems(groupedItemIds(state, [...new Set([...selectedIdsOf(state), ...selection.itemIds])]));
       } else {
-        commands.selectItems(selection.itemIds);
+        commands.selectItems(groupedItemIds(state, selection.itemIds));
       }
       return;
     }
@@ -371,6 +523,8 @@ export function useTimelinePointer(deps: PointerDeps) {
     }
     const currentDrag = dragRef.current;
     if (!currentDrag) return;
+    const collapseClick = collapseDragClickRef.current;
+    collapseDragClickRef.current = null;
     if (currentDrag.mode === 'move') {
       if (onDropSelectionToChat && isOverChatComposer?.(event.clientX, event.clientY)) {
         onDropSelectionToChat(dragSelectionRef.current);
@@ -380,24 +534,48 @@ export function useTimelinePointer(deps: PointerDeps) {
         setDrag(null);
         return;
       }
+      if (collapseClick && currentDrag.deltaF === 0) {
+        commands.selectItems(groupedItemIds(state, [collapseClick.id]));
+        onMarqueeCaptionSelect([], { additive: false, preserveWithItems: false });
+        snapHold.current = null;
+        gestureSnapPoints.current = [];
+        dragSelectionRef.current = { itemIds: [], captionSelections: [] };
+        setDrag(null);
+        return;
+      }
+      if (currentDrag.activated === false) {
+        snapHold.current = null;
+        gestureSnapPoints.current = [];
+        dragSelectionRef.current = { itemIds: [], captionSelections: [] };
+        setDrag(null);
+        return;
+      }
+      const draggedPrimary = state.items.find((item) => item.id === currentDrag.id);
       const validTrack = !!currentDrag.targetTrack
+        && (!draggedPrimary || canItemMoveToTrack(state, draggedPrimary, currentDrag.targetTrack))
         && trackKind(state, currentDrag.targetTrack) === trackKind(state, currentDrag.baseTrack)
         && !state.tracks?.[currentDrag.targetTrack]?.locked;
       const track = validTrack ? currentDrag.targetTrack : currentDrag.baseTrack;
-      const next = moveTimelineSelectionByDelta(
+      const next = currentDrag.plannedState ?? moveTimelineSelectionByDelta(
         state,
         dragSelectionRef.current.itemIds,
         dragSelectionRef.current.captionSelections,
         currentDrag.deltaF,
         track !== currentDrag.baseTrack ? { from: currentDrag.baseTrack, to: track } : null,
       );
-      if (next !== state) commands.applyState(next);
+      if (currentDrag.planError) window.alert(currentDrag.planError);
+      else if (next !== state) {
+        const planned = state.interaction?.linkage ? planDirectionalChange(state, next) : { state: next };
+        if (planned.error) window.alert(planned.error);
+        else commands.applyState(planned.state);
+      }
     } else {
       commitTimelineDragGesture(state, commands, currentDrag, editMode);
     }
     snapHold.current = null;
     gestureSnapPoints.current = [];
     dragSelectionRef.current = { itemIds: [], captionSelections: [] };
+    collapseDragClickRef.current = null;
     setDrag(null);
   };
   const onPointerCancel = () => cancelPointerGesture();
@@ -410,8 +588,10 @@ export function useTimelinePointer(deps: PointerDeps) {
     marquee,
     pickDrag,
     startDrag,
+    startRollDrag,
     startPick,
     startMarquee,
+    refreshAt: (clientX: number, clientY: number) => applyPointerMove(clientX, clientY),
     onPointerMove,
     onPointerUp,
     onPointerCancel,

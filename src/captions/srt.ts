@@ -27,7 +27,7 @@ function cueText(lines: string[]): string {
   return lines
     .map((line) => line.trim())
     .filter(Boolean)
-    .join(' ')
+    .join('\n')
     .replace(/<\/?(?:b|i|u|font)(?:\s+[^>]*)?>/gi, '')
     .replace(/\{\\[^}]+\}/g, '')
     .replace(/&(?:amp|apos|gt|lt|nbsp|quot|#39|#\d+|#x[\da-f]+);/gi, decodeEntity)

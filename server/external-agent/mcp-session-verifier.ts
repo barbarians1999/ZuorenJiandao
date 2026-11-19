@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { setImmediate as delayImmediate } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -258,10 +259,10 @@ async function verifyOldRevisionMutation(session: AppliedSession): Promise<void>
     arguments: { editSessionId: session.editSessionId },
   });
   assert.equal(callOutcome(result), 'stale');
-  assert.notEqual(
+  await delayImmediate();
+  assert.ok(
     mcpSessionsForTest().find((candidate) => candidate.id === session.client.sessionId)?.staleReason,
-    null,
-    'mutating calls retain permanent stale transport behavior',
+    'mutating calls retain the transport with a permanent stale binding',
   );
 }
 
@@ -384,10 +385,10 @@ async function rejectAndSwitchEditor(
     arguments: { editSessionId: session.editSessionId },
   });
   assert.equal(callOutcome(switchedRead), 'stale');
-  assert.notEqual(
+  await delayImmediate();
+  assert.ok(
     mcpSessionsForTest().find((candidate) => candidate.id === session.client.sessionId)?.staleReason,
-    null,
-    'a real editor/project switch still permanently stales the MCP transport',
+    'a real editor/project switch retains the transport with a permanent stale binding',
   );
   return switchedEditor;
 }

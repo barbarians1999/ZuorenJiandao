@@ -1,0 +1,6 @@
+.cc-animation-groups {display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
+.cc-animation-groups button {min-height:36px;padding:6px 12px;font-size:14px;color:var(--cc-text);background:var(--cc-panel-alt);border:1px solid transparent;border-radius:999px;cursor:pointer;}
+.cc-animation-groups button[aria-pressed="true"] {border-color:var(--cc-accent);color:var(--cc-accent);}
+.cc-animation-card:hover .cc-animation-sample[data-motion="whip-up"] > span {animation-name:cc-motion-up;}
+.cc-animation-card:hover .cc-animation-sample[data-motion="whip-down"] > span {animation-name:cc-motion-down;}
+.cc-animation-card:hover .cc-animation-sample[data-motion="whip-left"] > span {animation-name:cc-motion-left;}

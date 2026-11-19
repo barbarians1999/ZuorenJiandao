@@ -35,8 +35,8 @@ export const DESKTOP_INITIAL_WINDOW_MAX_HEIGHT_RATIO = 0.9;
 // The expanded editor gives Preview 30% of content width. Preserve a complete
 // 9:16 preview plus editor/preview headers and four standard Timeline rows.
 const DESKTOP_PREVIEW_WIDTH_RATIO = 3 / 10;
-const DESKTOP_EDITOR_HEADER_HEIGHT = 41;
-const DESKTOP_PREVIEW_HEADER_HEIGHT = 30;
+const DESKTOP_EDITOR_HEADER_HEIGHT = 52;
+const DESKTOP_PREVIEW_HEADER_HEIGHT = 38;
 const DESKTOP_TIMELINE_MIN_HEIGHT = 288;
 
 interface DesktopWindowScaleInput {

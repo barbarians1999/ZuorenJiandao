@@ -18,6 +18,9 @@ export interface SceneEvidence extends SceneChange {
 
 export interface SceneDetectionResult {
   durationMs: number;
+  /** Source-media bounds; omitted in historical responses that scanned the full file. */
+  rangeStartMs?: number;
+  rangeEndMs?: number;
   threshold: number;
   minSceneMs: number;
   sampleFps: number;
@@ -38,6 +41,8 @@ export interface SceneDetectionJobSnapshot {
 
 export interface StartSceneDetectionOptions {
   src: string;
+  rangeStartMs?: number;
+  rangeEndMs?: number;
   threshold?: number;
   minSceneMs?: number;
   maxScenes?: number;

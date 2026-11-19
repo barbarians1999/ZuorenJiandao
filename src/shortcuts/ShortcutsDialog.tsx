@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { theme, themeAlpha } from '../theme';
-import { getLocale, localizedCatalogText, useT } from '../i18n/locale';
+import { localizedCatalogText, useT } from '../i18n/locale';
 import { SHORTCUT_GROUPS, type ShortcutAction } from './catalog';
 import { Icon } from '../components/icons';
 import {
@@ -21,11 +21,8 @@ interface Pending { id: string; keys: string; conflicts: ShortcutAction[] }
  *  with conflict detection. Reset one action or the full default preset. */
 export function ShortcutsDialog({ onClose }: ShortcutsDialogProps) {
   const t = useT();
-  // The shortcut key directory comes with the official English label. Use it directly in English mode without entering the dictionary and repeating it.
-  const locale = getLocale();
-  const zh = locale === 'zh';
   const actionLabel = (a: Pick<ShortcutAction, 'label' | 'labelZh'>): string =>
-    localizedCatalogText(a.label, a.labelZh, locale);
+    localizedCatalogText(a.label, a.labelZh);
   const [, bump] = useState(0);
   const [capturingId, setCapturingId] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
@@ -62,6 +59,7 @@ export function ShortcutsDialog({ onClose }: ShortcutsDialogProps) {
   return (
     <div
       role="dialog"
+      className="cc-shortcuts-dialog"
       aria-label={t('键盘快捷键')}
       style={{ position: 'fixed', inset: 0, zIndex: 200, background: themeAlpha.shadow(0.55), display: 'grid', placeItems: 'center', padding: 24 }}
       onClick={onClose}
@@ -95,7 +93,7 @@ export function ShortcutsDialog({ onClose }: ShortcutsDialogProps) {
             return (
               <div key={g.id} style={{ marginTop: 12 }}>
                 <div style={{ fontSize: 11, color: theme.textDim, letterSpacing: 0.4, margin: '0 4px 6px' }}>
-                  {locale === 'zh' ? `${g.labelZh} · ${g.label}` : g.label}
+                  {g.labelZh}
                 </div>
                 <div style={{ display: 'grid', gap: 2 }}>
                   {rows.map((a) => {
@@ -126,7 +124,7 @@ export function ShortcutsDialog({ onClose }: ShortcutsDialogProps) {
                         {conflicting && pending && (
       <div style={{ position: 'absolute', right: 24, marginTop: 40, zIndex: 1, background: theme.panel, border: `0.5px solid ${theme.accent}`, borderRadius: 4, padding: 10, boxShadow: `0 8px 24px ${themeAlpha.shadow(0.67)}`, maxWidth: 300 }}>
                             <div style={{ fontSize: 11.5, marginBottom: 6 }}>
-                              <b>{showKeys(pending.keys)}</b> {t('已被占用：')}{pending.conflicts.map(actionLabel).join(zh ? '、' : ', ')}
+                              <b>{showKeys(pending.keys)}</b> {t('已被占用：')}{pending.conflicts.map(actionLabel).join('、')}
                             </div>
                             <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                               <button type="button" onClick={() => setPending(null)} style={{ fontSize: 11, background: 'none', border: `0.5px solid ${theme.border}`, borderRadius: 6, padding: '3px 8px', color: theme.text, cursor: 'pointer' }}>{t('取消')}</button>

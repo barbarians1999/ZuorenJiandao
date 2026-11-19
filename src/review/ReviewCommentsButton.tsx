@@ -255,7 +255,7 @@ function ReplyForm({ commentId, reply, setReply, addReply, busy }: CommentListPr
   return (
     <div style={{ display: 'flex', gap: 6, marginTop: 7 }}>
       <input autoFocus value={reply} onChange={(event) => setReply(event.target.value)}
-        onKeyDown={(event) => { if (event.key === 'Enter' && reply.trim()) void addReply(commentId); }}
+        onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && reply.trim()) { event.preventDefault(); void addReply(commentId); } }}
         placeholder={t('输入回复')} style={replyInput} />
       <button type="button" disabled={busy || !reply.trim()} onClick={() => void addReply(commentId)} style={smallButton}>
         {t('回复')}

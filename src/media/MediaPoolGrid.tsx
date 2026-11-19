@@ -7,9 +7,14 @@ import { useT } from '../i18n/locale';
 import { MediaAssetCard, MediaFolderCard, MediaParentFolderCard } from './MediaPoolCard';
 import { AddSolidCanvasCard } from './AddSolidCanvasCard';
 import { marqueeAssetIds, marqueeRect, type MarqueePoint } from './mediaMarquee';
+import type { MediaPlacementPurpose } from './placementPurpose';
+import type { MediaSourceRanges } from '../editor/mediaSourceRange';
 
 export type MediaGridEntry =
   | { kind: 'solid' }
+  | { kind: 'shape-rectangle' }
+  | { kind: 'shape-ellipse' }
+  | { kind: 'mosaic' }
   | { kind: 'favorites' }
   | { kind: 'parent'; parentId?: string; parentName: string }
   | { kind: 'folder'; folder: MediaFolder }
@@ -26,6 +31,10 @@ interface MediaPoolGridProps {
   musicAnalysis: ReadonlyMap<string, MusicAnalysisCardState>;
   assetMenu: string | null;
   canRelink: boolean;
+  dragPurpose?: MediaPlacementPurpose;
+  sourceRanges?: MediaSourceRanges;
+  sourcePreviewOpen?: boolean;
+  onOpenSourceRange?: (id: string) => void;
   onOpenFolder: (id: string) => void;
   onOpenParent: () => void;
   onDropTransfer: (transfer: DataTransfer, folderId?: string) => void;
@@ -33,6 +42,8 @@ interface MediaPoolGridProps {
   onMoveAssets?: (ids: string[], folderId?: string) => void;
   onOpenFavorites: () => void;
   onAddSolid?: () => void;
+  onAddShape?: (shape: 'rectangle' | 'ellipse') => void;
+  onAddMosaic?: () => void;
   onSetFavorite: (id: string, favorite: boolean) => void;
   onAddAsset: (asset: MediaAsset) => void;
   onLoadError: (id: string) => void;
@@ -182,6 +193,12 @@ function MediaVirtualRows(props: MediaPoolGridProps & ReturnType<typeof useMedia
       >
         {props.entries.slice(row.startIndex, row.endIndex).map((entry) => entry.kind === 'solid'
           ? <AddSolidCanvasCard key="solid" label={t('添加纯色背景/画布')} onAdd={() => props.onAddSolid?.()} />
+          : entry.kind === 'shape-rectangle'
+            ? <AddSolidCanvasCard key="shape-rectangle" label={t('添加矩形')} onAdd={() => props.onAddShape?.('rectangle')} />
+            : entry.kind === 'shape-ellipse'
+              ? <AddSolidCanvasCard key="shape-ellipse" label={t('添加椭圆')} onAdd={() => props.onAddShape?.('ellipse')} />
+              : entry.kind === 'mosaic'
+                ? <AddSolidCanvasCard key="mosaic" icon="grid" label={t('添加独立马赛克')} onAdd={() => props.onAddMosaic?.()} />
           : entry.kind === 'favorites'
             ? <button key="favorites" type="button" className="cc-folder-card cc-favorites-folder" onClick={props.onOpenFavorites}>
                 <span className="cc-media-entry-thumb"><Icon name="star" size={20} strokeWidth={1.4} /></span>
@@ -213,13 +230,16 @@ function MediaVirtualRows(props: MediaPoolGridProps & ReturnType<typeof useMedia
               asset={entry.asset}
               fps={props.fps}
               view={props.view}
-              active={props.activePreviewId === entry.asset.id}
+              active={!props.sourcePreviewOpen && props.activePreviewId === entry.asset.id}
               selected={props.selected.has(entry.asset.id)}
               selectedAssetIds={[...props.selected]}
               missing={props.missing.has(entry.asset.id)}
               used={props.usedAssetIds.has(entry.asset.id)}
               musicAnalysis={props.musicAnalysis.get(entry.asset.id)}
               canRelink={props.canRelink}
+              dragPurpose={props.dragPurpose}
+              sourceRanges={props.sourceRanges}
+              onOpenSourceRange={props.onOpenSourceRange}
               onAdd={props.onAddAsset}
               onPointerChange={props.setPointerId}
               onDragChange={props.setDraggedId}

@@ -15,6 +15,7 @@ export interface LanePage {
   pageId: string;
   /** index of the word being spoken inside page.words (karaoke), -1 = none */
   curIdx: number;
+  fontOverride?: CaptionPageIdentity['fontOverride'];
 }
 
 export type CaptionPlacementSource =
@@ -27,6 +28,7 @@ export interface LaneGroup {
   anchor?: CaptionAnchor;
   offsetXRatio?: number;
   offsetYRatio?: number;
+  widthRatio?: number;
   scale?: number;
   rotation?: number;
   opacity?: number;
@@ -55,12 +57,13 @@ function placementOf(entry: CaptionSourceEntry, policy: CaptionLayoutPolicy): Re
       };
     }
   }
-  if (entry.anchor) {
+  if (entry.anchor || entry.widthRatio !== undefined) {
     return {
       layout: {
-        anchor: entry.anchor,
+        anchor: entry.anchor ?? 'bottom-center',
         offsetXRatio: entry.offsetXRatio,
         offsetYRatio: entry.offsetYRatio,
+        widthRatio: entry.widthRatio,
         scale: entry.scale,
         rotation: entry.rotation,
         opacity: entry.opacity,
@@ -78,7 +81,7 @@ export interface EffectiveCaptionLaneGroup {
 }
 
 const placementKey = (layout: ResolvedPlacement['layout']): string => layout?.anchor
-  ? `${layout.anchor}|${layout.offsetXRatio ?? 0}|${layout.offsetYRatio ?? 0}|${layout.scale ?? 1}|${layout.rotation ?? 0}|${layout.opacity ?? 1}`
+  ? `${layout.anchor}|${layout.offsetXRatio ?? 0}|${layout.offsetYRatio ?? 0}|${layout.widthRatio ?? 0.8}|${layout.scale ?? 1}|${layout.rotation ?? 0}|${layout.opacity ?? 1}`
   : '__block__';
 
 function samePlacementSource(left: CaptionPlacementSource, right: CaptionPlacementSource): boolean {
@@ -130,11 +133,11 @@ export function resolveEffectiveCaptionLanes(
 /** Lane rendering model of the current frame (ms) over ALREADY-BUILT pages — the
  * per-frame half of the multi-lane pipeline. No sourceEntries → null (the caller
  * takes the old single-stream path). */
-export function laneGroupsFromPages(pages: CaptionPageIdentity[], captions: CaptionsData, ms: number): LaneGroup[] | null {
+export function laneGroupsFromPages(pages: CaptionPageIdentity[], captions: CaptionsData, ms: number, fps?: number): LaneGroup[] | null {
   if (!captions.sourceEntries?.length) return null;
-  const active = activeCaptionPages(pages, ms)
+  const active = activeCaptionPages(pages, ms, fps)
     .flatMap((identity) => identity.entry
-      ? [{ entry: identity.entry, lane: { entry: identity.entry, page: identity.page, pageId: identity.id, curIdx: currentWordIndex(identity.page, ms) } }]
+      ? [{ entry: identity.entry, lane: { entry: identity.entry, page: identity.page, pageId: identity.id, curIdx: currentWordIndex(identity.page, ms), fontOverride: identity.fontOverride } }]
       : []);
   if (!active.length) return [];
 
@@ -153,5 +156,5 @@ export function laneGroupsFromPages(pages: CaptionPageIdentity[], captions: Capt
 /** Lane rendering model of the current frame (ms). No sourceEntries → null (the caller takes the old single-stream path). */
 export function buildLaneGroups(captions: CaptionsData, items: TimelineItem[], fps: number, ms: number, _wordsPerPage: number | undefined): LaneGroup[] | null {
   if (!captions.sourceEntries?.length) return null;
-  return laneGroupsFromPages(buildCaptionPages(captions, items, fps), captions, ms);
+  return laneGroupsFromPages(buildCaptionPages(captions, items, fps), captions, ms, fps);
 }

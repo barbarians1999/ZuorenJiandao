@@ -72,17 +72,17 @@ function failedResponse(src: string, error: unknown): PreviewProxyResponse {
   };
 }
 
-async function loadProxy(src: string, force: boolean, entry: ProxyEntry): Promise<void> {
+async function loadProxy(src: string, force: boolean, entry: ProxyEntry, retry = false): Promise<void> {
   if (entry.promise) {
     await entry.promise;
-    if (force && !entry.force && entry.response?.proxy.status !== 'ready') await loadProxy(src, true, entry);
+    if (force && !entry.force && entry.response?.proxy.status === 'not-needed') await loadProxy(src, true, entry);
     return;
   }
-  if (entry.response && (!force || entry.response.proxy.status === 'ready')) return;
+  if (!retry && entry.response && (!force || entry.response.proxy.status !== 'not-needed')) return;
   entry.force = force;
   entry.response = null;
   notify(entry);
-  const query = `src=${encodeURIComponent(src)}${force ? '&force=1' : ''}`;
+  const query = `src=${encodeURIComponent(src)}${force ? '&force=1' : ''}${retry ? '&retry=1' : ''}`;
   const controller = new AbortController();
   entry.controller = controller;
   entry.promise = fetch(`/api/preview-proxy?${query}`, { signal: controller.signal })
@@ -101,9 +101,14 @@ async function loadProxy(src: string, force: boolean, entry: ProxyEntry): Promis
   await entry.promise;
 }
 
-export function requestPreviewProxy(src: string, force = false): Promise<void> {
+export function requestPreviewProxy(src: string, force = false, retry = false): Promise<void> {
   if (!isPreviewable(src)) return Promise.resolve();
-  return loadProxy(src, force, proxyEntry(src));
+  return loadProxy(src, force, proxyEntry(src), retry);
+}
+
+/** Explicit user action only: failed results remain cached until this is called. */
+export function retryPreviewProxy(src: string): Promise<void> {
+  return requestPreviewProxy(src, true, true);
 }
 
 export function reportPreviewPlaybackFailure(src: string, error = 'preview media failed to play'): void {
@@ -124,7 +129,7 @@ export function mediaPosterUrl(src: string | undefined): string | undefined {
   return isPreviewable(src) ? `/api/media-poster?src=${encodeURIComponent(src)}` : undefined;
 }
 
-function stateFor(src: string | undefined, autoRequest: boolean): PreviewProxyState {
+export function previewProxyState(src: string | undefined, autoRequest = shouldAutoRequestPreviewProxy()): PreviewProxyState {
   if (!isPreviewable(src)) return { status: 'unavailable', reason: 'non-local-source' };
   const entry = proxyEntry(src);
   if (!entry.response) {
@@ -134,6 +139,8 @@ function stateFor(src: string | undefined, autoRequest: boolean): PreviewProxySt
   }
   return entry.response.proxy;
 }
+
+const stateFor = previewProxyState;
 
 function subscribe(sources: readonly string[], listener: () => void): () => void {
   for (const src of sources) proxyEntry(src).listeners.add(listener);
@@ -177,9 +184,19 @@ function useProxySources(sources: readonly string[]): number {
   return revision;
 }
 
-function resolvePreviewSrc(src: string | undefined, proxy: PreviewProxyState): string | undefined {
+export function resolvePreviewSrc(src: string | undefined, proxy: PreviewProxyState): string | undefined {
   if (shouldPreferMasterPreview() && src) return src;
   return proxy.status === 'ready' ? proxy.previewSrc : src;
+}
+
+/** Derive a view document, never write proxy URLs back into persisted editing state. */
+export function projectForPreview(project: ProjectDoc, sources: ReadonlyMap<string, string>): ProjectDoc {
+  return { ...project, timelines: project.timelines.map((timeline) => ({ ...timeline,
+    items: timeline.items.map((item) => {
+      const src = item.kind === 'video' && item.src ? sources.get(item.src) : undefined;
+      return src && src !== item.src ? { ...item, src } : item;
+    }),
+  })) };
 }
 
 export function usePreviewMediaSource(src: string | undefined, enabled = true) {
@@ -237,19 +254,10 @@ export function usePreviewProjectDoc(project: ProjectDoc, timelineId: string) {
   const revision = useProxySources(sources);
   const previewProject = useMemo<ProjectDoc>(() => {
     void revision; // recompute when the proxy cache bumps (proxies live in module state)
-    return {
-      ...project,
-      timelines: project.timelines.map((timeline) => ({
-        ...timeline,
-        items: timeline.items.map((item) => {
-          if (item.kind !== 'video' || !item.src) return item;
-          const proxy = stateFor(item.src, shouldAutoRequestPreviewProxy());
-          const previewSrc = resolvePreviewSrc(item.src, proxy);
-          return previewSrc && previewSrc !== item.src ? { ...item, src: previewSrc } : item;
-        }),
-      })),
-    };
-  }, [project, revision]);
+    const resolved = new Map(sources.map((src) => [src,
+      resolvePreviewSrc(src, stateFor(src, shouldAutoRequestPreviewProxy())) ?? src]));
+    return projectForPreview(project, resolved);
+  }, [project, revision, sources]);
   const state = previewProject.timelines.find((timeline) => timeline.id === timelineId)!;
   return {
     project: previewProject,

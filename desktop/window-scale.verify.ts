@@ -60,7 +60,7 @@ assert.equal(
 );
 assert.deepEqual(
   baseline.minimumWindowSize,
-  { width: 1067, height: 839 },
+  { width: 1067, height: 852 },
   'minimum window preserves two-thirds scale and a full 30%-wide 9:16 preview; the base does not enlarge it',
 );
 
@@ -74,8 +74,8 @@ const liveScreenBaseline = resolveDesktopWindowScale({
 });
 assert.deepEqual(
   liveScreenBaseline.minimumWindowSize,
-  { width: 807, height: 698 },
-  'portrait-preview minimum remains below the 1210x704 startup window',
+  { width: 807, height: 711 },
+  'portrait-preview minimum includes the enlarged editor and preview headers',
 );
 
 assert.equal(

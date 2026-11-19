@@ -1,8 +1,9 @@
-import { useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useT } from '../i18n/locale';
 import { loadExportAutoQaPreference, saveExportAutoQaPreference } from './autoQa';
 import { createArtifactExporters } from './artifactExportOperations';
 import {
+  initialViewedExportJobId,
   type BackgroundExportJobSetters,
   type ExportJobStore,
 } from './backgroundExportStore';
@@ -12,6 +13,7 @@ import {
   ensureExportDestinationWritable,
   exportDestinationErrorMessage,
   exportDestinationTargetPath,
+  exportDestinationTaskKey,
 } from './exportDestination';
 import type { ExportDestination } from './exportDestination';
 import { immutableExportSnapshot } from './exportMediaPlan';
@@ -22,6 +24,7 @@ import {
   rebindAndResumePersistedServerExport,
   retirePersistedServerExport,
 } from './serverExportOperation';
+import { hasServerExportDestinationAuthority } from './serverExportRecovery';
 import { createVideoExporter } from './videoExportOperation';
 import { useExportDestination } from './useExportDestination';
 import type {
@@ -63,7 +66,14 @@ function createWorkflowOperations(
   targetPath: string,
   t: Translate,
 ): WorkflowOperations {
-  const verifyCompletedExport = createExportVerifier({ fps: options.fps, state: options.state, t, ...setters });
+  const verifyCompletedExport = createExportVerifier({
+    fps: options.fps,
+    state: options.state,
+    ...(options.startFrame !== undefined && options.endFrameExclusive !== undefined
+      ? { frameRange: [options.startFrame, options.endFrameExclusive] as [number, number] } : {}),
+    t,
+    ...setters,
+  });
   const exportServer = createServerExporter({
     autoQaEnabled,
     destination,
@@ -147,33 +157,38 @@ function recoveredServerRenderId(jobId: string | null): string | null {
 export function useExportWorkflow(options: UseExportWorkflowOptions, exportJobs: ExportJobStore) {
   const t = useT();
   const initialJobs = exportJobs.getSnapshot().jobs;
-  const [viewedJobId, setViewedJobId] = useState<string | null>(() => initialJobs.at(-1)?.id ?? null);
+  const [viewedJobId, setViewedJobId] = useState<string | null>(() => initialViewedExportJobId(initialJobs));
+  const pendingInitialRecoverySelection = useRef(initialViewedExportJobId(initialJobs) === null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const browserAbortRef = useRef<AbortController | null>(null);
   const [autoQaEnabled, setAutoQaEnabled] = useState(() => loadExportAutoQaPreference().enabled);
   const destinationState = useExportDestination(suggestedExportFilename(options));
   const jobSnapshot = useSyncExternalStore(exportJobs.subscribe, exportJobs.getSnapshot, exportJobs.getSnapshot);
+  useEffect(() => {
+    if (!pendingInitialRecoverySelection.current || viewedJobId) return;
+    const recoveredJobId = initialViewedExportJobId(jobSnapshot.jobs);
+    if (!recoveredJobId) return;
+    pendingInitialRecoverySelection.current = false;
+    setViewedJobId(recoveredJobId);
+  }, [jobSnapshot.jobs, viewedJobId]);
   const viewedJob = viewedJobId ? jobSnapshot.jobs.find((job) => job.id === viewedJobId) : undefined;
   const state = viewedJob ?? EMPTY_WORKFLOW;
+  const [liveClock, setLiveClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!state.busy) return;
+    const timer = globalThis.setInterval(() => {
+      setLiveClock(Date.now());
+    }, 1000);
+    return () => {
+      globalThis.clearInterval(timer);
+    };
+  }, [state.busy, viewedJobId]);
 
   const run = async () => {
     if (state.busy) return;
     if (state.progress?.phase === 'completed') {
       options.onClose();
       return;
-    }
-    const retainedRenderId = recoveredServerRenderId(viewedJobId);
-    if (retainedRenderId) {
-      try {
-        const retired = await retirePersistedServerExport(retainedRenderId);
-        if (!retired) {
-          setSetupError(t('此导出正在由另一个窗口恢复，请稍后重试'));
-          return;
-        }
-      } catch (error) {
-        setSetupError(exportDestinationErrorMessage(error, t));
-        return;
-      }
     }
     const filename = suggestedExportFilename(options) ?? `${options.base}-${options.tab}`;
     let targetPath: string;
@@ -184,6 +199,28 @@ export function useExportWorkflow(options: UseExportWorkflowOptions, exportJobs:
       return;
     }
     setSetupError(null);
+    const retainedRenderId = viewedJob?.serverRenderId ?? recoveredServerRenderId(viewedJobId);
+    if (
+      retainedRenderId
+      && viewedJob?.progress.phase === 'failed'
+      && viewedJob.failure?.stage === 'destination'
+      && hasServerExportDestinationAuthority(destinationState.destination)
+      && filename === viewedJob.label
+    ) {
+      try {
+        const jobId = await rebindAndResumePersistedServerExport({
+          destination: destinationState.destination,
+          exportJobs,
+          renderId: retainedRenderId,
+          t,
+          targetPath,
+        });
+        setViewedJobId(jobId);
+      } catch (error) {
+        setSetupError(exportDestinationErrorMessage(error, t));
+      }
+      return;
+    }
     let capturedOptions = snapshotWorkflowOptions(options);
     const mediaPlanSnapshot = capturedOptions.project
       ? {
@@ -199,10 +236,23 @@ export function useExportWorkflow(options: UseExportWorkflowOptions, exportJobs:
       setSetupError(exportDestinationErrorMessage(error, t));
       return;
     }
+    if (retainedRenderId) {
+      try {
+        const retired = await retirePersistedServerExport(retainedRenderId);
+        if (!retired) {
+          setSetupError(t('此导出正在由另一个窗口恢复，请稍后重试'));
+          return;
+        }
+      } catch (error) {
+        setSetupError(exportDestinationErrorMessage(error, t));
+        return;
+      }
+    }
     const capturedDestination = destinationState.destination;
     const jobId = exportJobs.start({
       label: filename,
       targetPath,
+      targetKey: exportDestinationTaskKey(capturedDestination, filename),
       async execute({ signal, setters }) {
         const operations = createWorkflowOperations(
           capturedOptions,
@@ -233,7 +283,10 @@ export function useExportWorkflow(options: UseExportWorkflowOptions, exportJobs:
     setSetupError(null);
     try {
       const selected = await destinationState.chooseDestination();
-      const renderId = recoveredServerRenderId(viewedJobId);
+      const recoveredRenderId = recoveredServerRenderId(viewedJobId);
+      const renderId = viewedJob?.progress.phase === 'failed'
+        ? (viewedJob.serverRenderId ?? recoveredRenderId)
+        : (!viewedJob?.busy && viewedJob?.progress.phase !== 'completed' ? recoveredRenderId : null);
       if (!selected || !renderId || !viewedJob) return;
       const targetPath = exportDestinationTargetPath(selected, viewedJob.label);
       const jobId = await rebindAndResumePersistedServerExport({
@@ -266,7 +319,8 @@ export function useExportWorkflow(options: UseExportWorkflowOptions, exportJobs:
       browserAbortRef.current?.abort();
     },
     cancelJob: (jobId: string) => { exportJobs.cancel(jobId); },
-    clock: state.clock || Date.now(),
+    clearTerminal: () => { exportJobs.clearTerminal(); },
+    clock: state.busy ? Math.max(state.clock, liveClock) : (state.clock || liveClock),
     error: state.error ?? setupError,
     failure: state.failure,
     jobs: jobSnapshot.jobs,
@@ -275,11 +329,15 @@ export function useExportWorkflow(options: UseExportWorkflowOptions, exportJobs:
     renderEngine: state.renderEngine,
     resetFeedback: () => {
       setSetupError(null);
+      pendingInitialRecoverySelection.current = false;
       setViewedJobId(null);
     },
     run,
     selectedJobId: viewedJobId,
     toggleAutoQa,
-    viewJob: setViewedJobId,
+    viewJob: (jobId: string | null) => {
+      pendingInitialRecoverySelection.current = false;
+      setViewedJobId(jobId);
+    },
   };
 }

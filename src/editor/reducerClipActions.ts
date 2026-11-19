@@ -7,11 +7,15 @@ import { timelineFramesToSourceFrames } from './sourceLimit';
 import { coerceKeyframeValue, supportsKeyframeProperty } from './keyframeRegistry';
 import { planSlip } from './slip';
 import { createMediaSourceRevision } from './mediaSourceRevision';
+import { parseCompositionMosaic } from './compositionMosaic';
 import { isTimelineMediaAssetKind } from './mediaTypes';
 import { setBackgroundFillState } from './backgroundFill';
+import { MASK_KEYFRAME_PROPS, normalizeClipMask } from './clipMask';
 import { normalizeSha256Hash } from '../../shared/content-hash.js';
-import { applyRippleShifts, linkedItemIds, moveItemWithGroups, retimeItemWithGroups } from './linkGroups';
+import { rebasePictureAnimationAfterTiming } from './clipAnimation';
+import { applyRippleShifts, linkedItemIds, moveLockedItemIds, moveItemWithGroups, retimeItemWithGroups } from './linkGroups';
 import { clampMoveDeltaToTrackGaps } from './trackCollision';
+import { attachToMainClip, mainTrackId, planMagneticInsert, planMagneticMove, planMagneticTrim } from './magneticTimeline';
 import type { Action } from './reducerActions';
 import { contiguousFollowers, EMPTY_CURVE, isRelinkableMediaKind, lockedItem, relinkTiming, retimePatchForItem, type RelinkableTimelineItem } from './reducerTimelineHelpers';
 
@@ -23,6 +27,9 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
       const requestedStart = a.startFrame ?? trackEnd(s, a.item.track);
       if (!Number.isFinite(requestedStart) || requestedStart < 0
         || !Number.isFinite(a.item.durationInFrames) || a.item.durationInFrames < 1) return s;
+      if (s.interaction?.magnet && a.item.track === mainTrackId(s)) {
+        return planMagneticInsert(s, [{ ...a.item, startFrame: requestedStart }], requestedStart).state;
+      }
       let baseState = s;
       if (a.ripple) {
         const shifts = new Map(s.items
@@ -40,7 +47,7 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
         0,
       );
       if (delta === null) return s;
-      const item = { ...requested, startFrame: requested.startFrame + delta };
+      const item = attachToMainClip(baseState, { ...requested, startFrame: requested.startFrame + delta });
       return {
         ...baseState,
         items: [...baseState.items, item],
@@ -53,9 +60,23 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
       return {
         ...s,
         items: s.items.map((it) =>
-          it.id === a.id ? { ...it, props: { ...it.props, ...a.patch } } : it,
+          it.id === a.id ? { ...it, props: { ...it.props, ...a.patch,
+            ...((Object.hasOwn(a.patch, 'visualEntrance') || Object.hasOwn(a.patch, 'visualEntranceFrames'))
+              && !Object.hasOwn(a.patch, 'visualEntranceWindow') ? { visualEntranceWindow: undefined } : {}),
+            ...((Object.hasOwn(a.patch, 'visualExit') || Object.hasOwn(a.patch, 'visualExitFrames'))
+              && !Object.hasOwn(a.patch, 'visualExitWindow') ? { visualExitWindow: undefined } : {}),
+          } } : it,
         ),
       };
+    case 'setCompositionMosaic': {
+      const target = s.items.find((item) => item.id === a.id);
+      if (!target || target.kind !== 'mosaic' || lockedItem(s, a.id)) return s;
+      const current = parseCompositionMosaic(target.mosaic);
+      if (!current) return s;
+      const mosaic = parseCompositionMosaic({ ...current, ...a.patch });
+      if (!mosaic || Object.keys(current).every((key) => current[key as keyof typeof current] === mosaic[key as keyof typeof mosaic])) return s;
+      return { ...s, items: s.items.map((item) => item.id === a.id ? { ...item, mosaic } : item) };
+    }
     case 'relinkTimelineItem': {
       const target = s.items.find((item) => item.id === a.id);
       if (!target || s.tracks?.[target.track]?.locked || !isRelinkableMediaKind(target.kind)) return s;
@@ -97,6 +118,10 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
       const target = s.items.find((it) => it.id === a.id);
       if (!target) return s;
       if (a.startFrame !== undefined && !Number.isFinite(a.startFrame)) return s;
+      if (s.interaction?.magnet && (a.track === mainTrackId(s)
+        || s.items.some((item) => item.track === mainTrackId(s) && moveLockedItemIds(s, [a.id]).includes(item.id)))) {
+        return planMagneticMove(s, [a.id], a.id, a.startFrame ?? target.startFrame, a.track).state;
+      }
       return moveItemWithGroups(
         s,
         a.id,
@@ -111,6 +136,7 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
       if (s.items.some((it) => it.id === a.id && s.tracks?.[it.track]?.locked)) return s;
       const target = s.items.find((it) => it.id === a.id);
       if (!target) return s;
+      if (s.interaction?.magnet && target.track === mainTrackId(s)) return planMagneticTrim(s, a.id, a).state;
       const targetPatch = retimePatchForItem(s, target, a);
       const oldEnd = target.startFrame + target.durationInFrames;
       const newEnd = targetPatch.startFrame + targetPatch.durationInFrames;
@@ -145,6 +171,16 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
         ...s,
         items: s.items.map((it) => (it.id === a.id ? { ...it, volume: Math.max(0, Math.min(2, a.volume)) } : it)),
       };
+    case 'togglePicture': {
+      const selected = new Set(a.ids);
+      const eligible = s.items.filter((item) => selected.has(item.id)
+        && item.kind !== 'audio' && item.kind !== 'sequence'
+        && !s.tracks?.[item.track]?.locked);
+      if (!eligible.length) return s;
+      const disable = eligible.some((item) => item.pictureDisabled !== true);
+      const ids = new Set(eligible.map((item) => item.id));
+      return { ...s, items: s.items.map((item) => ids.has(item.id) ? { ...item, pictureDisabled: disable } : item) };
+    }
     case 'setFade':
       if (lockedItem(s, a.id)
         || (a.fadeInFrames !== undefined && !Number.isFinite(a.fadeInFrames))
@@ -177,6 +213,22 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
         ...s,
         items: s.items.map((it) => (it.id === a.id ? { ...it, filters: { ...it.filters, ...a.patch } } : it)),
       };
+    case 'setMask': {
+      if (lockedItem(s, a.id)) return s;
+      const mask = a.mask === null ? undefined : normalizeClipMask(a.mask);
+      if (a.mask !== null && !mask) return s;
+      return {
+        ...s,
+        items: s.items.map((it) => {
+          if (it.id !== a.id) return it;
+          if (mask) return { ...it, mask };
+          const keyframes = it.keyframes
+            ? Object.fromEntries(Object.entries(it.keyframes).filter(([prop]) => !MASK_KEYFRAME_PROPS.includes(prop as typeof MASK_KEYFRAME_PROPS[number])))
+            : undefined;
+          return { ...it, mask: undefined, keyframes: keyframes && Object.keys(keyframes).length ? keyframes : undefined };
+        }),
+      };
+    }
     case 'setBackgroundFill':
       if (lockedItem(s, a.id)) return s;
       return setBackgroundFillState(s, a.id, a.enabled, a.strength);
@@ -207,7 +259,7 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
       return {
         ...s,
         items: s.items.map((it) => (it.id === a.id
-          ? { id: it.id, track: it.track, startFrame: it.startFrame, durationInFrames: it.durationInFrames,
+          ? { id: it.id, mainClipId: it.mainClipId, track: it.track, startFrame: it.startFrame, durationInFrames: it.durationInFrames,
               kind: 'video', name: it.name, src: a.src,
               sourceRevision: createMediaSourceRevision({ src: a.src, kind: 'video', durationInFrames: it.durationInFrames }),
               volume: it.volume ?? 1 }
@@ -234,12 +286,12 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
         ...s,
         items: s.items.map((it) => {
           if (it.id === a.id) {
-            return {
+            return rebasePictureAnimationAfterTiming(it, {
               ...it,
               playbackRate: rate,
               durationInFrames,
               ...(it.keyframes ? { keyframes: scaleItemKeyframes(it.keyframes, durationInFrames / it.durationInFrames) } : {}),
-            };
+            });
           }
           if (rippled?.has(it.id)) {
             return { ...it, startFrame: Math.max(0, it.startFrame + deltaEnd) };

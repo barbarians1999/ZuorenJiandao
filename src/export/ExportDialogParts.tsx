@@ -89,10 +89,11 @@ export function ExportQaCard({ qa }: { qa: ExportQaUiState }) {
   );
 }
 
-export function Segmented<T extends string | number>({ options, value, onChange }: {
+export function Segmented<T extends string | number>({ options, value, onChange, disabled = false }: {
   options: ReadonlyArray<{ value: T; label: string }>;
   value: T;
   onChange: (value: T) => void;
+  disabled?: boolean;
 }) {
   const t = useT();
   return (
@@ -103,6 +104,7 @@ export function Segmented<T extends string | number>({ options, value, onChange 
           key={String(option.value)}
           className={`cc-export-seg${option.value === value ? ' active' : ''}`}
           aria-pressed={option.value === value}
+          disabled={disabled}
           onClick={() => onChange(option.value)}
         >
           {t(option.label)}

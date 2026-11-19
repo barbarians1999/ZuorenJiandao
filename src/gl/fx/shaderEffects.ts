@@ -9,6 +9,9 @@
 
 import lumaKeyFrag from './luma-key.frag?raw';
 import localMosaicFrag from './local-mosaic.frag?raw';
+import gaussianCopyFrag from './gaussian-copy.frag?raw';
+import gaussianRegionFrag from './gaussian-region.frag?raw';
+import { gaussianBlurDefinition } from './gaussianBlur';
 import magnifyFrag from './magnify.frag?raw';
 import rectMaskFrag from './rect-mask.frag?raw';
 import circleMaskFrag from './circle-mask.frag?raw';
@@ -49,6 +52,7 @@ import type { FxPass } from '../runtime';
 const INVERT = { key: 'invert', label: '反转', default: 0, min: 0, max: 1, step: 1 };
 
 export const FX_EFFECTS: Record<string, FxDef> = {
+  'builtin:fx-local-gaussian-blur': gaussianBlurDefinition(gaussianCopyFrag, gaussianRegionFrag),
   'builtin:fx-luma-key': {
     id: 'builtin:fx-luma-key',
     name: '黑底叠加',

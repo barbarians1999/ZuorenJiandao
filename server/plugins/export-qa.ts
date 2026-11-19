@@ -13,11 +13,13 @@ import {
   parseExportQaLog,
   type ExportQaAnalysis,
   type ExportQaExpectations,
+  type ExportQaInterval,
 } from '../../src/export/quality.ts';
 
 const MAX_JSON_BYTES = 64 * 1024;
 const PROCESS_TIMEOUT_MS = 30 * 60_000;
 const MAX_EVIDENCE_CUTS = 8;
+const MAX_EXPECTED_INTERVALS = 1024;
 
 interface ProcessResult {
   stdout: string;
@@ -106,6 +108,23 @@ function parseRate(value?: string): number {
   const [numerator, denominator = '1'] = value.split('/');
   const rate = Number(numerator) / Number(denominator);
   return Number.isFinite(rate) ? rate : 0;
+}
+
+function expectedIntervals(value: unknown, durationSeconds: number): ExportQaInterval[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_EXPECTED_INTERVALS) {
+    throw new Error('invalid expected QA intervals');
+  }
+  return value.map((entry) => {
+    if (!entry || typeof entry !== 'object') throw new Error('invalid expected QA interval');
+    const startSeconds = Number((entry as { startSeconds?: unknown }).startSeconds);
+    const endSeconds = Number((entry as { endSeconds?: unknown }).endSeconds);
+    if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds)
+      || startSeconds < 0 || endSeconds <= startSeconds || endSeconds > durationSeconds + 0.001) {
+      throw new Error('invalid expected QA interval');
+    }
+    return { startSeconds, endSeconds, durationSeconds: endSeconds - startSeconds };
+  });
 }
 
 async function probeMedia(file: string): Promise<Pick<
@@ -249,6 +268,8 @@ export function exportQaPlugin(): Plugin {
             height: Math.max(1, Math.round(Number(body.height) || 1)),
             fps: Math.max(1, Number(body.fps) || 30),
             expectsAudio: body.expectsAudio === true,
+            expectedBlackIntervals: expectedIntervals(body.expectedBlackIntervals, Math.max(0, Number(body.durationSeconds) || 0)),
+            expectedSilenceIntervals: expectedIntervals(body.expectedSilenceIntervals, Math.max(0, Number(body.durationSeconds) || 0)),
             cutTimesSeconds: Array.isArray(body.cutTimesSeconds)
               ? body.cutTimesSeconds.map(Number).filter(Number.isFinite)
               : [],

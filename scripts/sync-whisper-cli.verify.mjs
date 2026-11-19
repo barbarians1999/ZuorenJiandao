@@ -309,9 +309,11 @@ console.log('sync-whisper-cli.verify: layout keeps its libraries, and provisioni
 // ── --offline fails before any release fetch when no local input is supplied ─
 {
   const node = process.execPath;
+  const offlineFixture = await mkdtemp(join(tmpdir(), 'whisper-offline-empty-'));
   const child = spawn(node, ['./scripts/sync-whisper-cli.mjs', '--offline'], {
     cwd: process.cwd(),
-    env: { ...process.env, OPENCHATCUT_WHISPER_OFFLINE: '1', OPENCHATCUT_WHISPER_ARCHIVE: '', OPENCHATCUT_WHISPER_RUNTIME_DIR: '', OPENCHATCUT_WHISPER_CLI: '' },
+    env: { ...process.env, OPENCHATCUT_WHISPER_OFFLINE: '1', OPENCHATCUT_WHISPER_OUTPUT_DIR: offlineFixture,
+      OPENCHATCUT_WHISPER_ARCHIVE: '', OPENCHATCUT_WHISPER_RUNTIME_DIR: '', OPENCHATCUT_WHISPER_CLI: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';

@@ -20,6 +20,12 @@ assert.equal(shouldClearCaptionSelectionFromPointer({
   additive: false,
 }), true);
 assert.equal(shouldClearCaptionSelectionFromPointer({
+  insideTimelineClip: true,
+  insideTimelineBlank: true,
+  insideTimelineHead: false,
+  additive: false,
+}), false, 'pointerdown on a timeline clip inside a track lane must not clear mixed caption selections in capture phase');
+assert.equal(shouldClearCaptionSelectionFromPointer({
   insideTimelineClip: false,
   insideTimelineBlank: true,
   insideTimelineHead: true,

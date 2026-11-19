@@ -1,10 +1,6 @@
 import { startUiLocaleSync } from '../i18n/localeSync';
 import { useCallback, useEffect, useState } from 'react';
-import { applyLiveCaps, applyLiveKeyStatus, applyLiveModels } from '../agent/capabilities';
-import { fetchCodexModels, fetchCodexStatus } from '../agent/codex/client';
-import { fetchCopilotModels, fetchCopilotStatus } from '../agent/copilot/client';
-import { applyAgentModelStatus, applyCodexAgentStatus, applyCopilotAgentStatus, selectAgentModel, getActiveAgentModelChoice, getAgentModelSnapshot } from '../agent/model-selection';
-import { loadAgentModelPref } from '../persist/sessionPrefs';
+import { setAutoTranscribeIngest, TRANSCRIPTION_LANGUAGE_KEY, TRANSCRIPTION_DIARIZATION_KEY } from '../transcript/provider';
 import type { ProjectDoc, TimelineState } from '../editor/types';
 import {
   createProject,
@@ -15,8 +11,9 @@ import {
 import type { ProjectMeta } from '../persist/projectStoreCoordinators';
 import { kvRemoteMode } from '../persist/sharedKv';
 import { projectStoreWriteCredential } from '../persist/projectStoreTransport';
+import { editorRouteFromHash, type ProjectQuickStart } from './projectQuickStart';
 
-export type AppRoute = { name: 'dashboard' } | { name: 'editor'; id: string };
+export type AppRoute = { name: 'dashboard' } | { name: 'editor'; id: string; quickStart?: ProjectQuickStart };
 
 interface LiveAgentStatus {
   readonly caps?: Record<string, boolean>;
@@ -32,6 +29,7 @@ const emptyState = (): TimelineState => ({
   selectedId: null,
   trackOrder: ['track_v1'],
   tracks: { track_v1: { kind: 'video' } },
+  interaction: { mainTrackId: 'track_v1', magnet: false, linkage: false, snapping: true },
 });
 
 export const emptyProjectDoc = (): ProjectDoc => docFromTimeline(emptyState());
@@ -39,77 +37,28 @@ export const emptyProjectDoc = (): ProjectDoc => docFromTimeline(emptyState());
 const seedDoc = async (): Promise<ProjectDoc> => docFromTimeline((await import('../editor/initial')).INITIAL);
 
 function parseHash(): AppRoute {
-  const match = window.location.hash.match(/^#\/editor\/(.+)$/);
-  return match ? { name: 'editor', id: match[1] } : { name: 'dashboard' };
+  const editor = editorRouteFromHash(window.location.hash);
+  return editor ? { name: 'editor', ...editor } : { name: 'dashboard' };
 }
 
 export function navigateTo(hash: string): void {
   window.location.hash = hash;
 }
 
-async function syncCopilotBackend(
-  isActive: () => boolean,
-  savedModel?: string,
-  savedReasoningEffort?: string,
-): Promise<void> {
-  try {
-    const status = await fetchCopilotStatus();
-    if (!isActive()) return;
-    const models = status.installed && status.supported && status.authenticated
-      ? await fetchCopilotModels().catch(() => null)
-      : null;
-    if (isActive()) applyCopilotAgentStatus(
-      status, savedModel, savedReasoningEffort, models && !models.error ? models.models : [],
-    );
-  } catch {
-    // An optional backend must not prevent configured API/Codex models from loading.
-  }
-}
-
 export async function syncAgentBackends(isActive: () => boolean): Promise<void> {
-  const [keyResult, codexResult] = await Promise.allSettled([
-    fetch('/api/keys').then(async (response): Promise<LiveAgentStatus> => {
-      if (!response.ok) throw new Error('Agent key status is unavailable.');
-      return response.json() as Promise<LiveAgentStatus>;
-    }),
-    fetchCodexStatus(),
-  ]);
-  if (!isActive()) return;
-  let savedCodexModel: string | undefined;
-  let savedCodexReasoningEffort: string | undefined;
-  if (keyResult.status === 'fulfilled') {
-    const { caps, keys, models } = keyResult.value;
-    if (caps) applyLiveCaps(caps);
-    if (keys) applyLiveKeyStatus(keys);
-    if (models) {
-      applyLiveModels(models);
-      applyAgentModelStatus(keys ?? {}, models);
-      savedCodexModel = models.CODEX_MODEL;
-      savedCodexReasoningEffort = models.CODEX_REASONING_EFFORT;
-      if (models.COPILOT_MODEL || loadAgentModelPref()?.startsWith('copilot:')) {
-        void syncCopilotBackend(isActive, models.COPILOT_MODEL, models.COPILOT_REASONING_EFFORT);
-      }
-    }
+  try {
+    const response = await fetch('/api/keys');
+    if (!response.ok || !isActive()) return;
+    const { models } = await response.json() as LiveAgentStatus;
+    if (!isActive()) return;
     startUiLocaleSync(models?.UI_LOCALE);
-  }
-  if (codexResult.status !== 'fulfilled') return;
-  const modelResult = codexResult.value.installed && codexResult.value.account?.type !== 'apiKey'
-    ? await fetchCodexModels().catch(() => null)
-    : null;
-  if (!isActive()) return;
-  applyCodexAgentStatus(
-    codexResult.value,
-    savedCodexModel,
-    savedCodexReasoningEffort,
-    modelResult && !modelResult.error ? modelResult.models : [],
-  );
-  // When Codex (the MCP route) is available and the user has never pinned a
-  // model, make Codex the active model so the composer starts on the MCP
-  // backend instead of the configured default LLM.
-  const active = getActiveAgentModelChoice();
-  if (active && active.backend !== 'codex' && !loadAgentModelPref()) {
-    const codex = getAgentModelSnapshot().choices.find((choice) => choice.backend === 'codex');
-    if (codex) selectAgentModel(codex.id);
+    if (!models) return;
+    if (models.LOCAL_ASR_MODEL) localStorage.setItem('cc.asrModel', models.LOCAL_ASR_MODEL);
+    setAutoTranscribeIngest(models.AUTO_TRANSCRIBE_INGEST === 'off' ? 'off' : 'local');
+    if (models.TRANSCRIPTION_LANGUAGE) localStorage.setItem(TRANSCRIPTION_LANGUAGE_KEY, models.TRANSCRIPTION_LANGUAGE);
+    if (models.TRANSCRIPTION_DIARIZATION) localStorage.setItem(TRANSCRIPTION_DIARIZATION_KEY, models.TRANSCRIPTION_DIARIZATION);
+  } catch {
+    // Local settings failure never blocks project startup.
   }
 }
 

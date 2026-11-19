@@ -60,7 +60,8 @@ export function InspectorSlipControl({ item, plan, onSlip }: InspectorSlipContro
           value={step}
           onChange={(event) => setStep(Math.max(1, Number(event.target.value) || 1))}
           onKeyDown={(event) => {
-            if (event.key === 'Enter') run(event.shiftKey ? -1 : 1);
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === 'Enter') { event.preventDefault(); run(event.shiftKey ? -1 : 1); }
           }}
           aria-describedby={`slip-help-${item.id}`}
         />

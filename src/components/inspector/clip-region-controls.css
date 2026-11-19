@@ -1,0 +1,16 @@
+.cc-clip-region-control { display:grid; gap:12px; font-size:14px; min-width:0; }
+.cc-region-presets { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.cc-region-presets button { display:flex; flex-direction:column; align-items:center; gap:8px; min-height:76px; padding:10px 6px; border:1px solid transparent; border-radius:12px; background:var(--cc-panel-alt); color:var(--cc-text); font:inherit; font-size:14px; cursor:pointer; }
+.cc-region-presets button:hover { background:var(--cc-hover); }
+.cc-region-presets button[aria-pressed=true] { border-color:var(--cc-accent); box-shadow:inset 0 0 0 1px var(--cc-accent); color:var(--cc-accent); }
+.cc-region-sample { display:block; position:relative; width:42px; height:24px; background:var(--cc-text-muted); }
+.cc-region-sample.mask-rectangle { width:30px; height:20px; }
+.cc-region-sample.mask-ellipse { width:30px; height:22px; border-radius:50%; }
+.cc-region-sample.mask-none,.cc-region-sample.mosaic-none { background:transparent; border:1px dashed var(--cc-text-muted); box-sizing:border-box; }
+.cc-region-sample.mosaic-full { background:linear-gradient(120deg,var(--cc-text-muted),var(--cc-panel),var(--cc-text-muted)); filter:blur(3px); }
+.cc-region-sample.mosaic-local::after { content:''; position:absolute; inset:4px 10px; background:var(--cc-panel); filter:blur(3px); }
+.cc-region-note { margin:0; font-size:14px; line-height:1.6; color:var(--cc-text-muted); }
+.cc-clip-region-control .cc-insp-label,.cc-clip-region-control .cc-insp-val { font-size:14px; }
+.cc-clip-region-control .cc-insp-row { min-height:36px; }
+.cc-clip-region-control .cc-insp-muted { font-size:14px; }
+.cc-clip-region-control input,.cc-clip-region-control select { font-size:14px; }

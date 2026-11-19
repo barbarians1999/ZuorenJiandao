@@ -27,6 +27,31 @@ const DEFAULT_ATOMIC_OPERATIONS: AtomicWriteOperations = {
   rm,
 };
 
+const TRANSIENT_RENAME_ERROR_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
+
+function transientWindowsRenameError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return process.platform === 'win32' && typeof code === 'string' && TRANSIENT_RENAME_ERROR_CODES.has(code);
+}
+
+/** Windows AV / indexers can briefly lock newly closed or target files during rename. */
+export async function renameWithRetry(
+  source: string,
+  target: string,
+  renameFn: (source: string, target: string) => Promise<void> = rename,
+): Promise<void> {
+  const maxAttempts = 5;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await renameFn(source, target);
+      return;
+    } catch (error) {
+      if (attempt >= maxAttempts || !transientWindowsRenameError(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 20 * attempt));
+    }
+  }
+}
+
 function unsupportedDirectorySync(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
   return process.platform === 'win32' && ['EACCES', 'EINVAL', 'EISDIR', 'ENOTSUP', 'EPERM'].includes(code ?? '');
@@ -77,7 +102,7 @@ export async function atomicWriteFile(
     await handle.sync();
     await handle.close();
     handle = undefined;
-    await operations.rename(temp, target);
+    await renameWithRetry(temp, target, operations.rename);
     renamed = true;
     await syncDirectory(directory, operations);
   } catch (error) {
@@ -108,7 +133,7 @@ export async function durableRemove(path: string, recursive = false): Promise<vo
 }
 
 export async function durableRename(source: string, target: string): Promise<void> {
-  await rename(source, target);
+  await renameWithRetry(source, target);
   const sourceDirectory = dirname(source);
   const targetDirectory = dirname(target);
   await syncDirectory(sourceDirectory);

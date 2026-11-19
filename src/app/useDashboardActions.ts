@@ -8,12 +8,13 @@ import {
 } from '../persist/projectStore';
 import { buildProjectExport, importProjectPackage } from '../persist/projectTransfer';
 import { emptyProjectDoc, navigateTo } from './appShell';
+import { projectEditorHash, type ProjectQuickStart } from './projectQuickStart';
 
 type Translate = (zh: string, params?: Record<string, string | number>) => string;
 
 export interface DashboardActions {
   onOpen: (id: string) => void;
-  onNew: () => Promise<void>;
+  onNew: (quickStart?: ProjectQuickStart) => Promise<void>;
   onRename: (id: string, name: string) => Promise<void>;
   onDuplicate: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
@@ -63,11 +64,11 @@ async function importProject(t: Translate, file: File, refresh: () => Promise<vo
 export function useDashboardActions(refresh: () => Promise<void>): DashboardActions {
   const t = useT();
   return {
-    onOpen: (id) => navigateTo(`#/editor/${id}`),
-    onNew: async () => {
+    onOpen: (id) => navigateTo(projectEditorHash(id)),
+    onNew: async (quickStart) => {
       const project = await createProject(randomProjectName(), emptyProjectDoc());
       await refresh();
-      navigateTo(`#/editor/${project.id}`);
+      navigateTo(projectEditorHash(project.id, quickStart));
     },
     onRename: async (id, name) => { await renameProject(id, name); refresh(); },
     onDuplicate: async (id) => { await duplicateProject(id); refresh(); },

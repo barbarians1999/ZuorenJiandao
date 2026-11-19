@@ -6,8 +6,23 @@ import { kvGet, kvSet } from '../sharedKv';
 import { listTemplates } from '../templateStore';
 import { listVersions } from '../versionStore';
 import { runProjectMigrations } from './index';
+import { normalizeTimelineTracks } from './normalize';
 import { v1, v2, v3, v3V019Compatible, v4, v5, v6 } from './migrations.verify.fixtures';
 import { verifySourceMetadataMigration } from './migrations.verify.source-metadata';
+
+{
+  const source = { id: 'snap', name: 'snap', order: 0, fps: 30, width: 1920, height: 1080, items: [], selectedId: null,
+    trackOrder: ['video'], tracks: { video: { kind: 'video' as const } },
+    interaction: { magnet: true, linkage: false, snapping: false } };
+  assert.deepEqual(normalizeTimelineTracks(source).interaction, source.interaction,
+    'normalization preserves explicit interaction choices');
+  const legacy = normalizeTimelineTracks({ ...source, interaction: { magnet: true, linkage: false } });
+  assert.equal(legacy.interaction?.magnet, true);
+  assert.equal(legacy.interaction?.linkage, false);
+  assert.equal('snapping' in legacy.interaction!, false, 'legacy timelines do not receive a migration default');
+  const malformed = normalizeTimelineTracks({ ...source, interaction: { snapping: 'off' } as unknown as typeof source.interaction });
+  assert.equal('snapping' in malformed.interaction!, false, 'invalid optional snapping values are discarded');
+}
 
 
 {

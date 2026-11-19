@@ -176,7 +176,8 @@ export function pruneSemanticVectors(
   validSourceRevisions?: ReadonlyMap<string, string>,
 ): PruneSemanticResult {
   if (!validAssetId(scopeId)) throw new Error('invalid semantic vector scope id');
-  const db = requireConnection();
+  const db = openConnection();
+  if (!db) return { staleModelRemoved: false, staleSourceRemoved: false };
   const rows = db.prepare(`SELECT rowid, asset_id, source_revision, model_version
     FROM ${VEC_TABLE} WHERE scope_id = ?`).all(scopeId) as Array<{
       rowid: number;
@@ -209,5 +210,7 @@ export function pruneSemanticVectors(
 /** Remove every vector of a scope. */
 export function clearSemanticVectors(scopeId: string): void {
   if (!validAssetId(scopeId)) throw new Error('invalid semantic vector scope id');
-  requireConnection().prepare(`DELETE FROM ${VEC_TABLE} WHERE scope_id = ?`).run(scopeId);
+  const db = openConnection();
+  if (!db) return;
+  db.prepare(`DELETE FROM ${VEC_TABLE} WHERE scope_id = ?`).run(scopeId);
 }

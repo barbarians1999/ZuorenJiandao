@@ -2,6 +2,7 @@ import type { AgentContext } from './context';
 import { buildOperation, buildProposal, type Operation, type Proposal } from './proposal';
 import { makeDraft, type DraftEngine } from '../editor/store';
 import type { ProjectDoc } from '../editor/types';
+import { stripTransientSelection } from '../editor/selectionState';
 
 export type ExternalEditSessionTerminalStatus =
   | 'applied'
@@ -67,7 +68,9 @@ function canonicalProjectJson(doc: ProjectDoc): string {
 }
 
 export function revisionOf(doc: ProjectDoc): string {
-  const input = canonicalProjectJson(doc);
+  // The editor keeps selection outside the persistent document. Legacy files
+  // may still contain it, so selection must not invalidate MCP ownership.
+  const input = canonicalProjectJson(stripTransientSelection(doc));
   let hash = 0x811c9dc5;
   for (let index = 0; index < input.length; index += 1) {
     hash ^= input.charCodeAt(index);

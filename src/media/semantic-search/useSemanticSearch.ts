@@ -115,7 +115,7 @@ export function useSemanticSearch(scopeId: string, assets: MediaAsset[]) {
     } catch {
       setState((current) => ({
         ...current, pack: 'error', packProgress: 0,
-        error: '模型包下载失败，请到 设置 → 本地模型 重试',
+        error: '模型包下载失败，请到 设置 → 本地工具 重试',
       }));
     }
   }, [enable, setState]);

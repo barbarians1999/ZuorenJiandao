@@ -24,8 +24,9 @@ export function AppToastHost() {
   if (!toast) return null;
   return (
     <div
-      role="status"
-      aria-live="polite"
+      className="cc-app-toast"
+      role={toast.error ? 'alert' : 'status'}
+      aria-live={toast.error ? 'assertive' : 'polite'}
       style={{
         position: 'fixed',
         bottom: 56,
@@ -36,14 +37,14 @@ export function AppToastHost() {
         alignItems: 'center',
         gap: 10,
         maxWidth: 'min(520px, 90vw)',
-        padding: '10px 14px',
-        borderRadius: 4,
-        fontSize: 12.5,
-        lineHeight: 1.35,
+        padding: '12px 16px',
+        borderRadius: 6,
+        fontSize: 14,
+        lineHeight: 1.45,
         boxShadow: `0 8px 28px ${themeAlpha.shadow(0.35)}`,
-        background: toast.error ? theme.accent : theme.panelAlt,
+        background: toast.error ? theme.danger : theme.panelAlt,
         color: toast.error ? theme.onAccent : theme.text,
-        border: `0.5px solid ${theme.border}`,
+        border: `1px solid ${toast.error ? theme.danger : theme.border}`,
       }}
     >
       <span style={{ flex: 1 }}>{toast.msg}</span>

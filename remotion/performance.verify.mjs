@@ -8,21 +8,47 @@ import {
   resolveH264VideoBitrate,
   resolveOffthreadVideoThreads,
   resolveRenderConcurrency,
+  resolveRenderMemorySettings,
+  renderFfmpegOverride,
   withHardwareEncoderFallback,
   withEncoderProfileFallback,
 } from './performance.mjs';
 
 const abundantMemory = 64 * 1024 ** 3;
-assert.equal(resolveRenderConcurrency({ cores: 10, memoryBytes: abundantMemory }), 8);
-assert.equal(resolveRenderConcurrency({ cores: 4, memoryBytes: abundantMemory }), 3);
-assert.equal(resolveRenderConcurrency({ cores: 2, memoryBytes: abundantMemory }), 1);
-assert.equal(resolveRenderConcurrency({ cores: 32, memoryBytes: abundantMemory }), 24);
-assert.equal(resolveRenderConcurrency({ cores: 32, memoryBytes: 16 * 1024 ** 3 }), 6);
+assert.equal(resolveRenderConcurrency({ cores: 10, memoryBytes: abundantMemory, freeMemoryBytes: abundantMemory }), 8);
+assert.equal(resolveRenderConcurrency({ cores: 4, memoryBytes: abundantMemory, freeMemoryBytes: abundantMemory }), 3);
+assert.equal(resolveRenderConcurrency({ cores: 2, memoryBytes: abundantMemory, freeMemoryBytes: abundantMemory }), 1);
+assert.equal(resolveRenderConcurrency({ cores: 32, memoryBytes: abundantMemory, freeMemoryBytes: abundantMemory }), 24);
+assert.equal(resolveRenderConcurrency({ cores: 32, memoryBytes: 16 * 1024 ** 3, freeMemoryBytes: abundantMemory }), 6);
+assert.equal(resolveRenderConcurrency({ cores: 16, memoryBytes: 16 * 1024 ** 3, freeMemoryBytes: 4 * 1024 ** 3 }), 1);
+assert.equal(resolveRenderConcurrency({ cores: 16, memoryBytes: 16 * 1024 ** 3, freeMemoryBytes: 1 * 1024 ** 3 }), 1);
+assert.equal(resolveRenderConcurrency({ cores: 16, freeMemoryBytes: NaN }), 1);
+assert.deepEqual(resolveRenderMemorySettings({ freeMemoryBytes: 4 * 1024 ** 3, cores: 16 }), {
+  offthreadVideoCacheSizeInBytes: 64 * 1024 ** 2, mediaCacheSizeInBytes: 256 * 1024 ** 2, offthreadVideoThreads: 1,
+});
+assert.equal(resolveRenderMemorySettings({ freeMemoryBytes: 8 * 1024 ** 3, cores: 16 }).offthreadVideoThreads, 4);
+assert.equal(resolveRenderMemorySettings({ freeMemoryBytes: NaN }).offthreadVideoCacheSizeInBytes, 64 * 1024 ** 2);
+{
+  const args = ['-r','30','-i','frames.jpg','-i','audio.wav','-c:v','libx264','-crf','18','out.mp4'];
+  const small = renderFfmpegOverride({cores:16,freeMemoryBytes:3*1024**3})({type:'stitcher',args});
+  assert.equal(small[small.indexOf('-threads:v')+1],'2');
+  assert.equal(small.filter(value=>value==='-threads').length,2,'every input decoder is bounded');
+  assert.equal(small[small.indexOf('-crf')+1],'18','quality does not change');
+  assert(!args.includes('-threads'),'input arguments are immutable');
+  const ample=renderFfmpegOverride({cores:16,freeMemoryBytes:8*1024**3})({args});
+  assert.equal(ample[ample.indexOf('-threads:v')+1],'4');
+  const copy=['-i','video.mp4','-c:v','copy','out.mp4'];
+  assert.deepEqual(renderFfmpegOverride()({args:copy}),copy);
+  const custom=h264FfmpegOverride('h264_amf');
+  const hardware=renderFfmpegOverride({hardwareOverride:custom})({type:'stitcher',args});
+  assert.equal(hardware[hardware.indexOf('-c:v')+1],'h264_amf');
+  assert(!hardware.includes('-threads:v'),'hardware encoder retains its settings');
+}
 assert.equal(resolveRenderConcurrency({ cores: 10, override: '100%' }), 10);
 assert.equal(resolveRenderConcurrency({ cores: 10, override: '70%' }), 7);
 assert.equal(resolveRenderConcurrency({ cores: 10, override: '6' }), 6);
 assert.equal(resolveRenderConcurrency({ cores: 10, override: '99' }), 10);
-assert.equal(resolveRenderConcurrency({ cores: 10, memoryBytes: abundantMemory, override: 'invalid' }), 8);
+assert.equal(resolveRenderConcurrency({ cores: 10, memoryBytes: abundantMemory, freeMemoryBytes: abundantMemory, override: 'invalid' }), 8);
 
 assert.equal(resolveOffthreadVideoThreads({ cores: 2 }), 1);
 assert.equal(resolveOffthreadVideoThreads({ cores: 4 }), 2);
@@ -156,16 +182,44 @@ await assert.rejects(
   /HTTP 404/,
 );
 
-console.log('remotion performance verification passed');
-
+{
+  const hardwareProfile = { id: 'h264_nvenc', hardware: true, label: 'NVENC', transport: 'server' };
+  for (const cancelStage of ['render', 'cleanup', 'notice', 'abort-error']) {
+    const controller = new AbortController();
+    let attempts = 0;
+    const cancellation = new DOMException('No NVENC capable devices found', 'AbortError');
+    await assert.rejects(withEncoderProfileFallback({
+      hardwareProfile, hardwareOptions: {}, softwareOptions: {}, signal: controller.signal,
+      render: async () => {
+        attempts++;
+        if (cancelStage === 'render') controller.abort(cancellation);
+        throw cancelStage === 'abort-error' ? cancellation : new Error('No NVENC capable devices found');
+      },
+      cleanup: async () => { if (cancelStage === 'cleanup') controller.abort(cancellation); },
+      onFallback: () => { if (cancelStage === 'notice') controller.abort(cancellation); },
+    }), (error) => error === cancellation);
+    assert.equal(attempts, 1, `${cancelStage} cancellation never starts software rendering`);
+  }
+  const first = new Error('No NVENC capable devices found');
+  const second = new Error('software failed');
+  let attempts = 0;
+  await assert.rejects(withEncoderProfileFallback({
+    hardwareProfile, hardwareOptions: {}, softwareOptions: {},
+    render: async () => { throw ++attempts === 1 ? first : second; },
+  }), (error) => error instanceof AggregateError && error.errors[0] === first && error.errors[1] === second);
+  assert.equal(attempts, 2, 'one software fallback, with both failures retained');
+  const renderSource = await readFile(new URL('./render.mjs', import.meta.url), 'utf8');
+  assert.match(renderSource, /withEncoderProfileFallback\(\{\s*render,\s*signal: abortSignal/);
+}
 // GL backend selection: angle on desktop platforms, angle-egl on Linux
 // (headless renderers without X11), CC_RENDER_GL override for diagnosis.
 {
   const render = await readFile(new URL('./render.mjs', import.meta.url), 'utf8');
-  assert.match(render, /function resolveRenderGlBackend/, 'GL backend resolver exists');
-  assert.match(render, /process\.platform === 'linux' \? 'angle-egl' : 'angle'/, 'linux defaults to angle-egl, others to angle');
-  assert.match(render, /CC_RENDER_GL/, 'CC_RENDER_GL overrides the backend');
-  assert.ok((render.match(/gl: resolveRenderGlBackend\(\)/g) ?? []).length >= 5, 'every render/still path uses the resolver');
+  const browser = await readFile(new URL('./render-browser.mjs', import.meta.url), 'utf8');
+  // Browser configuration/cancellation behaviour is covered at its interface
+  // by render-browser.verify.mjs, not by matching a function's source location.
+  assert.match(render, /from '\.\/render-browser\.mjs'/, 'render uses the shared browser module');
+  assert.ok(((render + browser).match(/gl: resolveRenderGlBackend\(\)/g) ?? []).length >= 5, 'every render/still path uses the resolver');
   assert.match(render, /CC_REMOTION_BINARIES_DIR/, 'the packaged app supplies the mirrored compositor directory');
   // The packaged app ships as an asar archive: the compositor inside it can be neither
   // chmod'ed nor spawned, so every selectComposition / renderMedia / renderStill call must
@@ -173,6 +227,7 @@ console.log('remotion performance verification passed');
   assert.ok((render.match(/binariesDirectory: binariesDirectory\(\)/g) ?? []).length >= 5,
     'every composition selection, media render and still render passes the binaries directory');
   assert.doesNotMatch(render, /binariesDirectory: undefined/, 'the software retry keeps the binaries directory');
-  assert.match(render, /attempt\.ffmpegOverride\s*\?\s*renderDirectHardware/,
-    'the custom ffmpeg override, not the binaries directory, marks the direct-hardware attempt');
+  assert.match(render, /attempt\.codec === 'h264'\s*\?\s*renderDirectHardware/,
+    'hardware and software H.264 share the PCM mux clock; the encoder fallback keeps its own bounded override');
 }
+console.log('remotion performance verification passed');

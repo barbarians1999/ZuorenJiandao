@@ -40,6 +40,7 @@ export function buildPastedTranscriptTrack(input: BuildPastedTranscriptTrackInpu
     sourceMode: 'item',
   }, input.items, input.fps);
   const alignment = alignPastedTranscript(input.script, projected);
+  alignment.cues = alignment.cues.map((cue, index) => ({ ...cue, id: `${input.laneId}:cue:${index}` }));
   return {
     alignment,
     sourceItemIds,
@@ -53,9 +54,9 @@ export function buildPastedTranscriptTrack(input: BuildPastedTranscriptTrackInpu
         fontFamily: 'Noto Sans SC',
         fontSize: 0.04,
         fontWeight: 700,
-        color: '#111111',
-        highlightColor: '#111111',
-        strokeColor: '#ffffff',
+        color: '#ffffff',
+        highlightColor: '#ffffff',
+        strokeColor: '#000000',
         strokeWidth: 4,
         textShadow: 'none',
         wholeLine: true,

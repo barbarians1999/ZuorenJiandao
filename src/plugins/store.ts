@@ -184,7 +184,22 @@ async function migrateLegacyPacks(remote: InstalledPack[]): Promise<boolean> {
   }
 }
 
-export async function listPacks(): Promise<InstalledPack[]> {
+export async function listPacks(options?: { strict?: boolean }): Promise<InstalledPack[]> {
+  if (options?.strict) {
+    const requirePack = (value: unknown): InstalledPack => {
+      const pack = toValidInstalled(value);
+      if (!pack) throw new Error('Cannot verify installed extension media references');
+      return pack;
+    };
+    const raw = await idbGet<unknown>(PACKS_KEY);
+    if (raw != null && !Array.isArray(raw)) throw new Error('Cannot verify installed extension media references');
+    const legacy = Array.isArray(raw) ? raw.map(requirePack) : [];
+    if (!canUseServer()) return legacy;
+    const response = await requestServer();
+    const body = await response.json() as { packs?: unknown };
+    if (!Array.isArray(body.packs)) throw new Error('Cannot verify installed extension media references');
+    return [...legacy, ...body.packs.map(requirePack)];
+  }
   if (!canUseServer()) return listLegacyPacks();
   try {
     const remote = await listServerPacks();

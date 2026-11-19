@@ -1,6 +1,6 @@
 import type { ProjectDoc } from './types';
 import type { AnyAction, HistoryControlAction } from './reducerActions';
-import { MUTATING } from './reducerActions';
+import { actionPolicyFor } from './reducerActionPolicy';
 import { projectReduce } from './reducerProject';
 
 // ── history wrapper (snapshot-based undo/redo over the whole project) ──────
@@ -27,13 +27,13 @@ function reduceHistoryAction(present: ProjectDoc, action: AnyAction): {
 } {
   if (action.type !== 'batch') {
     const next = projectReduce(present, action);
-    return { next, mutating: next !== present && MUTATING.has(action.type) };
+    return { next, mutating: next !== present && actionPolicyFor(action.type).recordsHistory };
   }
   let next = present;
   let mutating = false;
   for (const entry of action.actions) {
     const reduced = projectReduce(next, entry);
-    if (reduced !== next && MUTATING.has(entry.type)) mutating = true;
+    if (reduced !== next && actionPolicyFor(entry.type).recordsHistory) mutating = true;
     next = reduced;
   }
   return { next, mutating };
@@ -55,6 +55,14 @@ export function historyReduce(h: History, a: AnyAction | HistoryControlAction): 
   }
   const { next, mutating } = reduceHistoryAction(h.present, a);
   if (next === h.present) return h;
+  if (a.type === 'tl.setSnapping') {
+    const preserve = (doc: ProjectDoc): ProjectDoc => doc.timelines.some((timeline) =>
+      timeline.id === a.id && timeline.interaction?.snapping !== a.snapping)
+      ? { ...doc, timelines: doc.timelines.map((timeline) => timeline.id === a.id
+        ? { ...timeline, interaction: { ...timeline.interaction, snapping: a.snapping } } : timeline) }
+      : doc;
+    return { ...h, past: h.past.map(preserve), present: next, future: h.future.map(preserve) };
+  }
   if (mutating) {
     // Only one history is pushed at a time: the first step is pushed onto the stack as usual, and subsequent steps only replace present.
     // Undo returns to "before dragging", not the previous tick.

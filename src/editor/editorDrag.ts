@@ -1,5 +1,7 @@
 import type { LibraryDragKind } from '../library/drag';
+import type { MediaPlacementPurpose } from '../media/placementPurpose';
 import type { MediaAssetKind } from './types';
+import { isMediaSourceRange, isMediaSourceRanges, sourceRangeFromMap, type MediaSourceRange, type MediaSourceRanges } from './mediaSourceRange';
 
 export const EDITOR_DRAG_MIME = 'application/x-openchatcut-editor-item';
 
@@ -18,6 +20,9 @@ export interface EditorMediaDragPayload {
   assetIds?: string[];
   name: string;
   assetKind: MediaAssetKind;
+  purpose?: MediaPlacementPurpose;
+  sourceRange?: MediaSourceRange;
+  sourceRanges?: MediaSourceRanges;
 }
 
 export interface EditorLibraryDragPayload {
@@ -45,6 +50,9 @@ function validateEditorDragPayload(value: unknown): EditorDragPayload | null {
     const mediaPayload = payload as Partial<EditorMediaDragPayload>;
     if (mediaPayload.assetIds !== undefined
       && (!Array.isArray(mediaPayload.assetIds) || !mediaPayload.assetIds.every(nonEmptyString))) return null;
+    if (mediaPayload.purpose !== undefined && mediaPayload.purpose !== 'bgm') return null;
+    if (mediaPayload.sourceRange !== undefined && !isMediaSourceRange(mediaPayload.sourceRange)) return null;
+    if (mediaPayload.sourceRanges !== undefined && !isMediaSourceRanges(mediaPayload.sourceRanges)) return null;
     return MEDIA_KINDS.has(mediaPayload.assetKind as MediaAssetKind)
       ? payload as EditorMediaDragPayload
       : null;
@@ -60,6 +68,10 @@ function validateEditorDragPayload(value: unknown): EditorDragPayload | null {
 
 export function mediaAssetIds(payload: EditorMediaDragPayload): string[] {
   return [...new Set(payload.assetIds?.length ? payload.assetIds : [payload.id])];
+}
+
+export function mediaSourceRangeFor(payload: EditorMediaDragPayload, id: string): MediaSourceRange | undefined {
+  return sourceRangeFromMap(payload.sourceRanges, id) ?? (id === payload.id ? payload.sourceRange : undefined);
 }
 
 export function setEditorDrag(event: React.DragEvent, payload: EditorDragInput): void {

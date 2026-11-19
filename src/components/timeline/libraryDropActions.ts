@@ -2,7 +2,7 @@
 // sound/template falls to the track (the track of the right type is automatically selected). Reasons for rejection must be given (notice) - before
 // Silent return false, the user only sees "No response after dragging".
 import {
-  CSS_TRANSITION_TYPES, TRANSITION_LABELS, defaultTrackId, timelineTrackIds, trackKind,
+  CSS_TRANSITION_TYPES, TRANSITION_LABELS, defaultTrackId, isEffectTrack, isTextTrack, timelineTrackIds, trackKind,
   type MediaAsset, type TimelineItem, type TimelineState, type TrackId, type TransitionType, type ZoomShape,
 } from '../../editor/types';
 import type { EditorCommands } from '../../editor/store';
@@ -16,6 +16,7 @@ import { TEMPLATES } from '../../editor/initial';
 import { t } from '../../i18n/locale';
 import { isIsolateAudioFxId, strengthFromAudioFxId } from '../../audio/isolateVoice';
 import { showAppToast } from '../../ui/appToast';
+import { placeSound, soundAssetForId } from '../../audio/soundPlacement';
 
 interface DropCtx {
   state: TimelineState;
@@ -122,7 +123,7 @@ export function applyLibraryToClip({ state, commands, notice, getState, getAsset
 }
 
 export function applyLibraryToTrack(
-  { state, commands }: DropCtx,
+  { state, commands, notice, getState }: DropCtx,
   payload: LibraryDragPayload,
   trackId: TrackId,
   startFrame: number,
@@ -131,36 +132,58 @@ export function applyLibraryToTrack(
 ): boolean {
   const trackIds = timelineTrackIds(state);
   if (payload.kind === 'sound') {
-    if (trackKind(state, trackId) !== 'audio') {
-      // auto-pick an audio track
-      const audioTrack = trackIds.find((t) => trackKind(state, t) === 'audio') ?? defaultTrackId(state, 'audio');
-      if (!audioTrack) return false;
-      trackId = audioTrack;
-    }
-    const dur = Math.max(1, Math.round((payload.seconds ?? 1) * state.fps));
-    commands.addAudio(
-      {
-        id: `sfx_${payload.id}`,
-        name: payload.name,
-        category: 'sfx',
-        src: payload.src ?? `/sound-effects/${payload.id}.mp3`,
-        durationInFrames: dur,
-      },
-      { track: trackId, startFrame, ripple, overwrite },
-    );
-    return true;
+    const live = getState();
+    const asset = soundAssetForId(payload.id, live.fps);
+    if (!asset) { notice(t('未找到这个本地音效，未添加。')); return false; }
+    return placeSound(live, commands, asset, { track: trackId, startFrame }, notice);
   }
+  const resolveVisualDropTrack = (rejectTextMessage: string): TrackId | null => {
+    if (isTextTrack(state, trackId)) {
+      notice(rejectTextMessage);
+      return null;
+    }
+    let resolved = trackId;
+    if (trackKind(state, resolved) !== 'video') {
+      resolved = trackIds.find((id) => isEffectTrack(state, id))
+        ?? trackIds.find((id) => trackKind(state, id) === 'video' && !isTextTrack(state, id))
+        ?? defaultTrackId(state, 'video')
+        ?? trackId;
+    }
+    if (trackKind(state, resolved) !== 'video' || isTextTrack(state, resolved)) {
+      notice(t('未找到可用的特效或视频轨道。'));
+      return null;
+    }
+    return resolved;
+  };
   if (payload.kind === 'template') {
     // The plugin template is not in TEMPLATES: Tpl goes with payload.data (the sandbox keeps the secret as usual)
-    const tpl = TEMPLATES.find((t) => t.id === payload.id) ?? (payload.data ? asPluginTpl(payload.data) : null);
+    const tpl = TEMPLATES.find((item) => item.id === payload.id) ?? (payload.data ? asPluginTpl(payload.data) : null);
     if (!tpl) return false;
-    // prefer video track under cursor
-    let t = trackId;
-    if (trackKind(state, t) !== 'video') {
-      t = trackIds.find((id) => trackKind(state, id) === 'video') ?? defaultTrackId(state, 'video') ?? trackId;
-    }
-    commands.addMotionGraphic(tpl, { track: t, startFrame, ripple, overwrite });
+    const targetTrack = resolveVisualDropTrack(t('该轨道为文字轨道，不能放置动画模板；请拖到特效或视频轨道。'));
+    if (!targetTrack) return false;
+    commands.addMotionGraphic(tpl, { track: targetTrack, startFrame, ripple, overwrite });
     return true;
+  }
+  if (payload.kind === 'effect-tool') {
+    const targetTrack = resolveVisualDropTrack(t('该轨道为文字轨道，不能放置特效元素；请拖到特效或视频轨道。'));
+    if (!targetTrack) return false;
+    if (payload.id === 'shape-rectangle') {
+      commands.addShapeItem('rectangle', { track: targetTrack, startFrame });
+      return true;
+    }
+    if (payload.id === 'shape-ellipse') {
+      commands.addShapeItem('ellipse', { track: targetTrack, startFrame });
+      return true;
+    }
+    if (payload.id === 'solid-bg') {
+      commands.addSolidItem({ track: targetTrack, startFrame });
+      return true;
+    }
+    if (payload.id === 'gaussian-mosaic') {
+      commands.addCompositionMosaic({ track: targetTrack, startFrame });
+      return true;
+    }
+    return false;
   }
   return false;
 }

@@ -3,11 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { setImmediate as delayImmediate } from 'node:timers/promises';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  type Tool,
-} from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from '@modelcontextprotocol/sdk/types.js';
 import {
   cancelEditorCallsForOwner,
   connectedProjectIds,
@@ -177,6 +173,7 @@ async function callTool(
   const args: Record<string, unknown> = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
     ? { ...rawArgs as Record<string, unknown> }
     : {};
+  if (session.staleReason) throw new ExternalEditorCallError('stale', session.staleReason);
   const allowRevisionDrift = name === 'get_edit_session'
     && Boolean(
       session.id
@@ -281,12 +278,13 @@ function makeServer(baseUrl: string, session: McpSession): Server {
         && error.outcome === 'stale'
       ) {
         markMcpSessionStale(session, error.message);
-        // Close the transport after the error response is sent so the client
-        // does not keep sending requests against a permanently-stale session.
-        void delayImmediate().then(() => {
-          if (session.server) void session.server.close().catch(() => undefined);
-          else void session.transport.close().catch(() => undefined);
-        });
+        // Release offline workers and project ownership separately from the
+        // transport, so a fresh connection can recover without waiting for TTL.
+        await session.offline?.dispose();
+        // A stale editor binding is a tool-level error, not a transport
+        // failure. Keep the connection alive to deliver this response and
+        // reject later calls with the same reason. Only explicit disconnect,
+        // idle expiry, or session-cap eviction should close the transport.
       }
       const result = mcpToolError(error);
       return {

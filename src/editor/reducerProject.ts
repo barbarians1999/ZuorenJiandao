@@ -13,6 +13,7 @@ import { newTranscriptGeneration } from '../transcript/identity';
 import type { AnyAction, ProjectAction } from './reducerActions';
 import { isRelinkableMediaKind, relinkTiming, type RelinkableTimelineItem } from './reducerTimelineHelpers';
 import { reduce } from './reducerTimeline';
+import { stripTransientSelection } from './selectionState';
 
 // ── project reducer (routes per-timeline actions to the active timeline) ───
 export const maxOrder = (p: ProjectDoc) => p.timelines.reduce((m, t) => Math.max(m, t.order), -1);
@@ -22,7 +23,7 @@ const isProjectAction = (a: { type: string }): a is ProjectAction => a.type.star
 // returns a bare TimelineState, so id/name/order must be re-applied).
 const stamp = (next: TimelineState, id: string, name: string, order: number): Timeline => {
   const { assets: _derivedAssets, ...persisted } = next;
-  return { ...persisted, id, name, order };
+  return { ...persisted, id, name, order, selectedId: null, selectedIds: [] };
 };
 
 export function projectReduce(p: ProjectDoc, a: AnyAction): ProjectDoc {
@@ -73,6 +74,11 @@ export function projectReduce(p: ProjectDoc, a: AnyAction): ProjectDoc {
         if (width < 1 || height < 1) return p;
         return { ...p, timelines: p.timelines.map((t) => (t.id === a.id ? { ...t, width, height, fit: a.fit ?? t.fit ?? 'contain' } : t)) };
       }
+      case 'tl.setSnapping':
+        return p.timelines.some((t) => t.id === a.id && t.interaction?.snapping !== a.snapping)
+          ? { ...p, timelines: p.timelines.map((t) => t.id === a.id
+            ? { ...t, interaction: { ...t.interaction, snapping: a.snapping } } : t) }
+          : p;
       case 'tl.setHidden': {
         // The last visible timeline cannot be hidden.
         const visible = p.timelines.filter((t) => !t.hidden);
@@ -86,7 +92,7 @@ export function projectReduce(p: ProjectDoc, a: AnyAction): ProjectDoc {
         return { ...p, timelines, activeTimelineId };
       }
       case 'tl.setDoc':
-        return sequenceGraphError(a.doc) ? p : a.doc; // invalid sequence graphs never enter history
+        return sequenceGraphError(a.doc) ? p : stripTransientSelection(a.doc); // invalid sequence graphs never enter history
       case 'pool.createFolder':
         return p.mediaFolders.some((folder) => folder.parentId === a.folder.parentId && folder.name === a.folder.name)
           ? p

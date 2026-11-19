@@ -1,3 +1,5 @@
+import { MIN_TIMELINE_ZOOM_FLOOR } from './timelineZoom';
+
 export interface TimelineViewState {
   playhead: number;
   zoom: number;
@@ -34,7 +36,7 @@ export function normalizeTimelineViewState(
   const raw = value && typeof value === 'object' ? value as Partial<TimelineViewState> : {};
   return {
     playhead: Math.floor(finiteAtLeast(raw.playhead, 0, fallback.playhead)),
-    zoom: finiteAtLeast(raw.zoom, 0.01, fallback.zoom),
+    zoom: finiteAtLeast(raw.zoom, MIN_TIMELINE_ZOOM_FLOOR, fallback.zoom),
     scrollLeft: finiteAtLeast(raw.scrollLeft, 0, fallback.scrollLeft),
     trackScale: finiteAtLeast(raw.trackScale, 0.01, fallback.trackScale),
   };

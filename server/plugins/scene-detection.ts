@@ -7,6 +7,7 @@ import { stat } from 'node:fs/promises';
 import { isSafeUploadName, resolveUploadFile } from '../media-dir.ts';
 import { ffmpegBin, ffprobeBin } from '../media-binaries.ts';
 import { resolveHwDecodeArgs } from '../media-acceleration.ts';
+import { TaskLimiter } from '../task-limiter.ts';
 import {
   DEFAULT_MAX_SCENES,
   DEFAULT_MIN_SCENE_MS,
@@ -29,6 +30,17 @@ const MAX_ANALYSIS_FPS = 12;
 const MAX_ANALYSIS_FRAMES = 36_000;
 const EVIDENCE_OFFSET_MS = 200;
 const FRAME_CACHE_LIMIT = 200;
+const detectionLimiter = new TaskLimiter(1);
+const evidenceLimiter = new TaskLimiter(2);
+
+export function resolveSceneAnalysisRange(durationMs: number, start?: number, end?: number) {
+  if ((start !== undefined && (!Number.isFinite(start) || start < 0))
+    || (end !== undefined && (!Number.isFinite(end) || end <= 0))) throw new RangeError('invalid scene analysis range');
+  const rangeStartMs = start ?? 0;
+  const rangeEndMs = Math.min(durationMs, end ?? durationMs);
+  if (rangeStartMs >= rangeEndMs) throw new RangeError('scene analysis range is outside the source video');
+  return { rangeStartMs, rangeEndMs, analysisDurationMs: rangeEndMs - rangeStartMs };
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
@@ -85,7 +97,7 @@ function runCapture(command: string, args: string[], options: CaptureOptions): P
       reject(abortError());
       return;
     }
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -124,7 +136,7 @@ function runCapture(command: string, args: string[], options: CaptureOptions): P
 
 function runBuffer(command: string, args: string[], timeoutMs: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks: Buffer[] = [];
     let stderr = '';
     const timer = setTimeout(() => {
@@ -172,6 +184,8 @@ export interface DetectScenesOptions {
   threshold?: number;
   minSceneMs?: number;
   maxScenes?: number;
+  rangeStartMs?: number;
+  rangeEndMs?: number;
   signal?: AbortSignal;
   onProgress?: (update: {
     phase: Extract<SceneDetectionJobStatus, 'probing' | 'detecting' | 'finalizing'>;
@@ -183,6 +197,8 @@ export interface DetectScenesOptions {
 
 export interface DetectScenesResult {
   durationMs: number;
+  rangeStartMs: number;
+  rangeEndMs: number;
   threshold: number;
   minSceneMs: number;
   sampleFps: number;
@@ -199,12 +215,13 @@ export async function detectScenesInFile(
   const maxScenes = Math.max(1, Math.min(500, Math.round(options.maxScenes ?? DEFAULT_MAX_SCENES)));
   options.onProgress?.({ phase: 'probing', progress: 0.01, processedMs: 0, durationMs: 0 });
   const durationMs = await probeDurationMs(file, options.signal);
-  const sampleFps = sceneAnalysisFps(durationMs);
-  options.onProgress?.({ phase: 'detecting', progress: 0.05, processedMs: 0, durationMs });
+  const { rangeStartMs, rangeEndMs, analysisDurationMs } = resolveSceneAnalysisRange(durationMs, options.rangeStartMs, options.rangeEndMs);
+  const sampleFps = sceneAnalysisFps(analysisDurationMs);
+  options.onProgress?.({ phase: 'detecting', progress: 0.05, processedMs: 0, durationMs: analysisDurationMs });
   // Keep a second full-rate analysis branch alive so FFmpeg progress advances even
   // when the selected scene-change branch emits no frames.
   const filter = [
-    `[0:v:0]fps=${sampleFps.toFixed(4)},scale=320:-2:flags=fast_bilinear,split=2[scan][clock]`,
+    `[0:v:0]setpts=PTS-STARTPTS,fps=${sampleFps.toFixed(4)},scale=320:-2:flags=fast_bilinear,split=2[scan][clock]`,
     `[scan]select='gt(scene,${threshold})',metadata=print:file=-[hits]`,
     '[clock]null[analysis_clock]',
   ].join(';');
@@ -212,7 +229,8 @@ export async function detectScenesInFile(
   let lastProcessedMs = 0;
   const output = await runCapture(ffmpegBin(), [
     '-nostdin', '-hide_banner', '-loglevel', 'error',
-    ...(await resolveHwDecodeArgs(ffmpegBin(), undefined)), '-i', file,
+    ...(await resolveHwDecodeArgs(ffmpegBin(), undefined)), '-ss', String(rangeStartMs / 1000),
+    '-t', String(analysisDurationMs / 1000), '-i', file,
     '-filter_complex', filter,
     '-map', '[hits]', '-an', '-f', 'null', '-',
     '-map', '[analysis_clock]', '-an',
@@ -228,21 +246,21 @@ export async function detectScenesInFile(
         const processedMs = parseProgressTimeMs(line.trim());
         if (processedMs === null || processedMs < lastProcessedMs) continue;
         lastProcessedMs = processedMs;
-        const ratio = Math.max(0, Math.min(1, processedMs / durationMs));
+        const ratio = Math.max(0, Math.min(1, processedMs / analysisDurationMs));
         options.onProgress?.({
           phase: 'detecting',
           progress: 0.05 + ratio * 0.9,
           processedMs,
-          durationMs,
+          durationMs: analysisDurationMs,
         });
       }
     },
   });
-  options.onProgress?.({ phase: 'finalizing', progress: 0.98, processedMs: durationMs, durationMs });
+  options.onProgress?.({ phase: 'finalizing', progress: 0.98, processedMs: analysisDurationMs, durationMs: analysisDurationMs });
   const scenes = normalizeSceneCandidates(parseSceneMetadata(output), {
-    threshold, minSceneMs, durationMs, maxScenes,
-  });
-  return { durationMs, threshold, minSceneMs, sampleFps, scenes };
+    threshold, minSceneMs, durationMs: analysisDurationMs, maxScenes,
+  }).map((scene) => ({ ...scene, timeMs: Math.round(scene.timeMs + rangeStartMs) }));
+  return { durationMs, rangeStartMs, rangeEndMs, threshold, minSceneMs, sampleFps, scenes };
 }
 
 function frameUrl(src: string, timeMs: number): string {
@@ -266,7 +284,7 @@ export function addSceneEvidence(src: string, scenes: readonly SceneChange[], du
 interface InternalJob extends SceneDetectionJobSnapshot {
   controller: AbortController;
   file: string;
-  options: Pick<DetectScenesOptions, 'threshold' | 'minSceneMs' | 'maxScenes'>;
+  options: Pick<DetectScenesOptions, 'threshold' | 'minSceneMs' | 'maxScenes' | 'rangeStartMs' | 'rangeEndMs'>;
 }
 
 const jobs = new Map<string, InternalJob>();
@@ -295,6 +313,7 @@ function cleanJobs(): void {
 
 async function runJob(job: InternalJob): Promise<void> {
   try {
+    if (job.controller.signal.aborted) throw abortError();
     const detected = await detectScenesInFile(job.file, {
       ...job.options,
       signal: job.controller.signal,
@@ -314,7 +333,7 @@ async function runJob(job: InternalJob): Promise<void> {
     job.result = result;
     job.status = 'completed';
     job.progress = 1;
-    job.processedMs = detected.durationMs;
+    job.processedMs = detected.rangeEndMs - detected.rangeStartMs;
     job.updatedAt = Date.now();
   } catch (error) {
     if (job.controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
@@ -342,13 +361,13 @@ async function evidenceFrame(file: string, fileSize: number, timeMs: number): Pr
   const key = `${file}:${fileSize}:${Math.round(timeMs)}`;
   const cached = frameCache.get(key);
   if (cached) return cached;
-  const pending = runBuffer(ffmpegBin(), [
+  const pending = evidenceLimiter.run(async () => runBuffer(ffmpegBin(), [
     '-nostdin', '-hide_banner', '-loglevel', 'error',
     ...(await resolveHwDecodeArgs(ffmpegBin(), undefined)),
     '-ss', String(Math.max(0, timeMs) / 1000), '-i', file,
     '-frames:v', '1', '-vf', 'scale=320:-2:flags=fast_bilinear',
     '-c:v', 'mjpeg', '-q:v', '5', '-f', 'image2pipe', 'pipe:1',
-  ], 30_000).then((buffer) => {
+  ], 30_000)).then((buffer) => {
     if (!buffer.length) throw new Error('no frame extracted');
     return buffer;
   }).catch((error) => {
@@ -389,7 +408,7 @@ export function sceneDetectionPlugin(): Plugin {
 
           if (pathname === '/jobs' && req.method === 'POST') {
             const body = (await readJson(req)) as {
-              src?: string; threshold?: number; minSceneMs?: number; maxScenes?: number;
+              src?: string; threshold?: number; minSceneMs?: number; maxScenes?: number; rangeStartMs?: number; rangeEndMs?: number;
             };
             const media = mediaFromSrc(String(body.src ?? ''));
             if ('error' in media) { sendJson(res, media.status, { error: media.error }); return; }
@@ -406,10 +425,11 @@ export function sceneDetectionPlugin(): Plugin {
               result: null,
               error: null,
               controller: new AbortController(),
-              options: { threshold: body.threshold, minSceneMs: body.minSceneMs, maxScenes: body.maxScenes },
+              options: { threshold: body.threshold, minSceneMs: body.minSceneMs, maxScenes: body.maxScenes,
+                rangeStartMs: body.rangeStartMs, rangeEndMs: body.rangeEndMs },
             };
             jobs.set(job.id, job);
-            void runJob(job);
+            void detectionLimiter.run(() => runJob(job));
             sendJson(res, 202, publicJob(job));
             return;
           }
@@ -435,12 +455,12 @@ export function sceneDetectionPlugin(): Plugin {
 
           // Backward-compatible synchronous endpoint used by the Agent tool.
           const body = (await readJson(req)) as {
-            src?: string; threshold?: number; minSceneMs?: number; maxScenes?: number;
+            src?: string; threshold?: number; minSceneMs?: number; maxScenes?: number; rangeStartMs?: number; rangeEndMs?: number;
           };
           const media = mediaFromSrc(String(body.src ?? ''));
           if ('error' in media) { sendJson(res, media.status, { error: media.error }); return; }
           const fileSize = (await stat(media.file)).size;
-          const result = await detectScenesInFile(media.file, body);
+          const result = await detectionLimiter.run(() => detectScenesInFile(media.file, body));
           sendJson(res, 200, {
             ok: true,
             src: media.src,
@@ -451,7 +471,7 @@ export function sceneDetectionPlugin(): Plugin {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           server.config.logger.error(`[scene-detection] ${message}`);
-          const status = /ENOENT|spawn|ffmpeg|ffprobe/i.test(message) ? 503 : 500;
+          const status = error instanceof RangeError ? 400 : /ENOENT|spawn|ffmpeg|ffprobe/i.test(message) ? 503 : 500;
           sendJson(res, status, { error: message });
         }
       });

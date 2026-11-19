@@ -15,6 +15,8 @@ export interface ExportEngineInfo {
   label: string;
   hardware: boolean;
   transport: 'browser' | 'server';
+  /** Composition route, distinct from the final encoder. */
+  renderRoute?: 'direct-cut' | 'hybrid';
 }
 export type ExportEngineReason = string | null;
 
@@ -23,6 +25,8 @@ export interface ExportProgress {
   phase: ExportPhase;
   percent: number;
   startedAt: number;
+  /** Set on the first actual rendering update, so queued time does not skew ETA. */
+  renderingStartedAt?: number;
   finishedAt?: number;
   processedFrames?: number;
   totalFrames?: number;
@@ -74,6 +78,9 @@ export interface UseExportWorkflowOptions {
   codec: 'h264' | 'vp8' | 'prores';
   resolution: ExportResolution;
   fps: number;
+  /** Optional half-open timeline export range. Remotion conversion happens at the renderer boundary. */
+  startFrame?: number;
+  endFrameExclusive?: number;
   requestedVideoBitrate?: number;
   subtitleFormat: 'srt' | 'txt';
   subtitleCaptions: CaptionsData | null;

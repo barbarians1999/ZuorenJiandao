@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useReducer, useRef } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { ProjectDoc, Timeline, TimelineState } from './types';
 import { activeEditorState } from './types';
-import type { AnyAction, ProjectDispatch } from './reduce';
+import type { AnyAction, History, ProjectDispatch } from './reduce';
 import { historyReduce, isHistoryControlAction, projectReduce } from './reduce';
 import { buildCommands } from './storeCommandBuilder';
 import type { EditorCommands } from './storeCommands';
+import { applySelection, reduceSelection, selectionFromProject, stripTransientSelection, type EditorSelectionState, type SelectionAction } from './selectionState';
 
 // Re-export the reducer layer so existing importers (`from './editor/store'`) keep working.
 export type { Action, AnyAction, AtomicAction, BatchAction, ProjectAction, Dispatch, ProjectDispatch } from './reduce';
@@ -26,25 +27,40 @@ export function useEditor(initial: ProjectDoc): {
   /** Next redo snapshot (future[0]), null when there is nothing to redo. Agent redo_last_change applies it via applyDoc. */
   getRedoTarget: () => ProjectDoc | null;
 } {
-  const [h, dispatch] = useReducer(historyReduce, { past: [], present: initial, future: [] });
+  const [h, publishHistory] = useState<History>(() => ({ past: [], present: stripTransientSelection(initial), future: [] }));
+  const historyRef = useRef(h);
   const doc = h.present;
-  // Timeline commands need the current project for timeline counts and ids;
-  // a ref keeps buildCommands' memo stable while reading live state.
-  const docRef = useRef(doc);
-  docRef.current = doc;
+  // A single UI event can create a track and then add clips to that track.
+  // React batches renders, so command reads must see the previous command now,
+  // not the document from the last render. Reduce once and publish that exact
+  // snapshot, including gesture state and undo/redo, rather than double-reducing.
+  const dispatch = useCallback<ProjectDispatch>((action) => {
+    const next = historyReduce(historyRef.current, action);
+    if (next === historyRef.current) return;
+    historyRef.current = next;
+    publishHistory(next);
+  }, []);
 
-  const commands = useMemo<EditorCommands>(() => buildCommands(dispatch, () => docRef.current), []);
+  const [selection, setSelection] = useState<EditorSelectionState>(() => selectionFromProject(initial));
+  const selectionRef = useRef(selection);
+  const selectionDispatch = useCallback((action: SelectionAction) => {
+    // Capture the timeline at command time too: a same-event timeline switch
+    // must not move this selection update to whichever timeline renders later.
+    const next = reduceSelection(selectionRef.current, historyRef.current.present, action);
+    if (next === selectionRef.current) return;
+    selectionRef.current = next;
+    setSelection(next);
+  }, []);
 
-  const pastRef = useRef(h.past);
-  pastRef.current = h.past;
-  const futureRef = useRef(h.future);
-  futureRef.current = h.future;
-  const getUndoTarget = useCallback((): ProjectDoc | null => pastRef.current[pastRef.current.length - 1] ?? null, []);
-  const getRedoTarget = useCallback((): ProjectDoc | null => futureRef.current[0] ?? null, []);
+  const commands = useMemo<EditorCommands>(() => buildCommands(dispatch, () => historyRef.current.present, selectionDispatch,
+    () => applySelection(activeEditorState(historyRef.current.present), selectionRef.current)), [dispatch, selectionDispatch]);
+
+  const getUndoTarget = useCallback((): ProjectDoc | null => historyRef.current.past.at(-1) ?? null, []);
+  const getRedoTarget = useCallback((): ProjectDoc | null => historyRef.current.future[0] ?? null, []);
 
   // Stable identity while doc is unchanged — downstream [state] memos/effects
   // must not re-fire on unrelated renders (e.g. hover state in the workspace).
-  const state = useMemo(() => activeEditorState(doc), [doc]);
+  const state = useMemo(() => applySelection(activeEditorState(doc), selection), [doc, selection]);
 
   return {
     state,

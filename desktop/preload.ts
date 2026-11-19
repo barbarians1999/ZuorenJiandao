@@ -53,6 +53,7 @@ import {
 } from '../shared/directory-import.ts';
 import { isTranscriptWindowPayload, TRANSCRIPT_WINDOW_CHANNELS, type TranscriptWindowPayload } from '../shared/transcript-window.ts';
 import { AGENT_LOCAL_MEDIA_CHANNEL, type AgentLocalMediaRequest, type AgentLocalMediaResult } from '../shared/agent-local-media.ts';
+import { DESKTOP_FONT_CHANNELS, type DesktopFontsApi } from '../shared/desktop-fonts.ts';
 
 export interface DesktopExportDirectoryGrant {
   readonly grantId: string;
@@ -107,6 +108,7 @@ export interface OpenChatCutDesktopApi {
   browseLocalMedia(request: AgentLocalMediaRequest): Promise<AgentLocalMediaResult>;
   subscribeImportDirectory(listener: (event: DirectoryImportEvent) => void): () => void;
   windowAction(action: 'close' | 'minimize' | 'toggle-maximize' | 'apply-ui-scale'): Promise<void>;
+  setTitlebarAppearance(value: { color: string; symbolColor: string; height: number }): Promise<void>;
   zoomStep(step: number | 'reset'): Promise<void>;
   subscribeUiScale(listener: (scale: number) => void): () => void;
   openTranscriptWindow(payload: TranscriptWindowPayload): Promise<void>;
@@ -117,6 +119,7 @@ export interface OpenChatCutDesktopApi {
   editorCredentials(): Promise<EditorBootstrapInfo>;
   updates: DesktopUpdateApi;
   inference: DesktopInferenceApi;
+  fonts: DesktopFontsApi;
 }
 
 const localMediaPreloadDependencies: LocalMediaPreloadDependencies<File> = {
@@ -176,6 +179,7 @@ const api: OpenChatCutDesktopApi = {
   },
   windowAction: (action) =>
     ipcRenderer.invoke('openchatcut:window-action', action) as Promise<void>,
+  setTitlebarAppearance: (value) => ipcRenderer.invoke('openchatcut:titlebar-appearance', value) as Promise<void>,
   zoomStep: (step) =>
     ipcRenderer.invoke('openchatcut:zoom-step', step) as Promise<void>,
   subscribeUiScale: (listener) => {
@@ -204,6 +208,12 @@ const api: OpenChatCutDesktopApi = {
     ipcRenderer.invoke(PROJECT_STORE_CHANNEL, request) as Promise<ProjectStoreResponse>,
   editorCredentials: () =>
     ipcRenderer.invoke(EDITOR_CREDENTIALS_CHANNEL) as Promise<EditorBootstrapInfo>,
+  fonts: {
+    listSystemFonts: (refresh) => ipcRenderer.invoke(DESKTOP_FONT_CHANNELS.list, refresh),
+    chooseFontFile: () => ipcRenderer.invoke(DESKTOP_FONT_CHANNELS.choose),
+    previewFont: (faceId) => ipcRenderer.invoke(DESKTOP_FONT_CHANNELS.preview, faceId),
+    materializeFont: (faceId) => ipcRenderer.invoke(DESKTOP_FONT_CHANNELS.materialize, faceId),
+  },
   inference: {
     setEnabled: (enabled) =>
       ipcRenderer.invoke(DESKTOP_INFERENCE_CHANNELS.setEnabled, enabled) as Promise<void>,

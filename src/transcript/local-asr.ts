@@ -10,9 +10,10 @@ import {
   type AssemblyAiCheckpointWriter, type AssemblyAiResumeCheckpoint, type TranscribeOptions,
 } from './assemblyai';
 import { downsampleMono, hasTranscribableSignal } from './client-asr-extract';
-import { ASR_INFERENCE_CONTRACT } from '../../shared/asr-inference-contract';
+import { ASR_INFERENCE_CONTRACT, ASR_TRANSCRIPTION_PROGRESS } from '../../shared/asr-inference-contract';
 import { tryDesktopNativeAsr, warmUpDesktopNativeAsr } from './desktop-native-asr';
 import { desktopNativeInferenceEnabled } from './desktop-inference-preference';
+import { cancellableTranscription, isTranscriptionCancelled, throwIfTranscriptionCancelled } from './transcriptionCancellation';
 
 const TARGET_SR = ASR_INFERENCE_CONTRACT.sampleRate;
 /** WebGPU load can hang on software renderers (headless/SwiftShader); force-fail
@@ -45,12 +46,14 @@ export class LocalAsrClient {
   private config: AsrConfig | null = null;
   private loading: Promise<void> | null = null;
   private onProgress: ProgressListener = () => {};
+  private disposed = false;
 
   attachProgress(listener: ProgressListener): void {
     this.onProgress = listener;
   }
 
   private ensureWorker(): Worker {
+    if (this.disposed) throw new Error('Local ASR worker disposed');
     if (this.worker) return this.worker;
     this.worker = new Worker(new URL('./local-asr.worker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (event: MessageEvent<LocalAsrWorkerResponse>) => {
@@ -102,11 +105,13 @@ export class LocalAsrClient {
 
   /** Load the requested model after any in-flight warm-up finishes. */
   async ensureLoaded(config: AsrConfig): Promise<void> {
+    this.disposed = false;
     while (this.loading) await this.loading;
     if (this.config?.device === config.device
       && this.config.modelId === config.modelId
       && this.config.revision === config.revision) return;
     if (this.worker) this.dispose();
+    this.disposed = false;
 
     const loading = (async () => {
       try {
@@ -122,9 +127,11 @@ export class LocalAsrClient {
         );
         this.config = config;
       } catch (webgpuError) {
+        if (this.disposed) throw webgpuError;
         if (config.device !== 'webgpu') throw webgpuError;
         // A half-initialized WebGPU session can corrupt the wasm fallback.
         this.dispose();
+        this.disposed = false;
         const fallback: AsrConfig = { ...config, device: 'wasm' };
         await this.request({
           type: 'load',
@@ -159,6 +166,7 @@ export class LocalAsrClient {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.worker?.terminate();
     this.worker = null;
     this.config = null;
@@ -174,14 +182,29 @@ function getSharedClient(): LocalAsrClient {
   return sharedClient;
 }
 
+// Each cancellable attempt owns its worker, while sequential clips share that
+// attempt's loaded model. Cancelling must not terminate automatic ingestion ASR.
+const cancellableClients = new WeakMap<AbortSignal, LocalAsrClient>();
+function clientForAttempt(signal?: AbortSignal): LocalAsrClient {
+  if (!signal) return getSharedClient();
+  throwIfTranscriptionCancelled(signal);
+  const existing = cancellableClients.get(signal);
+  if (existing) return existing;
+  const client = new LocalAsrClient();
+  cancellableClients.set(signal, client);
+  signal.addEventListener('abort', () => { client.dispose(); cancellableClients.delete(signal); }, { once: true });
+  return client;
+}
+
 /** Fetch a same-origin media path as 16 kHz mono Float32 samples. */
-async function decodeSourceToSamples(path: string): Promise<Float32Array> {
+async function decodeSourceToSamples(path: string, signal?: AbortSignal): Promise<Float32Array> {
   let response: Response;
   try {
     // no-store: transcription must read the latest bytes on disk; a stale http
     // cache entry would transcribe an outdated version of the source.
-    response = await fetch(path, { cache: 'no-store' });
+    response = await fetch(path, { cache: 'no-store', signal });
   } catch (error) {
+    if (signal?.aborted) throw error;
     throw new TranscriptionError('source-unavailable', error instanceof Error ? error.message : String(error));
   }
   if (!response.ok) throw new TranscriptionError('source-unavailable', `HTTP ${response.status}`);
@@ -192,7 +215,7 @@ async function decodeSourceToSamples(path: string): Promise<Float32Array> {
   const context = new AC();
   try {
     const arrayBuffer = await response.arrayBuffer();
-    const decoded = await context.decodeAudioData(arrayBuffer);
+    const decoded = await cancellableTranscription(() => context.decodeAudioData(arrayBuffer), signal);
     const mono = downsampleMono(decoded, TARGET_SR);
     if (mono.length > ASR_INFERENCE_CONTRACT.maxAudioSeconds * TARGET_SR) {
       throw new TranscriptionError(
@@ -220,12 +243,13 @@ function toTranscriptResult(result: AsrResult): TranscriptResult {
   return { text, words, utterances };
 }
 
-function reportModelProgress(
+export function reportModelProgress(
   onWait: ((note?: string) => void) | undefined,
   progress?: number,
   file?: string,
 ): void {
-  if (progress != null) onWait?.(`模型下载 ${Math.min(100, Math.round(progress))}%`);
+  if (file === ASR_TRANSCRIPTION_PROGRESS && progress != null) onWait?.(`识别当前素材 ${Math.min(100, Math.max(0, Math.round(progress)))}%`);
+  else if (progress != null) onWait?.(`模型下载 ${Math.min(100, Math.round(progress))}%`);
   else if (file) onWait?.(`加载模型 ${file.split('/').pop() ?? ''}`);
 }
 
@@ -233,6 +257,7 @@ async function runTranscriptionStage<T>(stage: string, operation: () => Promise<
   try {
     return await operation();
   } catch (error) {
+    if (isTranscriptionCancelled(error)) throw error;
     if (error instanceof TranscriptionError) throw error;
     const detail = error instanceof Error ? error.message : String(error);
     throw new TranscriptionError('service-unavailable', `${stage}失败：${detail}`);
@@ -275,39 +300,44 @@ export async function localTranscribePathResumable(
   onWait?: (note?: string) => void,
   opts: TranscribeOptions = {},
 ): Promise<TranscriptResult> {
+  throwIfTranscriptionCancelled(opts.signal);
   const providerJobId = resume.providerJobId ?? `local:${Date.now().toString(36)}`;
   const checkpoint: LocalAsrCheckpoint = { ...resume, providerJobId, providerStatus: 'processing' };
   await onCheckpoint(checkpoint);
   onWait?.();
 
-  const profile = await detectDeviceProfile();
+  const profile = await cancellableTranscription(() => detectDeviceProfile(), opts.signal);
   const config = chooseAsrConfig(profile);
-  await assertAsrModelDownloaded(config);
+  await cancellableTranscription(() => assertAsrModelDownloaded(config), opts.signal);
   if (desktopNativeInferenceEnabled()) {
     const nativeSource = await transcriptionSourceForPath(path, opts);
     const native = await tryDesktopNativeAsr({
       sourcePath: nativeSource,
       config,
       language: opts.languageCode ?? 'zh',
+      signal: opts.signal,
       onProgress: (progress, file) => reportModelProgress(onWait, progress, file),
       onFallback: () => onWait?.('桌面原生推理不可用，已回退浏览器引擎'),
     });
     if (native) {
+      throwIfTranscriptionCancelled(opts.signal);
       await onCheckpoint({ ...checkpoint, providerStatus: 'completed' });
       return toTranscriptResult(native.result);
     }
   }
   const source = await runTranscriptionStage('音轨准备', () => transcriptionSourceForPath(path, opts, true));
-  const samples = await runTranscriptionStage('音频解码', () => decodeSourceToSamples(source));
+  const samples = await runTranscriptionStage('音频解码', () => decodeSourceToSamples(source, opts.signal));
+  throwIfTranscriptionCancelled(opts.signal);
   if (!hasTranscribableSignal(samples, TARGET_SR)) {
     await onCheckpoint({ ...checkpoint, providerStatus: 'completed' });
     return toTranscriptResult({ text: '', chunks: [] });
   }
-  const client = getSharedClient();
+  const client = clientForAttempt(opts.signal);
   client.attachProgress((progress, file) => reportModelProgress(onWait, progress, file));
-  await runTranscriptionStage('模型加载', () => client.ensureLoaded(config));
+  await runTranscriptionStage('模型加载', () => cancellableTranscription(() => client.ensureLoaded(config), opts.signal));
   await onCheckpoint({ ...checkpoint, providerStatus: 'processing' });
-  const result = await runTranscriptionStage('模型推理', () => client.transcribe(samples, opts.languageCode ?? 'zh'));
+  const result = await runTranscriptionStage('模型推理', () => cancellableTranscription(() => client.transcribe(samples, opts.languageCode ?? 'zh'), opts.signal));
+  throwIfTranscriptionCancelled(opts.signal);
   await onCheckpoint({ ...checkpoint, providerStatus: 'completed' });
   return toTranscriptResult(result);
 }

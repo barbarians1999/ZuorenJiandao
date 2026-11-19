@@ -288,6 +288,7 @@ export function itemsInRegion(state: TimelineState, frame: number, region: Regio
   const out: string[] = [];
   for (const item of state.items) {
     if (item.kind === 'audio') continue;
+    if (item.pictureDisabled === true) continue;
     if (state.tracks?.[item.track]?.hidden) continue;
     if (trackKind(state, item.track) === 'audio') continue;
     if (!(frame >= item.startFrame && frame < item.startFrame + item.durationInFrames)) continue;

@@ -109,7 +109,7 @@ function QaSettings({ enabled, busy, qa, onToggle }: QaSettingsProps) {
       <label className="cc-export-toggle cc-export-qa-toggle">
         <span>
           <strong>{t('导出后自动质量检查')}</strong>
-          <small>{t('检查画面、声音、剪辑点和字幕安全区；临时失败最多自动复检 3 轮。')}</small>
+          <small>{t('检查画面、声音、剪辑点和字幕安全区。')}</small>
         </span>
         <input type="checkbox" checked={enabled} onChange={(event) => onToggle(event.target.checked)} disabled={busy} />
       </label>
@@ -289,6 +289,7 @@ function JianyingTab({ state, base }: { state: TimelineState; base: string }) {
           ] as const}
           value={store}
           onChange={updateStore}
+          disabled={busy}
         />
       </Row>
       {store === 'jianying' && <p className="cc-export-footnote">{JIANYING_STORE}</p>}

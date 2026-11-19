@@ -219,6 +219,10 @@ const unavailable = resolveDesktopInferenceCapabilities({
   transformerRuntime: false,
   ffmpegRuntime: true,
 });
+assert.equal(unavailable.asr.available, true, 'ASR capability can remain available without the transformer runtime');
+assert.equal(unavailable.semantic.available, false);
+assert.equal(unavailable.clap.available, false);
+assert.equal(unavailable.rhythm.available, false);
 assert.match(unavailable.semantic.reason ?? '', /native ONNX runtime unavailable/);
 assert.equal(isDesktopInferenceCapabilities({ ...windows, semantic: { ...windows.semantic, contractId: 'old' } }), false);
 assert.equal(isDesktopInferenceCapabilities({ ...windows, version: 2 }), false);

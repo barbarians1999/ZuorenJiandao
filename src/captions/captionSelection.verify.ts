@@ -10,6 +10,7 @@ const {
   captionSelectionsInFrameRange,
   resolveCaptionSelection,
   resolveOrderedCaptionSelections,
+  selectableCaptionSelectionsAtPlayheadSide,
 } = await import(modulePath).catch(() => {
   assert.fail('caption selection must have a caption-owned identity and resolution layer');
 });
@@ -118,5 +119,15 @@ assert.deepEqual(
   ],
   'resolution must deduplicate refs and order each track by cue time in canonical track order',
 );
+
+const beforePlayhead = selectableCaptionSelectionsAtPlayheadSide(mixedState, 45, 'before');
+const afterPlayhead = selectableCaptionSelectionsAtPlayheadSide(mixedState, 45, 'after');
+assert(beforePlayhead.some((sel: { trackId: string; cueId?: string }) => sel.trackId === 'C1' && sel.cueId === 'manual-early-cue'));
+assert(!beforePlayhead.some((sel: { trackId: string; cueId?: string }) => sel.cueId === 'manual-late-cue'));
+assert(afterPlayhead.some((sel: { trackId: string; cueId?: string }) => sel.trackId === 'C2' && sel.cueId === 'manual-late-cue'));
+assert(!afterPlayhead.some((sel: { trackId: string; cueId?: string }) => sel.cueId === 'manual-early-cue'));
+assert(!selectableCaptionSelectionsAtPlayheadSide(mixedState, 35, 'after').some((sel: { pageId?: string }) => sel.pageId === generatedPageId), 'cues starting before playhead must not be selected by select-after-playhead');
+assert(selectableCaptionSelectionsAtPlayheadSide(mixedState, 30, 'after').some((sel: { pageId?: string }) => sel.pageId === generatedPageId), 'cues starting at playhead are selected by select-after-playhead');
+assert(!afterPlayhead.some((sel: { trackId: string }) => sel.trackId === 'C_LOCKED'));
 
 console.log('captionSelection.verify: caption selection identity and range rules OK');

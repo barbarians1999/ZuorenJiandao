@@ -3,7 +3,7 @@
 // userData (first startup, the old version directory will be cleared easily);
 // ② chrome-headless-shell: distributed with the package, find the executable file path to render.mjs.
 // Both are passed through environment variables (CC_REMOTION_BUNDLE / CC_BROWSER_EXECUTABLE), dev does not set the old behavior.
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { cp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ensureRemotionBinaries } from './remotion-binaries.ts';
@@ -38,8 +38,13 @@ export async function ensureWritableBundle({ resourcesPath, userDataPath, versio
       await rm(join(userDataPath, name), { recursive: true, force: true });
     }
   }
-  if (!existsSync(join(dst, 'index.html'))) {
-    await rm(dst, { recursive: true, force: true });  // Half copy (killed last time) → restart
+  const srcProvenance = join(src, 'chapter-source-provenance.json');
+  const dstProvenance = join(dst, 'chapter-source-provenance.json');
+  const bundleStale = existsSync(srcProvenance) && (
+    !existsSync(dstProvenance) || readFileSync(srcProvenance, 'utf8') !== readFileSync(dstProvenance, 'utf8')
+  );
+  if (!existsSync(join(dst, 'index.html')) || bundleStale) {
+    await rm(dst, { recursive: true, force: true });  // Half copy (killed last time) or updated bundle → refresh
     await cp(src, dst, { recursive: true });
   }
   return dst;

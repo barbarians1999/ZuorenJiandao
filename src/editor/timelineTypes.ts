@@ -5,7 +5,7 @@ import type { TimelineItem } from './clipTypes.js';
 import type { Marker } from './markerTypes.js';
 import type { MediaAsset, MediaAssetKind } from './mediaTypes.js';
 import type { MulticamGroup, TimelineLinkGroup } from './multicamTypes.js';
-import { TRACK_ORDER, type TrackFlags, type TrackId, type TrackKind } from './trackTypes.js';
+import { TRACK_ORDER, type TrackFlags, type TrackId, type TrackKind, type TrackNature } from './trackTypes.js';
 import type { TransitionItem } from './transitionTypes.js';
 
 /** text watermark overlay (updateWatermark — in-app behavior, no precise signature,
@@ -27,7 +27,17 @@ export interface TimelineState {
   height: number;
   /** how items fit when the canvas ratio differs from their design box */
   fit?: AspectFit;
+  /** Enabled by independent adjustment layers; retained if the last layer is removed. */
+  compositingOrder?: 'tracks';
   items: TimelineItem[];
+  /** Editing behavior only. Absent in existing projects: never repack on load. */
+  interaction?: {
+    mainTrackId?: TrackId;
+    magnet?: boolean;
+    linkage?: boolean;
+    snapping?: boolean;
+    linkedKinds?: ('text' | 'video' | 'image' | 'audio' | 'other')[];
+  };
   /** visual top-to-bottom order of stable track ids */
   trackOrder?: TrackId[];
   /** per-track metadata (keyed by stable TrackId; legacy states only have flags) */
@@ -87,6 +97,71 @@ export function trackKind(s: TimelineState, id: TrackId): TrackKind {
   return s.tracks?.[id]?.kind ?? (prefix === 'A' ? 'audio' : prefix === 'C' ? 'caption' : 'video');
 }
 
+/** True when a non-main visual track is dedicated to overlay text clips. */
+export function isTextTrack(s: TimelineState, id: TrackId, mainId?: TrackId | null): boolean {
+  if (trackKind(s, id) !== 'video') return false;
+  const ids = timelineTrackIds(s);
+  const explicitMain = s.interaction?.mainTrackId;
+  const resolvedMain = mainId !== undefined
+    ? mainId
+    : (explicitMain && ids.includes(explicitMain) && trackKind(s, explicitMain) === 'video'
+      ? explicitMain
+      : ids.toReversed().find((candidate) => trackKind(s, candidate) === 'video') ?? null);
+  if (resolvedMain && id === resolvedMain) return false;
+  if (s.tracks?.[id]?.visualRole === 'text') return true;
+  const onTrack = s.items.filter((item) => item.track === id);
+  return onTrack.length > 0 && onTrack.every((item) => item.kind === 'text');
+}
+
+/** True when `id` is a dedicated effects/shapes/MG overlay lane (not main track). */
+export function isEffectTrack(s: TimelineState, id: TrackId, mainId?: TrackId | null): boolean {
+  const ids = timelineTrackIds(s);
+  const explicitMain = s.interaction?.mainTrackId;
+  const resolvedMain = mainId !== undefined
+    ? mainId
+    : (explicitMain && ids.includes(explicitMain) && trackKind(s, explicitMain) === 'video'
+      ? explicitMain
+      : ids.toReversed().find((candidate) => trackKind(s, candidate) === 'video') ?? null);
+  if (resolvedMain && id === resolvedMain) return false;
+  return trackKind(s, id) === 'video' && s.tracks?.[id]?.visualRole === 'effect';
+}
+
+export function isEffectItemKind(kind: TimelineItem['kind']): boolean {
+  return kind === 'solid' || kind === 'mosaic' || kind === 'motion-graphic' || kind === 'gif' || kind === 'svg';
+}
+
+/** Strict track nature used to keep text, effect, video/picture, audio, and caption tracks segregated. */
+export function trackNature(s: TimelineState, id: TrackId, mainId?: TrackId | null): TrackNature {
+  const kind = trackKind(s, id);
+  if (kind !== 'video') return kind;
+  if (isTextTrack(s, id, mainId)) return 'text';
+  if (isEffectTrack(s, id, mainId)) return 'effect';
+  return 'video';
+}
+
+export function itemTrackNature(item: Pick<TimelineItem, 'kind'>): 'audio' | 'text' | 'effect' | 'video' {
+  if (item.kind === 'audio') return 'audio';
+  if (item.kind === 'text') return 'text';
+  if (isEffectItemKind(item.kind)) return 'effect';
+  return 'video';
+}
+
+export function canTrackAcceptItemKind(
+  s: TimelineState,
+  itemKind: TimelineItem['kind'],
+  trackId: TrackId,
+  mainId?: TrackId | null,
+): boolean {
+  if (s.tracks?.[trackId]?.locked) return false;
+  const target = trackNature(s, trackId, mainId);
+  if (target === 'caption') return false;
+  if (itemKind === 'audio') return target === 'audio';
+  if (itemKind === 'text') return target === 'text';
+  if (target === 'text') return false;
+  if (target === 'effect') return isEffectItemKind(itemKind);
+  return target === 'video';
+}
+
 /** Current human alias. Video aliases count bottom-up; audio/caption aliases top-down. */
 export function trackAlias(s: TimelineState, id: TrackId): string {
   const ids = timelineTrackIds(s);
@@ -134,7 +209,13 @@ export function isRasterMediaKind(kind: TimelineItem['kind']): boolean {
 }
 
 export function defaultTrackId(s: TimelineState, kind: TrackKind): TrackId | null {
-  const alias = kind === 'video' ? 'V1' : kind === 'caption' ? 'C1' : 'A1';
+  if (kind === 'video') {
+    const pictureIds = timelineTrackIds(s).filter((id) => trackKind(s, id) === 'video' && !isTextTrack(s, id) && !isEffectTrack(s, id));
+    const alias = resolveTrackId(s, 'V1', 'video');
+    if (alias && !isTextTrack(s, alias) && !isEffectTrack(s, alias)) return alias;
+    return pictureIds.at(-1) ?? null;
+  }
+  const alias = kind === 'caption' ? 'C1' : 'A1';
   return resolveTrackId(s, alias, kind)
     ?? timelineTrackIds(s).find((id) => trackKind(s, id) === kind)
     ?? null;

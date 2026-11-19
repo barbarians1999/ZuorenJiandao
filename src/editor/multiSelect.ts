@@ -1,7 +1,7 @@
 // Multi-select ops: move / remove a set of clips as one undoable step.
 // Used by timeline pointer (group drag), shortcuts (⌫), and clip context menu.
 import {
-  selectedIdsOf, timelineTrackIds, trackKind,
+  canTrackAcceptItemKind, selectedIdsOf, timelineTrackIds, trackKind,
   type TimelineItem, type TimelineState, type TrackId,
 } from './types';
 import { moveLockedItemIds, removeItemsWithGroups } from './linkGroups';
@@ -12,6 +12,20 @@ export function groupMoveIds(state: TimelineState, primaryId: string): string[] 
   const ids = selectedIdsOf(state);
   const seeds = ids.includes(primaryId) && ids.length > 1 ? ids : [primaryId];
   return moveLockedItemIds(state, seeds);
+}
+
+export function selectableItemIdsAtPlayheadSide(
+  state: Pick<TimelineState, 'items' | 'tracks'>,
+  playheadFrame: number,
+  side: 'before' | 'after',
+): string[] {
+  const frame = Math.max(0, Math.round(playheadFrame));
+  return state.items
+    .filter((item) => !state.tracks?.[item.track]?.locked
+      && (side === 'before'
+        ? item.startFrame + item.durationInFrames <= frame
+        : item.startFrame >= frame))
+    .map((item) => item.id);
 }
 
 interface PreparedItemMove {
@@ -27,17 +41,20 @@ function trackDelta(state: TimelineState, shift: { from: TrackId; to: TrackId } 
   return from >= 0 && to >= 0 ? to - from : 0;
 }
 
+/** Dedicated text and effect tracks only accept compatible item kinds across same-kind lanes. */
+export function canItemMoveToTrack(state: TimelineState, item: TimelineItem, targetTrack: TrackId): boolean {
+  if (targetTrack === item.track) return !state.tracks?.[targetTrack]?.locked;
+  if (trackKind(state, targetTrack) !== trackKind(state, item.track)) return false;
+  return canTrackAcceptItemKind(state, item.kind, targetTrack);
+}
+
 function shiftedTrack(state: TimelineState, item: TimelineItem, delta: number): TrackId {
   if (delta === 0) return item.track;
   const order = timelineTrackIds(state);
   const sourceIndex = order.indexOf(item.track);
   if (sourceIndex < 0) return item.track;
   const candidate = order[sourceIndex + delta];
-  return candidate
-    && trackKind(state, candidate) === trackKind(state, item.track)
-    && !state.tracks?.[candidate]?.locked
-    ? candidate
-    : item.track;
+  return candidate && canItemMoveToTrack(state, item, candidate) ? candidate : item.track;
 }
 
 function prepareItemMove(

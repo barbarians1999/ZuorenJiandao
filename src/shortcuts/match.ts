@@ -21,6 +21,11 @@ const ARROW: Record<string, string> = {
   down: '↓',
 };
 
+const CODE_KEY_FALLBACK: Record<string, string> = {
+  BracketLeft: '[',
+  BracketRight: ']',
+};
+
 export function normalizeKey(key: string): string {
   const k = key.length === 1 ? key.toLowerCase() : key.toLowerCase();
   if (k === ' ') return 'space';
@@ -34,8 +39,20 @@ export function normalizeKey(key: string): string {
   if (k === '=' || k === 'equal') return '=';
   if (k === '+' || k === 'add') return '+';
   if (k === '-' || k === 'subtract' || k === 'minus') return '-';
+  if (k === '【') return '[';
+  if (k === '】') return ']';
   if (k.startsWith('arrow')) return k; // arrowleft …
   return k;
+}
+
+function eventShortcutKey(e: Pick<KeyboardEvent, 'key' | 'code' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>): string {
+  const normalized = normalizeKey(e.key);
+  if (normalized === 'process' || normalized === 'unidentified') {
+    if (!e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      return CODE_KEY_FALLBACK[e.code] ?? normalized;
+    }
+  }
+  return normalized;
 }
 
 function tokenToKey(tok: string): string {
@@ -111,6 +128,14 @@ export interface MatchContext {
   hasTextSelection?: boolean;
 }
 
+export function isShortcutImeComposing(event: Pick<KeyboardEvent, 'isComposing' | 'keyCode'>): boolean {
+  return event.isComposing || event.keyCode === 229;
+}
+
+export function shouldIgnoreShortcutRepeat(actionId: string, event: Pick<KeyboardEvent, 'repeat'>): boolean {
+  return actionId === 'toggle-picture' && event.repeat;
+}
+
 /**
  * Return matching action id for this keydown, preferring longer/more-modified chords.
  * `catalog` items need { id, keys, disabledWhenTyping? }.
@@ -123,7 +148,8 @@ export function matchShortcut(
   if (e.repeat) {
     // allow repeat only for seek/nudge — caller can filter; we still match
   }
-  const key = normalizeKey(e.key);
+  const key = eventShortcutKey(e);
+  const codeFallback = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey ? CODE_KEY_FALLBACK[e.code] : undefined;
   if (['shift', 'control', 'alt', 'meta'].includes(key)) return null;
 
   const typing = isTypingTarget(e.target);
@@ -137,9 +163,8 @@ export function matchShortcut(
     if ((action.disabledWhenTyping !== false) && typing) continue;
     const alts = parseBindingAlts(action.keys);
     for (const chord of alts) {
-      if (chord.key !== key && ARROW[key] !== chord.key) {
-        // allow arrowleft vs ← already normalized to arrowleft
-        if (chord.key !== key) continue;
+      if (chord.key !== key && ARROW[key] !== chord.key && (!codeFallback || chord.key !== codeFallback)) {
+        continue;
       }
       // Mod = meta on Mac, ctrl on Windows
       const wantMod = chord.mod;

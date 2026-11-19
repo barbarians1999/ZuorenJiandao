@@ -179,6 +179,20 @@ assert.notEqual(movedPlan.project.timeline_version, plan.project.timeline_versio
 assert.notEqual(movedPlan.plan_fingerprint, plan.plan_fingerprint);
 
 const creativeRevision = structuredClone(plan);
+for (const change of ['mask', 'transition'] as const) {
+  const changed = structuredClone(baseDoc);
+  const active = changed.timelines[0]!;
+  if (change === 'mask') active.items[0]!.mask = { type: 'ellipse', x: 0, y: 0, width: 0.5, height: 1 };
+  else active.transitions = [{ id: 'edge', type: 'cross-dissolve', trackId: 'main',
+    outgoingItemId: 'base-a', incomingItemId: 'base-b', durationInFrames: 12 }];
+  const revised = await buildSharedShotPlan({ doc: changed, generatedAt: plan.generated_at });
+  assert.notEqual(revised.project.timeline_version, plan.project.timeline_version, `${change} must invalidate timeline version`);
+  assert.notEqual(revised.plan_fingerprint, plan.plan_fingerprint, `${change} must invalidate shot plan`);
+  if (change === 'mask') active.items[0]!.mask!.width = 0.75;
+  else active.transitions![0]!.enabled = false;
+  const edited = await buildSharedShotPlan({ doc: changed, generatedAt: plan.generated_at });
+  assert.notEqual(edited.project.timeline_version, revised.project.timeline_version, `${change} parameter edits invalidate version too`);
+}
 (creativeRevision.shots[0]!.animation_handoff as Record<string, unknown>).brief = '数字从左侧进入';
 creativeRevision.plan_fingerprint = await fingerprintSharedShotPlan(creativeRevision);
 assert.equal(creativeRevision.project.timeline_version, plan.project.timeline_version,

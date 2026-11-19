@@ -5,6 +5,7 @@ import { isStableIdentity, newManualCueIdentity } from '../transcript/identity';
 import { normalizeCaptionSourceEntries } from './sourceOrder';
 import { captionStyleFor } from './styles';
 import type { CaptionLayout, CaptionsData, CaptionSourceEntry, CaptionTemplate } from './types';
+import { BASIC_CAPTION_STYLE, basicCaptionPatch } from './basicCaptionStyle';
 
 const DEFAULT_CUE_MS = 3_000;
 const MIN_CUE_MS = 1;
@@ -28,7 +29,8 @@ export function identifyManualCues(words: readonly TranscriptWord[]): Transcript
 export function newManualCaptions(): CaptionsData {
   return {
     enabled: true,
-    template: 'black-bar',
+    ...basicCaptionPatch({ enabled: true, template: 'plain', pacing: 'phrase' }),
+    template: 'plain',
     pacing: 'phrase',
     sourceEntries: [newManualEntry(1)],
     sourceMode: 'item',
@@ -88,7 +90,7 @@ export function appendDroppedManualCaption(
   const entries = promoteCaptionEntries(captions, items);
   const manualCount = entries.filter(isManualCaptionEntry).length;
   const entry = newManualEntry(manualCount + 1);
-  const { id: _id, label: _label, labelZh: _labelZh, hint: _hint, ...style } = captionStyleFor(template);
+  const { id: _id, label: _label, labelZh: _labelZh, hint: _hint, ...style } = template === 'plain' ? BASIC_CAPTION_STYLE : captionStyleFor(template);
   return {
     laneId: entry.id,
     patch: {
@@ -174,16 +176,19 @@ export function resizedManualCueTiming(
   index: number,
   edge: ManualCueEdge,
   deltaMs: number,
+  fps = 30,
 ): Pick<TranscriptWord, 'start' | 'end'> | null {
   const cue = words[index];
   if (!cue || !Number.isFinite(deltaMs)) return null;
   const delta = Math.round(deltaMs);
   if (edge === 'start') {
     const lower = words[index - 1]?.end ?? 0;
-    return { start: Math.min(cue.end - MIN_CUE_MS, Math.max(lower, cue.start + delta)), end: cue.end };
+    const minimumMs = Math.max(MIN_CUE_MS, Math.max(6, Math.round(fps * 0.5)) * 1000 / fps);
+    return { start: Math.min(cue.end - minimumMs, Math.max(lower, cue.start + delta)), end: cue.end };
   }
   const upper = words[index + 1]?.start ?? Number.POSITIVE_INFINITY;
-  return { start: cue.start, end: Math.max(cue.start + MIN_CUE_MS, Math.min(upper, cue.end + delta)) };
+  const minimumMs = Math.max(MIN_CUE_MS, Math.max(6, Math.round(fps * 0.5)) * 1000 / fps);
+  return { start: cue.start, end: Math.max(cue.start + minimumMs, Math.min(upper, cue.end + delta)) };
 }
 
 export function resizeManualCue(
@@ -192,11 +197,66 @@ export function resizeManualCue(
   index: number,
   edge: ManualCueEdge,
   deltaMs: number,
+  fps = 30,
 ): Partial<CaptionsData> | null {
   const words = captions.sourceEntries?.find((entry) => entry.id === laneId && isManualCaptionEntry(entry))?.words;
   const cue = words?.[index];
-  const timing = words ? resizedManualCueTiming(words, index, edge, deltaMs) : null;
+  const timing = words ? resizedManualCueTiming(words, index, edge, deltaMs, fps) : null;
   return cue && timing ? updateManualCue(captions, laneId, index, cue.text, timing.start, timing.end) : null;
+}
+
+export function areCaptionCuesAdjacent(leftEndMs: number, rightStartMs: number, fps = 30): boolean {
+  const gapMs = rightStartMs - leftEndMs;
+  const toleranceMs = Math.max(40, Math.round(1000 / Math.max(1, fps)) + 4);
+  return gapMs >= -toleranceMs && gapMs <= toleranceMs;
+}
+
+export function rolledAdjacentManualCuesTiming(
+  words: readonly TranscriptWord[],
+  leftIndex: number,
+  rightIndex: number,
+  deltaMs: number,
+  fps = 30,
+): { boundaryMs: number; leftStart: number; leftEnd: number; rightStart: number; rightEnd: number } | null {
+  const left = words[leftIndex];
+  const right = words[rightIndex];
+  if (!left || !right || rightIndex !== leftIndex + 1 || !Number.isFinite(deltaMs)) return null;
+  const minimumMs = Math.max(MIN_CUE_MS, Math.max(6, Math.round(fps * 0.5)) * 1000 / fps);
+  const minBoundary = left.start + minimumMs;
+  const maxBoundary = right.end - minimumMs;
+  if (minBoundary > maxBoundary) return null;
+  const baseBoundary = Math.round((left.end + right.start) / 2);
+  const boundaryMs = Math.max(minBoundary, Math.min(maxBoundary, baseBoundary + Math.round(deltaMs)));
+  return {
+    boundaryMs,
+    leftStart: left.start,
+    leftEnd: boundaryMs,
+    rightStart: boundaryMs,
+    rightEnd: right.end,
+  };
+}
+
+export function rollAdjacentManualCues(
+  captions: CaptionsData,
+  laneId: string,
+  leftIndex: number,
+  rightIndex: number,
+  deltaMs: number,
+  fps = 30,
+): Partial<CaptionsData> | null {
+  const entry = captions.sourceEntries?.find((item) => item.id === laneId && isManualCaptionEntry(item));
+  const words = entry?.words;
+  if (!entry || !words) return null;
+  const timing = rolledAdjacentManualCuesTiming(words, leftIndex, rightIndex, deltaMs, fps);
+  if (!timing) return null;
+  const left = words[leftIndex]!;
+  const right = words[rightIndex]!;
+  const nextLeft = manualCue(left.text, timing.leftStart, timing.leftEnd, left.id);
+  const nextRight = manualCue(right.text, timing.rightStart, timing.rightEnd, right.id);
+  if (!nextLeft || !nextRight) return null;
+  return mapManualLane(captions, laneId, (current) => current.map((item, idx) => (
+    idx === leftIndex ? nextLeft : idx === rightIndex ? nextRight : item
+  )));
 }
 
 export function removeManualCue(captions: CaptionsData, laneId: string, index: number): Partial<CaptionsData> {

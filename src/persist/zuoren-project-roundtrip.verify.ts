@@ -91,6 +91,7 @@ function handoffDocument(): ProjectDoc {
       trackOrder: ['V1'],
       items: [item('clip-a', 0, 300, 0), item('clip-b', 360, 300, 30)],
       selectedId: null,
+      selectedIds: [],
     }],
   };
 }

@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { CaptionLayout, CaptionsData, CaptionTemplate } from './types';
 import { captionStyleFor, type CaptionStyle, type CaptionStyleOverride } from './styles';
+import { runtimeFontFamily } from '../../shared/desktop-fonts';
 
 /** Template preset merged with the caption's explicit style override. */
 export function effectivePreset(captions: CaptionsData): CaptionStyle {
@@ -155,7 +156,7 @@ export function captionTypographyStyle(
     preset.underline ? 'underline' : '',
     preset.strike ? 'line-through' : '',
   ].filter(Boolean).join(' ') || 'none';
-  const fontFamily = preset.fontFamily.trim() || 'system-ui';
+  const fontFamily = runtimeFontFamily(preset.fontFamily.trim() || 'system-ui', preset.fontAssetId);
   return {
     fontFamily: `${fontFamily}, system-ui, sans-serif`,
     fontSize: nonNegativeNumber(height) * positiveNumber(preset.fontSize, 0.04),
@@ -203,10 +204,18 @@ function hasLayout(layout: CaptionLayout | undefined): layout is CaptionLayout {
     layout.anchor !== undefined
     || layout.offsetXRatio !== undefined
     || layout.offsetYRatio !== undefined
+    || layout.widthRatio !== undefined
     || layout.scale !== undefined
     || layout.rotation !== undefined
     || layout.opacity !== undefined
   );
+}
+
+function horizontalPaddingForWidthRatio(widthRatio: number | undefined): string {
+  if (typeof widthRatio !== 'number' || !Number.isFinite(widthRatio)) return '0 10%';
+  const clamped = Math.max(0.2, Math.min(0.98, widthRatio));
+  const padPct = Math.max(1, Number((((1 - clamped) * 50)).toFixed(2)));
+  return `0 ${padPct}%`;
 }
 
 export function containerStyle(
@@ -223,7 +232,7 @@ export function containerStyle(
     display: 'flex',
     flexDirection: 'column',
     gap: '0.1em',
-    padding: '0 10%',
+    padding: horizontalPaddingForWidthRatio(layout?.widthRatio),
     ...captionTypographyStyle(preset, height),
   };
   if (!hasLayout(layout)) {

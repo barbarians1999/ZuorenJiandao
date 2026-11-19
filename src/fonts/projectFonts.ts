@@ -2,6 +2,7 @@ import { effectivePreset } from '../captions/renderStyles';
 import type { CaptionsData } from '../captions/types';
 import { captionTrackEntries, type TimelineItem, type TimelineState } from '../editor/types';
 import { ensureFont } from './googleFonts';
+import { ensureReferencedAssetFont } from './assetFonts';
 
 const FONT_PROP_KEYS = new Set([
   'fontFamily', 'fontfamily', 'font_family', 'font', 'headingFont', 'bodyFont', 'titleFont',
@@ -23,6 +24,7 @@ function scanObjectForFonts(obj: unknown, into: Set<string>, depth = 0): void {
   }
   if (typeof obj !== 'object') return;
   for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (key === 'fontFamily' && typeof (obj as Record<string, unknown>).fontAssetId === 'string') continue;
     if (FONT_PROP_KEYS.has(key) || /fontfamily/i.test(key)) pushFamily(into, value);
     else if (value && typeof value === 'object') scanObjectForFonts(value, into, depth + 1);
   }
@@ -44,10 +46,11 @@ function fontsFromItem(item: TimelineItem, into: Set<string>): void {
 function fontsFromCaptions(captions: CaptionsData | null | undefined, into: Set<string>): void {
   if (!captions?.enabled) return;
   const style = effectivePreset(captions);
-  pushFamily(into, style.fontFamily);
+  if (!style.fontAssetId) pushFamily(into, style.fontFamily);
   for (const entry of captions.sourceEntries ?? []) {
-    if (entry.style?.fontFamily) pushFamily(into, entry.style.fontFamily);
+    if (entry.style?.fontFamily && !entry.style.fontAssetId) pushFamily(into, entry.style.fontFamily);
   }
+  for (const font of Object.values(captions.cueFonts ?? {})) if (!font.fontAssetId) pushFamily(into, font.fontFamily);
 }
 
 export function collectReferencedFonts(
@@ -97,8 +100,38 @@ export function collectReferencedFontFaces(state: TimelineState): ProjectFontFac
 }
 
 /** Resolve only when every face used by the active composition is ready. */
-export function loadTimelineFonts(state: TimelineState): Promise<void> {
-  const loads = collectReferencedFontFaces(state)
-    .map(({ family, weight }) => ensureFont(family, weight));
-  return Promise.all(loads).then(() => undefined);
+export function loadTimelineFonts(
+  state: TimelineState,
+  opts?: { tolerateErrors?: boolean },
+): Promise<void> {
+  const loads = [
+    ...collectReferencedFontFaces(state).map(({ family, weight }) => ensureFont(family, weight)),
+    ...collectReferencedFontAssetIds(state).map((id) => ensureReferencedAssetFont(id, state.assets ?? [])),
+  ];
+  if (!opts?.tolerateErrors) return Promise.all(loads).then(() => undefined);
+  return Promise.allSettled(loads).then((results) => {
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        // Interactive preview renders with fallback faces rather than blanking the player canvas.
+        console.warn('[TimelineReadinessGate] font preload degraded in preview:', result.reason);
+      }
+    }
+  });
+}
+
+export function collectReferencedFontAssetIds(state: TimelineState): string[] {
+  const ids = new Set<string>();
+  const scan = (value: unknown, depth = 0): void => {
+    if (!value || typeof value !== 'object' || depth > 10) return;
+    if (Array.isArray(value)) { value.forEach((entry) => scan(entry, depth + 1)); return; }
+    for (const [key, child] of Object.entries(value)) {
+      if (key === 'fontAssetId' && typeof child === 'string' && child) ids.add(child);
+      else if (child && typeof child === 'object') scan(child, depth + 1);
+    }
+  };
+  for (const item of state.items) if (item.kind === 'text' || item.kind === 'motion-graphic') scan(item.props);
+  const captions = captionTrackEntries(state).map((entry) => entry.captions);
+  if (!captions.length && state.captions) captions.push(state.captions);
+  for (const config of captions) if (config?.enabled) scan(config);
+  return [...ids];
 }

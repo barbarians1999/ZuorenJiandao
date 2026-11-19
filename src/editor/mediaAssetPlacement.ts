@@ -1,3 +1,5 @@
+import { resolveMediaSourceRange, type MediaSourceRange } from './mediaSourceRange';
+
 export interface PlaceableMediaAsset {
   id: string;
   durationInFrames: number;
@@ -26,7 +28,8 @@ interface MediaAssetPlacementOptions<TAsset extends PlaceableMediaAsset> {
   assetIds: readonly string[];
   assets: readonly TAsset[];
   startFrame: number;
-  add: (asset: TAsset, startFrame: number) => string;
+  sourceRangeFor?: (asset: TAsset) => MediaSourceRange | undefined;
+  add: (asset: TAsset, startFrame: number, sourceRange?: MediaSourceRange) => string;
   select: (itemIds: string[]) => void;
 }
 
@@ -35,6 +38,7 @@ export function placeMediaAssets<TAsset extends PlaceableMediaAsset>({
   assetIds,
   assets,
   startFrame,
+  sourceRangeFor,
   add,
   select,
 }: MediaAssetPlacementOptions<TAsset>): boolean {
@@ -45,9 +49,11 @@ export function placeMediaAssets<TAsset extends PlaceableMediaAsset>({
   if (!selectedAssets.length) return false;
 
   let nextStartFrame = Math.max(0, Math.round(startFrame));
-  const itemIds = selectedAssets.map((asset) => {
-    const itemId = add(asset, nextStartFrame);
-    nextStartFrame += Math.max(1, asset.durationInFrames);
+  // Resolve the whole batch before dispatching so a stale range cannot add half a batch.
+  const placements = selectedAssets.map((asset) => ({ asset, range: resolveMediaSourceRange(asset, sourceRangeFor?.(asset)) }));
+  const itemIds = placements.map(({ asset, range }) => {
+    const itemId = add(asset, nextStartFrame, range);
+    nextStartFrame += range?.durationInFrames ?? Math.max(1, asset.durationInFrames);
     return itemId;
   });
   select(itemIds);

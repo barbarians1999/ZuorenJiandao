@@ -59,6 +59,7 @@ interface DesktopInferenceApi {
 declare global {
   interface Window {
     openChatCutDesktop?: {
+      fonts?: import('../shared/desktop-fonts').DesktopFontsApi;
       getPathForFile(file: File): string | undefined;
       platform: NodeJS.Platform;
       selectDirectory(defaultPath?: string): Promise<string | null>;
@@ -81,6 +82,7 @@ declare global {
       importAgentPaths(request: AgentPathImportRequest): Promise<AgentPathImportResult>;
       subscribeImportDirectory(listener: (event: DirectoryImportEvent) => void): () => void;
       windowAction(action: 'close' | 'minimize' | 'toggle-maximize' | 'apply-ui-scale'): Promise<void>;
+      setTitlebarAppearance?(value: { color: string; symbolColor: string; height: number }): Promise<void>;
       zoomStep(step: number | 'reset'): Promise<void>;
       subscribeUiScale(listener: (scale: number) => void): () => void;
       openTranscriptWindow(payload: TranscriptWindowPayload): Promise<void>;

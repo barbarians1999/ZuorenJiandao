@@ -179,4 +179,24 @@ assert.deepEqual(
   'preview and subtitle export consume the same lane-aware pages',
 );
 
+// Verify activeCaptionPages caching and correct lookup
+const { activeCaptionPages, hasCaptionCueStartedAt } = await import('./captionPages');
+const activeAtZero = activeCaptionPages(reorderedLanePages, 0);
+assert.equal(activeAtZero.length > 0, true, 'activeCaptionPages finds active page at 0ms');
+const activeAtLate = activeCaptionPages(reorderedLanePages, 999999);
+assert.equal(activeAtLate.length, 0, 'activeCaptionPages returns empty when beyond all pages');
+
+const basePage = { laneOrder: 0, srcIdxs: [] as number[], wordRefs: [], manual: false };
+const boundaryPages = [
+  { ...basePage, id: 'p1', laneId: 'lane', page: { start: 0, end: 1000, words: [{ text: '前一句', start: 0, end: 1000 }] } },
+  { ...basePage, id: 'p2', laneId: 'lane', page: { start: 1000, end: 2000, words: [{ text: '后一句', start: 1000, end: 2000 }] } },
+];
+assert.equal(activeCaptionPages(boundaryPages, 1000, 30)[0]?.id, 'p2', 'exact boundary activates following subtitle');
+const frameEdgePages = [
+  { ...basePage, id: 'f1', laneId: 'lane', page: { start: 0, end: 999, words: [{ text: '第一帧段', start: 0, end: 999 }] } },
+  { ...basePage, id: 'f2', laneId: 'lane', page: { start: 1001, end: 2000, words: [{ text: '下一帧段', start: 1001, end: 2000 }] } },
+];
+assert.equal(hasCaptionCueStartedAt(1001, 1000, 30, 999), true, 'frame-rounded cut activates adjacent cue at boundary');
+assert.equal(activeCaptionPages(frameEdgePages, 1000, 30)[0]?.id, 'f2', 'playhead at cut frame prefers following cue');
+
 console.log('caption pagination check passed');

@@ -20,6 +20,9 @@ import circleWipe from './shaders/circle-wipe.frag?raw';
 import radialBlur from './shaders/radial-blur.frag?raw';
 import glitchCut from './shaders/glitch-cut.frag?raw';
 import dipToColor from './shaders/dip-to-color.frag?raw';
+import mosaicReveal from './shaders/mosaic-reveal.frag?raw';
+import blindsReveal from './shaders/blinds-reveal.frag?raw';
+import splitSlide from './shaders/split-slide.frag?raw';
 
 export interface GlslTransitionDef {
   frag: string;
@@ -28,6 +31,9 @@ export interface GlslTransitionDef {
 }
 
 export const GLSL_TRANSITIONS: Record<GlslTransitionType, GlslTransitionDef> = {
+  'mosaic-reveal': { frag: mosaicReveal, uniforms: () => ({}) },
+  'blinds-reveal': { frag: blindsReveal, uniforms: ({ direction }) => ({ u_axis: direction === 'up' || direction === 'down' ? [0, 1] : [1, 0] }) },
+  'split-slide': { frag: splitSlide, uniforms: ({ direction }) => ({ u_axis: direction === 'up' || direction === 'down' ? [0, 1] : [1, 0] }) },
   'cross-dissolve': {
     frag: crossDissolve,
     uniforms: () => ({ u_easingAmount: 1 }),

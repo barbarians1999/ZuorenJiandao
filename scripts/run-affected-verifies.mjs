@@ -10,13 +10,13 @@
 //   npm run verify:affected            — all working-tree changes vs HEAD
 //   npm run verify:affected -- <file>… — explicit files
 //   npm run verify:affected -- --list <file>… — inspect without executing tests
-import { exec, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { runVerification } from './verification-runner.mjs';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
-const CONCURRENCY = Math.max(1, Math.min(8, Math.floor(Number(process.env.TEST_CONCURRENCY)) || 4));
 const SOURCE_EXTENSION = /\.(?:tsx|mts|cjs|mjs|ts|js|frag|vert|glsl)$/;
 const VERIFY_EXTENSION = /\.verify\.(?:tsx|mts|cjs|mjs|ts|js)$/;
 const FULL_GATE = /^(?:package(?:-lock)?\.json$|npm-shrinkwrap\.json$|tsconfig(?:\.[^/]+)?\.json$|config\/|shared\/|assets\/|public\/|\.github\/)/;
@@ -75,25 +75,10 @@ export function matchingVerifies(changedFiles) {
   return affectedSelection(changedFiles).verifies;
 }
 
-// How each verify is invoked is already decided in package.json, and not every
-// one is `tsx <file>`: the suites whose import graph reaches a Vite-only `?raw`
-// or `.frag` import run through scripts/run-check.mjs, and .mjs suites run on
-// bare node. Reading those commands back means this runner cannot drift from
-// the suite — guessing `npx tsx` failed effect-tools and library-edit-item.
-const CANONICAL_COMMANDS = (() => {
-  const scripts = JSON.parse(
-    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
-  ).scripts;
-  const byFile = new Map();
-  for (const script of Object.values(scripts)) {
-    if (typeof script !== 'string') continue;
-    for (const segment of script.split('&&').map((s) => s.trim())) {
-      const path = /(\S+\.verify\.(?:tsx|mts|cjs|mjs|ts|js))\s*$/.exec(segment)?.[1];
-      if (path && !byFile.has(path)) byFile.set(path, segment);
-    }
-  }
-  return byFile;
-})();
+// Runtime-specific launchers come from the same explicit inventory as npm test.
+const CANONICAL_COMMANDS = new Map(JSON.parse(
+  readFileSync(new URL('./verification-manifest.json', import.meta.url), 'utf8'),
+).items.filter(item => item.file).map(item => [item.file, item.command]));
 
 /** The command the suite itself uses, falling back to the usual runner. */
 export function verifyCommand(file) {
@@ -122,41 +107,8 @@ async function main() {
 }
 
 async function runSelected(verifies) {
-  console.log(`Running ${verifies.length} affected verifies (${CONCURRENCY} parallel):`);
-  if (verifies.length > 40) {
-    // Say so rather than trimming the selection: the caller can interrupt, and
-    // a quietly trimmed run is what made this tool untrustworthy before.
-    console.log('  (large selection — a changed file with no per-file verify pulls in its whole directory)');
-  }
-  const started = Date.now();
-  const results = [];
-  let cursor = 0;
-  const workers = Array.from({ length: CONCURRENCY }, async () => {
-    while (cursor < verifies.length) {
-      const file = verifies[cursor];
-      cursor += 1;
-      const result = await new Promise((resolve) => {
-        exec(verifyCommand(file), { maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => {
-          resolve({ file, error, output: [stdout.slice(-1200), stderr.slice(-1200)].filter(Boolean).join('\n') });
-        });
-      });
-      process.stdout.write(`${result.error ? '❌' : '✅'} ${result.file}\n`);
-      results.push(result);
-    }
-  });
-  await Promise.all(workers);
-  const failed = results.filter((r) => r.error);
-  const elapsed = ((Date.now() - started) / 1000).toFixed(1);
-  if (failed.length === 0) {
-    console.log(`\n✓ ${results.length} affected verifies passed in ${elapsed}s`);
-    process.exit(0);
-  }
-  console.log(`\n✗ ${failed.length}/${results.length} failed in ${elapsed}s:`);
-  for (const f of failed) {
-    console.log(`\n--- ${f.file} ---`);
-    console.log(f.output);
-  }
-  process.exit(1);
+  if (verifies.length > 40) console.log('Large affected selection; every selected verify remains included.');
+  await runVerification([`--files=${verifies.join(',')}`]);
 }
 
 // Only run when invoked directly, so the verify can import the matcher.

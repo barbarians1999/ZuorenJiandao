@@ -11,12 +11,13 @@ import type { Plugin } from 'vite';
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createReadStream } from 'node:fs';
-import { rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { copyFile, mkdir, rm, stat } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import {
   ASR_MODELS,
   asrModelEntry,
   type AsrDownloadTask,
+  type GgmlAsrModelFile,
   type AsrModelEntry,
   type AsrModelFile,
 } from '../../shared/asr-models.ts';
@@ -30,6 +31,15 @@ const inspections = new Map<string, {
   fingerprint: string;
   result: { downloaded: boolean; bytes: number };
 }>();
+
+export function asrGgmlCachePath(cacheDir: string, fileName: string): string {
+  return join(cacheDir, 'ggml', fileName);
+}
+
+/** Cache path created by earlier versions when the GGML destination was omitted. */
+export function legacyAsrGgmlCachePath(cacheDir: string, fileName: string): string {
+  return join(cacheDir, 'ggerganov', 'whisper.cpp', fileName);
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   if (res.destroyed || res.writableEnded) return;
@@ -125,7 +135,7 @@ export async function inspectAsrModel(
   throwIfAborted(signal);
   const stats: string[] = [];
   const ggmlPath = entry.ggmlFile
-    ? join(cacheDir, 'ggml', entry.ggmlFile.fileName)
+    ? asrGgmlCachePath(cacheDir, entry.ggmlFile.fileName)
     : undefined;
   const checkedFiles: Array<{ path: string; sizeBytes: number; sha256: string }> = [
     ...entry.files.map((file) => ({
@@ -161,6 +171,39 @@ export async function inspectAsrModel(
   ) + (entry.ggmlFile ? entry.ggmlFile.sizeBytes : 0) : 0 };
   inspections.set(key, { fingerprint, result });
   return result;
+}
+
+/** Install the desktop GGML companion in the same path used by inspection and inference. */
+export async function ensureGgmlAsrModelFile(
+  file: GgmlAsrModelFile,
+  cacheDir: string,
+  download: typeof downloadModelFile = downloadModelFile,
+): Promise<void> {
+  const destinationPath = asrGgmlCachePath(cacheDir, file.fileName);
+  const expected = { path: destinationPath, sizeBytes: file.sizeBytes, sha256: file.sha256 };
+  if (await modelFileVerified(destinationPath, expected)) return;
+  await rm(destinationPath, { force: true });
+
+  // Earlier builds omitted downloadModelFile's destinationPath argument, so
+  // the companion landed under its repository name instead of cacheDir/ggml.
+  // Reuse it only after the same strict size + SHA-256 check as normal installs.
+  const legacyPath = legacyAsrGgmlCachePath(cacheDir, file.fileName);
+  if (await modelFileVerified(legacyPath, { ...expected, path: legacyPath })) {
+    await mkdir(dirname(destinationPath), { recursive: true });
+    await copyFile(legacyPath, destinationPath);
+    if (await modelFileVerified(destinationPath, expected)) return;
+    await rm(destinationPath, { force: true });
+    throw new Error('Existing GGML model failed verification after cache repair');
+  }
+
+  await download(
+    { modelId: 'ggerganov/whisper.cpp', revision: file.revision, filePath: file.fileName },
+    destinationPath,
+    { expectedBytes: file.sizeBytes, expectedSha256: file.sha256 },
+  );
+  if (!await modelFileVerified(destinationPath, expected)) {
+    throw new Error('Downloaded GGML model failed integrity verification');
+  }
 }
 
 function catalogState(): Promise<Array<{
@@ -218,16 +261,7 @@ async function startDownload(id: string): Promise<AsrDownloadTask> {
         task.bytesDone += file.sizeBytes;
       }
       if (ggml) {
-        const ggmlPath = join(modelCacheDir(), 'ggml', ggml.fileName);
-        const ggmlFile = { path: ggmlPath, sizeBytes: ggml.sizeBytes, sha256: ggml.sha256 };
-        if (!(await modelFileVerified(ggmlPath, ggmlFile))) {
-          await rm(ggmlPath, { force: true });
-          await downloadModelFile(
-            { modelId: 'ggerganov/whisper.cpp', revision: ggml.revision, filePath: ggml.fileName },
-            undefined,
-            { expectedBytes: ggml.sizeBytes, expectedSha256: ggml.sha256 },
-          );
-        }
+        await ensureGgmlAsrModelFile(ggml, modelCacheDir());
         task.filesDone += 1;
         task.bytesDone += ggml.sizeBytes;
       }
@@ -247,7 +281,8 @@ async function deleteModel(id: string): Promise<boolean> {
   if (task?.status === 'downloading') throw new Error(`model ${id} is downloading`);
   await rm(join(modelCacheDir(), entry.modelId), { recursive: true, force: true });
   if (entry.ggmlFile) {
-    await rm(join(modelCacheDir(), 'ggml', entry.ggmlFile.fileName), { force: true });
+    await rm(asrGgmlCachePath(modelCacheDir(), entry.ggmlFile.fileName), { force: true });
+    await rm(legacyAsrGgmlCachePath(modelCacheDir(), entry.ggmlFile.fileName), { force: true });
   }
   tasks.delete(id);
   inspections.delete(`${modelCacheDir()}\0${entry.modelId}`);

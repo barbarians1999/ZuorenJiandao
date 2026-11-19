@@ -6,4 +6,6 @@ assert.deepEqual(EMPTY_PROJECT_STARTERS.map((entry) => entry.label), labels);
 assert.deepEqual(QUICK_ACTIONS.map((entry) => entry.label), labels);
 assert.ok(EMPTY_PROJECT_STARTERS.every((entry) => entry.prompt.includes('当前工程')));
 assert.ok(QUICK_ACTIONS.every((entry) => entry.prompt.includes('当前工程')));
+assert.deepEqual(EMPTY_PROJECT_STARTERS.map((entry) => entry.action), ['prompt', 'prompt', 'open-paste-transcript']);
+assert.deepEqual(QUICK_ACTIONS.map((entry) => entry.action), ['prompt', 'prompt', 'open-paste-transcript']);
 console.log('chatPanelPresets.verify: focused starters are limited to three core actions');

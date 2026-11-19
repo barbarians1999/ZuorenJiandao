@@ -43,6 +43,7 @@ import {
 import {
   cleanupExportOutputs,
   exportCapabilities,
+  exportRouteCapabilities,
   h264RenderOptions,
   renderExportPlan,
   renderTimeline,
@@ -215,6 +216,17 @@ export function registerExportJobRoute(server: ViteDevServer): void {
 
 export function registerExportRoute(server: ViteDevServer): void {
   server.middlewares.use('/export', async (req, res) => {
+    if (req.method === 'POST' && isExportCapabilitiesPath(req.url)) {
+      const abort = bindRequestAbort(req, res);
+      try {
+        const body = await readJsonBody(req) as ExportRequest | null;
+        const signal = AbortSignal.any([abort.controller.signal, AbortSignal.timeout(15000)]);
+        sendJson(res, 200, await exportRouteCapabilities(body, signal));
+      } catch (error) {
+        if (!abort.controller.signal.aborted) sendError(res, 400, error instanceof Error ? error.message : String(error));
+      } finally { abort.dispose(); }
+      return;
+    }
     if (req.method === 'GET' && isExportCapabilitiesPath(req.url)) {
       try {
         sendJson(res, 200, await exportCapabilities());

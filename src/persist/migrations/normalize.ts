@@ -17,6 +17,8 @@ import { isSourceClockMetadata } from '../../editor/timecode.js';
 import { withMediaSourceRevision } from '../../editor/mediaSourceRevision.js';
 import { normalizeSha256Hash } from '../../../shared/content-hash.js';
 import { safeSourceFilename, stripInvalidXml10Characters } from '../../media/sourceFilename.js';
+import { fontAssetMetadata } from '../../../shared/desktop-fonts.js';
+import { parseCompositionMosaic } from '../../editor/compositionMosaic.js';
 
 export type LooseProjectShape = {
   version?: unknown;
@@ -28,6 +30,7 @@ export type LooseProjectShape = {
 };
 
 const ITEM_KINDS: Record<TimelineItem['kind'], true> = {
+  mosaic: true,
   'motion-graphic': true,
   audio: true,
   video: true,
@@ -104,7 +107,7 @@ function normalizeSourceMetadata<T extends object>(value: T): T {
 function isMediaAssetKind(
   kind: TimelineItem['kind'],
 ): kind is Extract<MediaAsset['kind'], TimelineItem['kind']> {
-  return kind !== 'text' && kind !== 'solid' && kind !== 'sequence';
+  return kind !== 'text' && kind !== 'solid' && kind !== 'sequence' && kind !== 'mosaic';
 }
 
 function normalizeTimelineMediaItem(item: TimelineItem): TimelineItem {
@@ -153,13 +156,15 @@ export function isTimelineItem(value: unknown): value is TimelineItem {
     && (item.backgroundFillStrength === undefined || isBackgroundFillStrength(item.backgroundFillStrength))
     && (legacyPreset === undefined || isLegacyBackgroundFillPreset(legacyPreset))
     && (item.sourceAssetId === undefined || typeof item.sourceAssetId === 'string')
-    && (item.kind !== 'sequence' || (typeof item.timelineId === 'string' && item.timelineId.length > 0));
+    && (item.kind !== 'sequence' || (typeof item.timelineId === 'string' && item.timelineId.length > 0))
+    && (item.kind !== 'mosaic' || parseCompositionMosaic(item.mosaic) !== null);
 }
 
 export function isTimelineState(value: unknown): value is TimelineState {
   if (!value || typeof value !== 'object') return false;
   const state = value as Partial<TimelineState>;
   return Array.isArray(state.items) && state.items.every(isTimelineItem)
+    && (state.compositingOrder === undefined || state.compositingOrder === 'tracks')
     && finite(state.fps) && state.fps > 0;
 }
 
@@ -185,7 +190,8 @@ export function isMediaAsset(value: unknown): value is MediaAsset {
     && (asset.kind === 'video' || asset.kind === 'image' || asset.kind === 'audio'
       || asset.kind === 'motion-graphic' || asset.kind === 'document' || asset.kind === 'file')
     && typeof asset.src === 'string'
-    && finite(asset.durationInFrames) && asset.durationInFrames > 0
+    && finite(asset.durationInFrames)
+    && (asset.durationInFrames > 0 || asset.durationInFrames === 0 && fontAssetMetadata(asset) !== null)
     && (asset.kind !== 'motion-graphic' || typeof asset.code === 'string');
 }
 
@@ -259,7 +265,7 @@ function isLinkGroup(value: unknown, itemIds: ReadonlySet<string>): value is Tim
   if (!value || typeof value !== 'object') return false;
   const group = value as Partial<TimelineLinkGroup>;
   return typeof group.id === 'string' && !!group.id
-    && (group.mode === 'linked' || group.mode === 'sync-lock')
+    && (group.mode === 'linked' || group.mode === 'sync-lock' || group.mode === 'group')
     && Array.isArray(group.itemIds)
     && group.itemIds.length >= 2
     && new Set(group.itemIds).size === group.itemIds.length
@@ -371,9 +377,30 @@ export function normalizeTimelineGroups(timeline: Timeline): Timeline {
   };
 }
 
+/** Optional interaction settings never change clip geometry during migration. */
+function normalizeTimelineInteraction(timeline: Timeline): Timeline {
+  const raw = timeline.interaction;
+  const validKinds = ['text', 'video', 'image', 'audio', 'other'] as const;
+  const interaction: Timeline['interaction'] = raw && typeof raw === 'object' ? {
+    ...(typeof raw.mainTrackId === 'string' && timelineTrackIds(timeline).includes(raw.mainTrackId)
+      && trackKind(timeline, raw.mainTrackId) === 'video' ? { mainTrackId: raw.mainTrackId } : {}),
+    ...(typeof raw.magnet === 'boolean' ? { magnet: raw.magnet } : {}),
+    ...(typeof raw.linkage === 'boolean' ? { linkage: raw.linkage } : {}),
+    ...(typeof raw.snapping === 'boolean' ? { snapping: raw.snapping } : {}),
+    ...(Array.isArray(raw.linkedKinds) ? { linkedKinds: [...new Set(raw.linkedKinds.filter((kind) => validKinds.includes(kind)))] } : {}),
+  } : undefined;
+  const ids = new Set(timeline.items.map((item) => item.id));
+  const items = timeline.items.map((item) => item.mainClipId === undefined
+    || (typeof item.mainClipId === 'string' && item.mainClipId !== item.id && ids.has(item.mainClipId))
+    ? item : { ...item, mainClipId: undefined });
+  return { ...timeline, items, ...(raw === undefined ? {} : { interaction }) };
+}
+
 /** V3 uses stable track ids instead of display aliases such as V1/A1. */
 export function normalizeTimelineTracks(timeline: Timeline): Timeline {
-  const clean = stripTimelineAssets(normalizeTimelineSourceFilenames(timeline));
+  const normalized = stripTimelineAssets(normalizeTimelineSourceFilenames(normalizeTimelineInteraction(timeline)));
+  const clean = normalized.compositingOrder !== 'tracks' && normalized.items.some((item) => item.kind === 'mosaic')
+    ? { ...normalized, compositingOrder: 'tracks' as const } : normalized;
   const ids = timelineTrackIds(clean);
   const alreadyStable = !!clean.trackOrder?.length
     && !ids.some((id) => /^[CVA]\d+$/i.test(id))
@@ -389,6 +416,9 @@ export function normalizeTimelineTracks(timeline: Timeline): Timeline {
     ...clean,
     trackOrder,
     tracks,
+    ...(clean.interaction ? { interaction: { ...clean.interaction,
+      mainTrackId: clean.interaction.mainTrackId ? remap.get(clean.interaction.mainTrackId) ?? clean.interaction.mainTrackId : undefined,
+    } } : {}),
     items: clean.items.map((item) => ({ ...item, track: remap.get(item.track) ?? item.track })),
     transitions: clean.transitions?.map((transition) => ({
       ...transition,

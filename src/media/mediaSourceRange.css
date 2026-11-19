@@ -1,0 +1,22 @@
+.cc-source-range { flex: 0 0 auto; min-width: 0; margin: 8px; padding: 12px; border: 1px solid var(--cc-border, #555); border-radius: 8px; background: var(--cc-panel, #181818); color: var(--cc-text, #eee); font-size: 14px; max-height: 56vh; overflow: auto; }
+.cc-source-range header, .cc-source-range-playback, .cc-source-range-actions { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.cc-source-range header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.cc-source-range button { min-height: 32px; padding: 5px 9px; font-size: 14px; line-height: 1.3; border: 1px solid var(--cc-border, #666); border-radius: 5px; color: inherit; background: transparent; cursor: pointer; }
+.cc-source-range button:focus-visible, .cc-source-range input:focus-visible { outline: 2px solid var(--cc-accent, #dfb85a); outline-offset: 2px; }
+.cc-source-range video { display: block; width: 100%; height: 130px; object-fit: contain; margin: 8px 0; background: #000; }
+.cc-source-range video.is-audio { height: 0; margin: 0; }
+.cc-source-audio-label { margin: 10px 0; }
+.cc-source-range-playback { margin-top: 8px; flex-wrap: wrap; }
+.cc-source-range output, .cc-source-range p { font-variant-numeric: tabular-nums; font-size: 14px; }
+.cc-source-range .cc-source-scrubber { width: 100%; margin: 10px 0; accent-color: var(--cc-accent, #dfb85a); }
+.cc-source-range-marks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.cc-source-range-marks label { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.cc-source-range-marks label span { display: flex; align-items: center; gap: 4px; }
+.cc-source-range input[type=number] { width: 100%; min-width: 0; height: 32px; color: inherit; background: transparent; border: 1px solid var(--cc-border, #666); border-radius: 4px; padding: 4px 6px; font-size: 14px; }
+.cc-source-range-actions { flex-wrap: wrap; justify-content: flex-start; }
+.cc-source-range .cc-source-range-add { border-color: var(--cc-accent, #dfb85a); cursor: grab; font-weight: 600; }
+.cc-source-range small { display: block; margin-top: 8px; font-size: 14px; line-height: 1.5; }
+.cc-source-range-error { margin-top: 8px; color: #f09889; }
+.cc-asset-source-range { position: absolute; z-index: 3; left: 4px; top: 4px; padding: 3px 6px; border: 1px solid #999; border-radius: 4px; background: #111e; color: #fff; font-size: 14px; line-height: 18px; cursor: pointer; }
+.cc-asset-source-range.is-marked { color: #ffe092; border-color: #ffe092; }
+.cc-media-grid.list .cc-asset-source-range { position: static; flex-shrink: 0; margin-right: 4px; }

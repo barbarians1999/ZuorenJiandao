@@ -35,4 +35,7 @@ assert.match(transformSource, /label: '裁上'/, 'Transform 分组应有裁上')
 assert.match(transformSource, /label: '裁下'/, 'Transform 分组应有裁下');
 assert.match(transformSource, /CROP_ROWS\.map/, '四边裁切应排在关键帧行之后');
 
+const captionSource = readFileSync(new URL('./CaptionInspectorControls.tsx', import.meta.url), 'utf8');
+assert.match(captionSource, /<div className="cc-insp-body">\s*<div className="cc-insp-groups" data-caption-inspector="true">/s, '字幕属性应包裹在可纵向滚动的 cc-insp-body 容器中');
+
 console.log('inspector-controls.verify: ok');

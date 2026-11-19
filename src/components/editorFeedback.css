@@ -1,0 +1,12 @@
+.cc-save-feedback { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; white-space: nowrap; }
+.cc-save-feedback .cc-save-status { font-size: 14px; color: var(--cc-text-muted); }
+.cc-save-feedback--saving .cc-save-status { color: var(--cc-text-dim); }
+.cc-save-feedback--error .cc-save-status { color: var(--cc-accent); }
+.cc-save-retry { border: 1px solid currentColor; background: transparent; color: var(--cc-accent); border-radius: 5px; padding: 4px 8px; font: inherit; font-size: 14px; cursor: pointer; }
+.cc-save-retry:hover { background: color-mix(in srgb, var(--cc-accent) 12%, transparent); }
+.cc-save-retry:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
+.cc-timeline-clip.is-linked-follower:not(.is-selected) { outline: 2px dashed var(--cc-accent); outline-offset: -2px; }
+.cc-timeline-clip.is-linked-follower.is-link-blocked:not(.is-selected) { outline-style: dotted; }
+.cc-clip-attachment { position: absolute; top: 3px; left: 8px; z-index: 4; display: inline-flex; align-items: center; gap: 3px; padding: 2px 5px; max-width: calc(100% - 16px); overflow: hidden; color: white; background: #181818e6; border-radius: 3px; font-size: 14px; line-height: 1.2; pointer-events: none; }
+.cc-clip-attachment.is-active { background: var(--cc-accent); color: var(--cc-on-accent); }
+.cc-clip-attachment.is-blocked { border: 1px dotted currentColor; }

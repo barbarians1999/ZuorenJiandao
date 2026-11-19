@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { SOUND_EFFECTS } from '../audio/soundLibrary';
 import { sourceFramesToTimelineFrames, timelineFramesToSourceFrames } from '../editor/sourceLimit';
 
 // Timeline clip previews: waveform peaks and video thumbnail strips. The server generates and caches
@@ -8,6 +9,13 @@ import { sourceFramesToTimelineFrames, timelineFramesToSourceFrames } from '../e
 
 export type ClipPreviewLoadStatus = 'ready' | 'failed' | 'not-requested';
 
+export interface FilmstripMetadata {
+  frameCount: number;
+  cellWidth: number;
+  cellHeight: number;
+  durationMs: number;
+}
+
 export interface ClipPreview {
   /** 0..1 amplitude envelope, peaksPerSecond per second; no audio track is an empty array */
   peaks: number[];
@@ -16,6 +24,8 @@ export interface ClipPreview {
   durationMs: number;
   /** Video frame bar URL (video only; not ready/null on failure) */
   stripUrl: string | null;
+  /** Source geometry of the strip sprite, used to keep timeline frames in proportion. */
+  stripMetadata?: FilmstripMetadata;
   waveformStatus: Exclude<ClipPreviewLoadStatus, 'not-requested'>;
   filmstripStatus: ClipPreviewLoadStatus;
   waveformError?: string;
@@ -46,7 +56,10 @@ function evictIdlePreviews(): void {
     if (!entry.listeners.size && !entry.promise) idle.push(key);
   }
   for (const key of idle.slice(0, Math.max(0, idle.length - MAX_IDLE_PREVIEW_ENTRIES))) {
-    entries.get(key)?.controller?.abort();
+    const entry = entries.get(key);
+    entry?.controller?.abort();
+    const stripUrl = entry?.value?.stripUrl;
+    if (stripUrl?.startsWith('blob:')) URL.revokeObjectURL(stripUrl);
     entries.delete(key);
   }
 }
@@ -54,6 +67,50 @@ function evictIdlePreviews(): void {
 /** Only local assets can be previewed (blob:/remote URL server cannot reach) */
 export function isPreviewable(src: string | undefined): src is string {
   return !!src && src.startsWith('/media/uploads/');
+}
+
+const SOUND_EFFECT_BY_ID = new Map(SOUND_EFFECTS.map((entry) => [entry.id, entry]));
+
+export function resolvePeaksPerSecond(
+  peaks: readonly number[],
+  rawPeaksPerSecond: number | undefined,
+  durationMs: number | undefined,
+): number {
+  const fallback = rawPeaksPerSecond && rawPeaksPerSecond > 0 ? rawPeaksPerSecond : 100;
+  if (!peaks.length || !durationMs || !Number.isFinite(durationMs) || durationMs <= 0) return fallback;
+  const seconds = durationMs / 1000;
+  const actual = peaks.length / seconds;
+  const expected = fallback * seconds;
+  if (Math.abs(peaks.length - expected) > Math.max(8, peaks.length * 0.02)) {
+    return actual;
+  }
+  return fallback;
+}
+
+export function soundEffectPreview(src: string | undefined): ClipPreview | null {
+  if (!src) return null;
+  const match = src.match(/^\/sound-effects\/([^/?#]+)\.mp3(?:[?#].*)?$/i);
+  if (!match?.[1]) return null;
+  const sound = SOUND_EFFECT_BY_ID.get(match[1]);
+  if (!sound || !sound.peaks.length) return null;
+  const durationMs = Math.max(1, Math.round(sound.seconds * 1000));
+  return {
+    peaks: sound.peaks,
+    peaksPerSecond: sound.peaks.length / Math.max(0.001, sound.seconds),
+    durationMs,
+    stripUrl: null,
+    waveformStatus: 'ready',
+    filmstripStatus: 'not-requested',
+  };
+}
+
+function isBrowserAudioPreviewable(src: string | undefined, kind: string): boolean {
+  if (kind !== 'audio' || !src || src.startsWith('/media/uploads/') || soundEffectPreview(src)) return false;
+  return src.startsWith('blob:') || (src.startsWith('/') && !src.startsWith('//'));
+}
+
+export function hasRealWavePreviewSource(src: string | undefined, kind: string): boolean {
+  return isPreviewable(src) || !!soundEffectPreview(src) || isBrowserAudioPreviewable(src, kind);
 }
 
 function entryFor(key: string): Entry {
@@ -70,7 +127,7 @@ type WaveResult = {
   error?: string;
 };
 
-type StripResult = { url: string | null; error?: string };
+type StripResult = { url: string | null; metadata?: FilmstripMetadata; error?: string };
 
 async function responseError(response: Response): Promise<string> {
   const body = await response.json().catch(() => null) as { error?: unknown } | null;
@@ -92,14 +149,88 @@ async function fetchFilmstrip(query: string, signal: AbortSignal): Promise<Strip
   try {
     const url = `/api/filmstrip?${query}`;
     const response = await fetch(url, { signal });
-    return response.ok ? { url } : { url: null, error: await responseError(response) };
+    if (!response.ok) return { url: null, error: await responseError(response) };
+    const metadata = {
+      frameCount: Number(response.headers.get('X-Filmstrip-Frame-Count')),
+      cellWidth: Number(response.headers.get('X-Filmstrip-Cell-Width')),
+      cellHeight: Number(response.headers.get('X-Filmstrip-Cell-Height')),
+      durationMs: Number(response.headers.get('X-Filmstrip-Duration-Ms')),
+    };
+    const valid = Object.values(metadata).every(Number.isFinite)
+      && metadata.frameCount > 0 && metadata.cellWidth > 0
+      && metadata.cellHeight > 0 && metadata.durationMs > 0;
+    const imageUrl = URL.createObjectURL(await response.blob());
+    return { url: imageUrl, ...(valid ? { metadata } : {}) };
   } catch (error) {
     if (signal.aborted) throw error;
     return { url: null, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
+async function loadBrowserAudioPeaks(src: string, signal: AbortSignal): Promise<WaveResult & { durationMs: number }> {
+  let ctx: AudioContext | null = null;
+  try {
+    const response = await fetch(src, { signal });
+    if (!response.ok) return { data: null, durationMs: 0, error: `request failed (${response.status})` };
+    const buffer = await response.arrayBuffer();
+    if (signal.aborted) return { data: null, durationMs: 0 };
+    const AudioCtx = globalThis.AudioContext || (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return { data: null, durationMs: 0, error: 'AudioContext unavailable' };
+    ctx = new AudioCtx();
+    const decoded = await ctx.decodeAudioData(buffer);
+    const durationMs = Math.max(1, Math.round(decoded.duration * 1000));
+    const bins = Math.max(16, Math.min(24_000, Math.round(decoded.duration * 100)));
+    const totalSamples = decoded.length;
+    const channels = Array.from({ length: decoded.numberOfChannels }, (_, c) => decoded.getChannelData(c));
+    const peaks: number[] = [];
+    for (let i = 0; i < bins; i += 1) {
+      const lo = Math.floor((i / bins) * totalSamples);
+      const hi = Math.max(lo + 1, Math.floor(((i + 1) / bins) * totalSamples));
+      const stride = Math.max(1, Math.floor((hi - lo) / 64));
+      let max = 0;
+      for (let c = 0; c < channels.length; c += 1) {
+        const data = channels[c]!;
+        for (let s = lo; s < hi; s += stride) {
+          const v = Math.abs(data[s] ?? 0);
+          if (v > max) max = v;
+        }
+      }
+      peaks.push(Math.round(Math.min(1, max) * 1000) / 1000);
+    }
+    return {
+      durationMs,
+      data: {
+        peaks,
+        peaksPerSecond: peaks.length / Math.max(0.001, decoded.duration),
+        durationMs,
+      },
+    };
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return { data: null, durationMs: 0, error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    await ctx?.close().catch(() => {});
+  }
+}
+
 async function load(src: string, sourceRevision: string | undefined, wantStrip: boolean, e: Entry, signal: AbortSignal): Promise<void> {
+  if (!isPreviewable(src)) {
+    const wave = await loadBrowserAudioPeaks(src, signal);
+    if (signal.aborted) return;
+    const peaks = wave.data?.peaks ?? [];
+    const durationMs = wave.data?.durationMs ?? wave.durationMs;
+    e.value = {
+      peaks,
+      peaksPerSecond: resolvePeaksPerSecond(peaks, wave.data?.peaksPerSecond, durationMs),
+      durationMs,
+      stripUrl: null,
+      waveformStatus: wave.error ? 'failed' : 'ready',
+      filmstripStatus: 'not-requested',
+      ...(wave.error ? { waveformError: wave.error } : {}),
+    };
+    for (const fn of e.listeners) fn();
+    return;
+  }
   const query = new URLSearchParams({
     src,
     ...(sourceRevision ? { sourceRevision } : {}),
@@ -108,12 +239,18 @@ async function load(src: string, sourceRevision: string | undefined, wantStrip: 
     fetchWaveform(query, signal),
     wantStrip ? fetchFilmstrip(query, signal) : Promise.resolve<StripResult>({ url: null }),
   ]);
-  if (signal.aborted) return;
+  if (signal.aborted) {
+    if (strip.url?.startsWith('blob:')) URL.revokeObjectURL(strip.url);
+    return;
+  }
+  const peaks = wave.data?.peaks ?? [];
+  const durationMs = wave.data?.durationMs ?? 0;
   e.value = {
-    peaks: wave.data?.peaks ?? [],
-    peaksPerSecond: wave.data?.peaksPerSecond ?? 100,
-    durationMs: wave.data?.durationMs ?? 0,
+    peaks,
+    peaksPerSecond: resolvePeaksPerSecond(peaks, wave.data?.peaksPerSecond, durationMs),
+    durationMs,
     stripUrl: strip.url,
+    ...(strip.metadata ? { stripMetadata: strip.metadata } : {}),
     waveformStatus: wave.error ? 'failed' : 'ready',
     filmstripStatus: !wantStrip ? 'not-requested' : strip.error ? 'failed' : 'ready',
     ...(wave.error ? { waveformError: wave.error } : {}),
@@ -136,20 +273,25 @@ function setLoadFailure(entry: Entry, wantStrip: boolean, error: unknown): void 
 
 /**
  * Fragment preview data. Multiple fragments of the same src share one request and one result.
- * kind determines whether frame strips are required (video only); non-native assets directly return null.
+ * kind determines whether frame strips are required (video only); built-in sound effects resolve synchronously.
  */
 export function useClipPreview(
   src: string | undefined,
   kind: string,
   sourceRevision?: string,
 ): ClipPreview | null {
-  const key = isPreviewable(src) ? `${src}\u0000${sourceRevision ?? 'legacy'}` : '';
-  const wantStrip = kind === 'video';
+  const sfx = soundEffectPreview(src);
+  const previewKey = isPreviewable(src)
+    ? `${src}\u0000${sourceRevision ?? 'legacy'}`
+    : isBrowserAudioPreviewable(src, kind)
+      ? `browser-audio\u0000${src}\u0000${sourceRevision ?? 'legacy'}`
+      : '';
+  const wantStrip = kind === 'video' && isPreviewable(src);
   const [, bump] = useState(0);
 
   useEffect(() => {
-    if (!key) return;
-    const e = entryFor(key);
+    if (!previewKey) return;
+    const e = entryFor(previewKey);
     const onChange = () => bump((n) => n + 1);
     e.listeners.add(onChange);
     if (!e.value && !e.promise) {
@@ -168,16 +310,16 @@ export function useClipPreview(
       e.listeners.delete(onChange);
       if (!e.listeners.size && e.promise) {
         e.controller?.abort();
-        if (entries.get(key) === e) entries.delete(key);
+        if (entries.get(previewKey) === e) entries.delete(previewKey);
         return;
       }
       // Loaded-and-now-unobserved: keep it for a fast re-render, but bound how
       // many such entries the session may retain.
       if (!e.listeners.size) evictIdlePreviews();
     };
-  }, [key, sourceRevision, src, wantStrip]);
+  }, [kind, previewKey, sourceRevision, src, wantStrip]);
 
-  return key ? entryFor(key).value : null;
+  return sfx ?? (previewKey ? entryFor(previewKey).value : null);
 }
 
 /**
@@ -202,8 +344,8 @@ export function filmstripBackground(
 }
 
 /**
- * The sonic path within the clip's visible window (same mapping as the frame strip). Returns the SVG path; returns an empty string without peaks.
- * The vertical coordinate is symmetrical with height/2 as the axis, and x takes the largest peak value covered by the column column by pixel (to avoid sampling flicker).
+ * The sonic filled ribbon path within the clip's visible window (same mapping as the frame strip).
+ * Returns a single closed symmetrical SVG area path for sharp high-contrast fills and bounded DOM work.
  */
 export function peaksPath(
   preview: ClipPreview,
@@ -212,24 +354,32 @@ export function peaksPath(
     srcInFrame: number; durationInFrames: number; playbackRate: number;
   },
 ): string {
-  const { peaks, peaksPerSecond } = preview;
-  if (!peaks.length || widthPx <= 0) return '';
-  const cols = Math.max(1, Math.min(2000, Math.floor(widthPx / 2)));
+  const { peaks, durationMs } = preview;
+  if (!peaks.length || widthPx <= 0 || height <= 0) return '';
+  const peaksPerSecond = resolvePeaksPerSecond(peaks, preview.peaksPerSecond, durationMs);
+  const cols = Math.max(2, Math.min(640, Math.round(widthPx / 2)));
   const mid = height / 2;
+  const maxAmp = Math.max(1, mid - 1);
   const perFrame = peaksPerSecond / fps; // How many peaks does one source frame correspond to?
   const startIdx = srcInFrame * perFrame;
   const spanIdx = timelineFramesToSourceFrames({ playbackRate }, durationInFrames) * perFrame;
-  const out: string[] = [];
+  const top: string[] = [];
+  const bottom: string[] = [];
   for (let c = 0; c < cols; c += 1) {
     const from = startIdx + (c / cols) * spanIdx;
     const to = startIdx + ((c + 1) / cols) * spanIdx;
     let peak = 0;
     const lo = Math.max(0, Math.floor(from));
     const hi = Math.min(peaks.length - 1, Math.max(lo, Math.ceil(to) - 1));
-    for (let i = lo; i <= hi; i += 1) if (peaks[i]! > peak) peak = peaks[i]!;
-    const amp = Math.max(0.5, peak * (mid - 0.5));
+    if (lo <= hi && lo < peaks.length) {
+      for (let i = lo; i <= hi; i += 1) if (peaks[i]! > peak) peak = peaks[i]!;
+    }
+    const shaped = peak > 0.004 ? Math.max(0.06, Math.pow(Math.min(1, peak), 0.78)) : 0;
+    const amp = Math.max(0.4, shaped * maxAmp);
     const x = ((c + 0.5) / cols) * widthPx;
-    out.push(`M${x.toFixed(1)} ${(mid - amp).toFixed(1)}V${(mid + amp).toFixed(1)}`);
+    const xs = x.toFixed(1);
+    top.push(`${xs},${(mid - amp).toFixed(1)}`);
+    bottom.push(`${xs},${(mid + amp).toFixed(1)}`);
   }
-  return out.join(' ');
+  return `M${top[0]} L${top.slice(1).join(' L')} L${bottom.reverse().join(' L')} Z`;
 }

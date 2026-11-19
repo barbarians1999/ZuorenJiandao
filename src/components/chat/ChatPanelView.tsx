@@ -70,13 +70,17 @@ function ChatHeader({ controller }: { controller: ChatPanelController }) {
 }
 
 function ChatOnboarding({ controller }: { controller: ChatPanelController }) {
-  const { composer, t } = controller;
+  const { composer, props, t } = controller;
   return <div className="cc-chat-onboarding">
     <h2>{t('说出你想怎么剪')}</h2>
     <p>{t('选择常用工作流，或直接告诉 Codex 成片目标。')}</p>
     <div className="cc-chat-starter-list">
       {EMPTY_PROJECT_STARTERS.map((starter) => (
         <button type="button" key={starter.label} onClick={() => {
+          if (starter.action === 'open-paste-transcript') {
+            props.onOpenPasteTranscript();
+            return;
+          }
           composer.setInput(t(starter.prompt));
           requestAnimationFrame(() => composer.taRef.current?.focus());
         }}>
@@ -198,12 +202,16 @@ function MessageWorkspace({ controller }: { controller: ChatPanelController }) {
 }
 
 function QuickActionSelect({ controller }: { controller: ChatPanelController }) {
-  const { agent, composer, t } = controller;
+  const { agent, composer, props, t } = controller;
   return <select aria-label={t('快速操作')} value="" disabled={agent.running}
     onChange={(event) => {
       if (!event.target.value) return;
       const action = QUICK_ACTIONS[Number(event.target.value)];
       if (!action) return;
+      if (action.action === 'open-paste-transcript') {
+        props.onOpenPasteTranscript();
+        return;
+      }
       composer.setInput(t(action.prompt));
       requestAnimationFrame(() => composer.taRef.current?.focus());
     }}

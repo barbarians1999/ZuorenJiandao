@@ -112,8 +112,12 @@ export function copyProductAssetsTo(destRoot: string): void {
  * `public/` only holds user runtime files (`media/uploads`).
  */
 export function productAssetsPlugin(): Plugin {
+  let outDir = resolve(process.cwd(), 'dist');
   return {
     name: 'openchatcut-product-assets',
+    configResolved(config) {
+      outDir = config.build.outDir;
+    },
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         try {
@@ -152,9 +156,8 @@ export function productAssetsPlugin(): Plugin {
       });
     },
     closeBundle() {
-      const dist = resolve(process.cwd(), 'dist');
-      if (!existsSync(dist)) return;
-      copyProductAssetsTo(dist);
+      if (!existsSync(outDir)) return;
+      copyProductAssetsTo(outDir);
     },
   };
 }

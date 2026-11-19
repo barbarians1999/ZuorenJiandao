@@ -77,6 +77,19 @@ export function exportDestinationTargetPath(destination: ExportDestination, file
   if (target.type === 'browser-file' || target.type === 'desktop-file') return outputFilename;
   return `${target.label.replace(/[\\/]$/, '')}/${outputFilename}`;
 }
+const handleIds = new WeakMap<object, string>();
+export function exportDestinationTaskKey(destination: ExportDestination, filename: string): string {
+  const target = checkedDestination(destination);
+  const output = exportDestinationFilename(target, filename);
+  if (target.type === 'downloads') return JSON.stringify(['downloads', output]);
+  if (target.type === 'desktop-file' || target.type === 'desktop-directory') {
+    return JSON.stringify(['desktop', target.grantId, output]);
+  }
+  // shortcut: distinct handles for one physical location may enqueue twice; never merge distinct locations by label.
+  let id = handleIds.get(target.handle);
+  if (!id) { id = globalThis.crypto.randomUUID(); handleIds.set(target.handle, id); }
+  return JSON.stringify([target.type, id, output]);
+}
 export const DIRECTORY_PERMISSION: ExportPermissionDescriptor = { mode: 'readwrite' };
 const DESKTOP_GRANT_ID = /^[A-Za-z0-9_-]{32,128}$/;
 const INVALID_FILENAME = /[/\\:*?"<>|]/;

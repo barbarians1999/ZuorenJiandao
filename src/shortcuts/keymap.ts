@@ -53,6 +53,11 @@ export function effectiveCatalog(): ShortcutAction[] {
   return cache;
 }
 
+/** New default shortcuts must not shadow a user's existing explicit binding. */
+export function effectiveMatchingCatalog(): ShortcutAction[] {
+  return [...effectiveCatalog()].sort((a, b) => Number(b.id in userKeymap) - Number(a.id in userKeymap));
+}
+
 export function isCustomized(id: string): boolean { return id in userKeymap; }
 export function customizedCount(): number { return Object.keys(userKeymap).length; }
 

@@ -12,6 +12,7 @@ export type LibraryDragKind =
   | 'zoom'
   | 'sound'
   | 'template'
+  | 'effect-tool'
   | 'audio-fx';
 
 export interface LibraryDragPayload {
@@ -80,6 +81,7 @@ export function libraryDragLabel(kind: LibraryDragKind): string {
     case 'zoom': return t('缩放');
     case 'sound': return t('音效');
     case 'template': return 'MG';
+    case 'effect-tool': return t('特效');
     case 'audio-fx': return t('音频效果');
   }
 }

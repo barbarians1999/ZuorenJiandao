@@ -69,6 +69,10 @@ function useCaptionSelectionStorage(state: Timeline, scopeKey: string) {
     setCaptionSelections([]);
   }, [selectedItemIdsKey, state.selectedId]);
 
+  useEffect(() => {
+    preserveWithItemsRef.current = false;
+  });
+
   return {
     captionSelections,
     preserveWithItemsRef,
@@ -120,7 +124,7 @@ function useSelectAllTimelineContent(
 }
 
 function useSelectMarqueeCaptions(
-  captionSelections: CaptionSelectionRef[],
+  _captionSelections: CaptionSelectionRef[],
   setCaptionSelections: CaptionSelectionSetter,
   preserveWithItemsRef: MutableRefObject<boolean>,
 ) {
@@ -128,15 +132,14 @@ function useSelectMarqueeCaptions(
     selections: CaptionSelectionRef[],
     options: { additive: boolean; preserveWithItems: boolean },
   ) => {
-    preserveWithItemsRef.current = options.preserveWithItems
-      && (selections.length > 0 || (options.additive && captionSelections.length > 0));
+    preserveWithItemsRef.current = options.preserveWithItems;
     setCaptionSelections((current) => {
       if (!options.additive) return selections;
       const byKey = new Map(current.map((selection) => [captionSelectionKey(selection), selection]));
       for (const selection of selections) byKey.set(captionSelectionKey(selection), selection);
       return [...byKey.values()];
     });
-  }, [captionSelections.length, preserveWithItemsRef, setCaptionSelections]);
+  }, [preserveWithItemsRef, setCaptionSelections]);
 }
 
 function useCaptionSelectionState(state: Timeline, scopeKey: string, commands: SelectionCommands) {

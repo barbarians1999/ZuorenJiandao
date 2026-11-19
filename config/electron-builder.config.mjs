@@ -17,7 +17,10 @@
 // - Without signing credentials, macOS builds use ad-hoc signing and Windows builds trigger SmartScreen.
 //   Add certificates and notarization for official distribution.
 // - macOS uses a pre-generated standard icns to avoid corrupt 48 px layers during conversion.
-//   Windows continues deriving its ico from the web PNG.
+//   Windows uses a multi-resolution ICO generated from the canonical Zuoren SVG.
+
+import { join } from 'node:path';
+import { verifyPackagedProductAssets, verifyPackagedRuntimeDependencies } from '../desktop/packaged-runtime-dependencies.mjs';
 
 // Package names follow @remotion/renderer optionalDependencies: win32 uses -msvc and Linux includes a libc suffix.
 const COMPOSITORS = [
@@ -44,7 +47,12 @@ const nativeInferenceWorkers = nativeInferenceSupported
 const onnxRuntimeFilters = keepOnnxRuntime
   ? ONNX_RUNTIME_TARGETS
       .filter((runtimeTarget) => runtimeTarget !== keepOnnxRuntime)
-      .map((runtimeTarget) => `!node_modules/onnxruntime-node/bin/napi-v6/${runtimeTarget}/**`)
+      .flatMap((runtimeTarget) => [
+        `!node_modules/onnxruntime-node/bin/napi-v6/${runtimeTarget}/**`,
+        // Transformers has its own ONNX version under nested node_modules.
+        // Root-only exclusions leave foreign OS/CPU binaries in Windows installers.
+        `!node_modules/**/node_modules/onnxruntime-node/bin/napi-v6/${runtimeTarget}/**`,
+      ])
   : ['!node_modules/onnxruntime-node/**'];
 // sqlite-vec publishes separate extension packages whose suffixes do not all
 // match Node's process.platform names. Keep only the package for this artifact.
@@ -63,11 +71,8 @@ const sqliteVecFilters = SQLITE_VEC_PACKAGES
   .filter((packageSuffix) => packageSuffix !== keepSqliteVec)
   .map((packageSuffix) => `!node_modules/sqlite-vec-${packageSuffix}/**`);
 const hasMacSigningCertificate = Boolean(process.env.CSC_LINK || process.env.CSC_NAME);
-const windowsKind = process.env.CC_EB_WIN_KIND;
 const isWindowsTarget = target.startsWith('win32-');
-const windowsArtifactName = windowsKind === 'portable'
-  ? 'ZuorenJiandao-Portable-${version}-${arch}.${ext}'
-  : 'ZuorenJiandao-Setup-${version}-${arch}.${ext}';
+const windowsArtifactName = 'ZuorenJiandao-Setup-${version}-${arch}.${ext}';
 
 export default {
   appId: 'org.zuoren.jiandao',
@@ -75,7 +80,7 @@ export default {
   artifactName: isWindowsTarget
     ? windowsArtifactName
     : '${productName}-${version}-${arch}.${ext}',
-  directories: { output: 'release' },
+  directories: { output: process.env.CC_EB_OUTPUT?.trim() || 'release' },
   // 7z LZMA maximum compression for the distributable installers (dmg/zip/nsis/AppImage).
   // Trade-off: noticeably slower packaging time in exchange for a smaller final download.
   // The app.asar content itself is handled by the `compression` setting; native binaries
@@ -107,7 +112,6 @@ export default {
     'node_modules/@remotion/compositor-*/**',
     'node_modules/onnxruntime-node/**',
     'node_modules/sqlite-vec-*/**',
-    'node_modules/@github/copilot-*/**',
     'node_modules/koffi/**',
   ],
   extraResources: [
@@ -115,10 +119,21 @@ export default {
     // uploadsMiddleware serves /media/uploads directly from the asset directory (userData in packaged builds),
     // so resources/dist never needs those files.
     { from: 'dist', to: 'dist', filter: ['**/*', '!media/uploads/**'] },
-    { from: 'desktop-dist/remotion-bundle', to: 'remotion-bundle' },
-    { from: 'desktop-dist/chrome-headless-shell', to: 'chrome-headless-shell' },
+    // Rendering attaches runtime uploads here as a junction/symlink. It is
+    // neither a product asset nor portable, and may contain user media.
+    { from: 'desktop-dist/remotion-bundle', to: 'remotion-bundle', filter: ['**/*', '!media/uploads', '!media/uploads/**'] },
+    { from: 'desktop-dist/chrome-headless-shell', to: 'chrome-headless-shell', filter: ['**/*', '!**/debug.log'] },
   ],
   npmRebuild: false,
+  // Fail before producing an installer if a main-process runtime dependency
+  // would only resolve from the developer checkout outside app.asar.
+  afterPack(context) {
+    const resources = context.electronPlatformName === 'darwin'
+      ? join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
+      : join(context.appOutDir, 'resources');
+    verifyPackagedRuntimeDependencies(join(resources, 'app.asar'));
+    verifyPackagedProductAssets(resources);
+  },
   mac: {
     target: ['dmg', 'zip'],
     category: 'public.app-category.video',
@@ -134,13 +149,16 @@ export default {
     ...(hasMacSigningCertificate ? {} : { identity: '-' }),
   },
   win: {
-    target: windowsKind === 'portable' ? ['portable'] : ['nsis'],
+    target: ['nsis'],
     executableName: 'ZuorenJiandao',
-    icon: 'public/zuoren-jiandao-icon.png',
+    icon: 'assets/branding/zuoren-jiandao-icon.ico',
   },
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
+    installerIcon: 'assets/branding/zuoren-jiandao-icon.ico',
+    uninstallerIcon: 'assets/branding/zuoren-jiandao-icon.ico',
+    installerHeaderIcon: 'assets/branding/zuoren-jiandao-icon.ico',
   },
   linux: {
     target: ['AppImage'],

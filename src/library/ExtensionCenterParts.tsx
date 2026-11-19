@@ -123,7 +123,7 @@ function UrlInstallRow({ busy, onInstall }: {
       <input
         value={url}
         onChange={(event) => setUrl(event.target.value)}
-        onKeyDown={(event) => { if (event.key === 'Enter' && url.trim() && !busy) submit(); }}
+        onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && url.trim() && !busy) { event.preventDefault(); submit(); } }}
         placeholder={t('扩展包 JSON URL…')}
         style={INSTALL_INPUT_STYLE}
       />

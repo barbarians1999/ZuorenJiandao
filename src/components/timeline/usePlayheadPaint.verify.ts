@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   audioMediaTimeToTimelineFrame,
+  shouldPaintPlayheadTimecode,
   type AudibleAudioItem,
 } from './usePlayheadPaint';
 
@@ -60,6 +61,15 @@ assert.match(
 );
 
 const paintSource = readFileSync(new URL('./usePlayheadPaint.ts', import.meta.url), 'utf8');
+// Pause paints the old head immediately. A manual seek immediately afterward
+// must also update the label, even when React's frame effect is inside 80ms.
+assert.equal(shouldPaintPlayheadTimecode(false, true, 1000, 990), true);
+assert.equal(shouldPaintPlayheadTimecode(false, false, 1001, 1000), true, 'paused manual seek cannot wait for a nonexistent playback tick');
+assert.equal(shouldPaintPlayheadTimecode(true, false, 1001, 1000), false, 'playing label updates remain throttled');
+assert.equal(shouldPaintPlayheadTimecode(true, false, 1081, 1000), true);
+assert.equal(shouldPaintPlayheadTimecode(true, true, 1001, 1000), true, 'explicit force overrides playback throttle');
+assert.match(paintSource, /shouldPaintPlayheadTimecode\(Boolean\(playerRef\.current\?\.isPlaying\(\)\), forceTc, now, lastTcPaintRef\.current\)/,
+  'actual playhead painter must use the paused-aware decision');
 assert.match(
   paintSource,
   /if \(lastAudioFrameRef\.current !== null\) return;/,

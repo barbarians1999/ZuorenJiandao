@@ -18,6 +18,5 @@ export async function execProgressTool(
       ? progress.execUploadProgress(args, ctx)
       : progress.execVisualAnalysisProgress(args, ctx);
   }
-  const { execGenerateTool } = await import('./generate-tools');
-  return execGenerateTool(name, { ...args, target: 'generation' }, ctx);
+  return { error: 'AI generation was removed; choose a local progress target or track_export.' };
 }

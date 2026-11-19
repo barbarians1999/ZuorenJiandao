@@ -1,0 +1,1490 @@
+/* Main editor polish. The two constructivist skins own all actual colors. */
+.cc-editor-shell .cc-tip::after {
+  max-width: 320px;
+  padding: 7px 10px;
+  font-size: 14px;
+  line-height: 1.45;
+  border-color: var(--cc-border-light);
+}
+
+.cc-editor-shell .cc-topbar-icon-button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cc-text-dim);
+  cursor: pointer;
+  transition: color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.cc-editor-shell .cc-utilities-popover .cc-tool-label {
+  font-size: 14px !important;
+}
+
+.cc-editor-shell .cc-topbar-icon-button:hover:not(:disabled),
+.cc-editor-shell .cc-topbar-language-button:hover:not(:disabled),
+.cc-editor-shell .cc-topbar-home:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--cc-border-light);
+  color: var(--cc-text-strong);
+}
+
+.cc-editor-shell .cc-skin-picker-trigger[aria-expanded='true'] {
+  box-shadow: inset 0 0 0 1px var(--cc-accent);
+  color: var(--cc-accent);
+}
+
+.cc-editor-shell .cc-skin-picker-option:hover,
+.cc-editor-shell .cc-skin-picker-option:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--cc-border-light);
+}
+
+.cc-editor-shell .cc-skin-picker-option.is-active {
+  box-shadow: inset 0 0 0 1px var(--cc-accent) !important;
+}
+
+.cc-editor-shell .cc-timeline-tool-button {
+  transition: color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.cc-editor-shell .cc-timeline-tool-button:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--cc-border-light);
+}
+
+.cc-editor-shell .cc-timeline-tool-button[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1px var(--cc-accent);
+  color: var(--cc-text-strong) !important;
+}
+
+.cc-editor-shell .cc-timeline-mode-label:is(.is-blade, .is-pen) {
+  color: var(--cc-text-strong);
+}
+
+.cc-editor-shell .cc-insp-header {
+  border-bottom-color: var(--cc-border);
+}
+
+.cc-editor-shell .cc-insp-title {
+  font-size: 15px !important;
+  font-weight: 700;
+  line-height: 1.4 !important;
+  color: var(--cc-text-strong);
+}
+
+.cc-editor-shell .cc-insp-section {
+  font-size: 13px !important;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--cc-text-strong);
+  padding-left: 10px;
+  border-left: 2px solid var(--cc-accent);
+  margin-top: 8px;
+}
+
+.cc-editor-shell .cc-insp-row {
+  grid-template-columns: minmax(64px, .82fr) minmax(36px, 1fr) minmax(88px, 1.15fr);
+  min-height: 36px !important;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 13px !important;
+  color: var(--cc-text-muted);
+  transition: background-color 120ms ease;
+}
+
+.cc-editor-shell .cc-insp-row:hover {
+  background: rgba(var(--cc-ink-rgb), 0.03);
+}
+
+.cc-editor-shell :is(.cc-insp-val, .cc-insp-scope, .cc-insp-muted) {
+  font-size: 13px !important;
+}
+
+.cc-editor-shell .cc-insp-val {
+  color: var(--cc-text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-editor-shell :is(.cc-insp-scalar, .cc-insp-number) {
+  box-sizing: border-box;
+  height: 30px !important;
+  min-height: 30px;
+  border-radius: 999px;
+  background: var(--cc-inset);
+  border: 1px solid transparent;
+  color: var(--cc-text-strong);
+  padding-inline: 11px;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.cc-editor-shell :is(.cc-insp-scalar, .cc-insp-number):hover {
+  background: var(--cc-hover);
+}
+
+.cc-editor-shell :is(.cc-insp-scalar, .cc-insp-number):focus-visible {
+  outline: none;
+  background: var(--cc-surface);
+  box-shadow: 0 0 0 2px rgba(var(--cc-accent-rgb), 0.42);
+}
+
+.cc-editor-shell :is(.cc-insp-scalar, .cc-insp-number):focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 1px;
+  border-color: var(--cc-accent);
+}
+
+.cc-editor-shell .cc-insp-range {
+  --cc-insp-range-fill: 0%;
+}
+
+.cc-editor-shell .cc-insp-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--cc-accent) 0 var(--cc-insp-range-fill),
+    var(--cc-inset) var(--cc-insp-range-fill) 100%
+  );
+}
+
+.cc-editor-shell .cc-insp-range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 999px;
+  background: var(--cc-text-strong);
+  border: 2px solid var(--cc-accent);
+  box-shadow: 0 1px 4px rgba(var(--cc-shadow-rgb), 0.55);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.cc-editor-shell .cc-insp-range:hover::-webkit-slider-thumb {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cc-accent) 26%, transparent);
+}
+
+.cc-editor-shell .cc-insp-range::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--cc-inset);
+}
+
+.cc-editor-shell .cc-insp-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--cc-accent);
+}
+
+.cc-editor-shell .cc-insp-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--cc-text-strong);
+  border: 2px solid var(--cc-accent);
+  box-shadow: 0 1px 4px rgba(var(--cc-shadow-rgb), 0.55);
+}
+
+@container preview-workspace (max-width: 480px) {
+  .cc-editor-shell .cc-insp-row {
+    grid-template-columns: minmax(48px, .75fr) minmax(28px, .75fr) minmax(80px, 1.15fr);
+    gap: 4px;
+  }
+}
+
+.cc-editor-shell .cc-insp-header:hover {
+  box-shadow: inset 3px 0 0 var(--cc-accent);
+}
+
+.cc-editor-shell .cc-insp-tabs button.active {
+  box-shadow: inset 0 -1px 0 var(--cc-accent);
+}
+
+.cc-editor-shell .cc-caption-workspace-tabs button[aria-selected='true'] {
+  border-color: var(--cc-accent);
+  background: var(--cc-accent);
+  color: var(--cc-on-accent);
+  font-weight: 650;
+}
+
+.cc-editor-shell .cc-animation-tabs button[aria-selected='true'] {
+  border-color: var(--cc-accent);
+  color: var(--cc-accent);
+  box-shadow: inset 0 -1px 0 var(--cc-accent);
+}
+
+.cc-editor-shell .cc-insp-control-line:hover {
+  box-shadow: inset 3px 0 0 var(--cc-border-light);
+}
+
+.cc-editor-shell .cc-panel-divider {
+  touch-action: none;
+  user-select: none;
+}
+
+.cc-editor-shell .cc-panel-divider-grip {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--cc-border-light);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transition: opacity 100ms ease, background-color 100ms ease;
+}
+
+.cc-editor-shell .cc-panel-divider.horizontal .cc-panel-divider-grip {
+  width: 32px;
+  height: 4px;
+}
+
+.cc-editor-shell .cc-panel-divider:is(.is-hovered, :focus-visible, .is-active) .cc-panel-divider-grip {
+  opacity: 1;
+}
+
+.cc-editor-shell .cc-panel-divider.is-active .cc-panel-divider-grip {
+  background: var(--cc-accent);
+}
+
+.cc-editor-shell .cc-app-toast {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* Keep the editing surface compact while leaving every existing control present. */
+.cc-editor-shell .cc-topbar {
+  min-width: 0;
+}
+
+.cc-editor-shell .cc-editor-brand-mark {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--cc-panel-alt);
+}
+
+.cc-editor-shell .cc-topbar-title {
+  min-width: 0;
+  max-width: min(32vw, 420px);
+}
+
+.cc-editor-shell .cc-topbar-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cc-editor-shell .cc-topbar-actions {
+  min-width: 0;
+  gap: 2px;
+}
+
+.cc-editor-shell .cc-editor-settings-entry {
+  display: flex;
+  align-items: center;
+}
+
+.cc-editor-shell .cc-editor-settings-entry .cc-topbar-icon-button {
+  display: inline-flex !important;
+  width: auto !important;
+  min-width: 36px;
+  height: 36px !important;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 9px !important;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.cc-editor-shell .cc-editor-settings-entry .cc-tool-label {
+  display: inline;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.cc-editor-shell .cc-topbar-utility-cluster {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-inline: 5px;
+  border-inline: 1px solid var(--cc-border);
+}
+
+.cc-editor-shell .cc-utilities-popover > div {
+  width: 100%;
+}
+
+.cc-editor-shell .cc-utilities-skin-row {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 4px;
+  color: var(--cc-text);
+  font-size: 14px;
+}
+
+.cc-editor-shell :is(.cc-topbar-icon-button, .cc-topbar-home, .cc-topbar-language-button, .cc-utilities-trigger, .cc-topbar-export):focus-visible,
+.cc-editor-shell .cc-timeline-toolbar :is(button, summary, input, select):focus-visible,
+.cc-editor-shell .cc-track-head-controls button:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
+  position: relative;
+  z-index: 2;
+}
+
+/* Track colors remain semantic; choose readable label ink per material color. */
+.cc-editor-shell .cc-track-name.is-video,
+.cc-editor-shell .cc-track-name.is-caption {
+  color: #fff !important;
+}
+
+.cc-editor-shell .cc-track-name.is-audio {
+  color: #21170b !important;
+}
+
+.cc-editor-shell .cc-track-name-custom {
+  opacity: 1;
+  font-size: 13px !important;
+  line-height: 1.2;
+}
+
+.cc-editor-shell .cc-track-name {
+  max-width: 88px;
+  min-width: 0;
+  font-size: 14px !important;
+  line-height: 1.25;
+}
+
+.cc-editor-shell .cc-placement-toggle {
+  min-height: 34px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cc-editor-shell .cc-timeline-tool-separator {
+  width: 1px;
+  flex-basis: 1px;
+  height: 20px;
+  margin-inline: 5px;
+  background: var(--cc-border);
+}
+
+/* --- Concept 1 + Concept 3 hybrid polish: Minimal cards + Constructivist darkroom --- */
+.cc-editor-shell .cc-topbar-export {
+  border-radius: 999px !important;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--cc-accent) 88%, var(--cc-text-strong) 12%),
+    var(--cc-accent)
+  ) !important;
+  color: var(--cc-on-accent) !important;
+  border: 1px solid transparent !important;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.22),
+    0 2px 10px rgba(var(--cc-accent-rgb), 0.28);
+  transition: filter 140ms ease, transform 120ms ease, box-shadow 140ms ease;
+}
+
+.cc-editor-shell .cc-topbar-export:hover:not(:disabled) {
+  filter: brightness(1.06);
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.26),
+    0 4px 14px color-mix(in srgb, var(--cc-accent) 36%, transparent);
+}
+
+.cc-editor-shell .cc-topbar-export:active:not(:disabled) {
+  transform: translateY(1px);
+  filter: brightness(0.95);
+}
+
+.cc-editor-shell .cc-timeline-tool-group {
+  width: auto;
+  margin-inline: auto;
+  padding: 3px 6px;
+  gap: 2px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--cc-inset);
+  box-shadow: 0 4px 14px rgba(var(--cc-shadow-rgb), 0.24);
+}
+
+.cc-editor-shell .cc-timeline-tool-button {
+  border-radius: 999px !important;
+  padding-inline: 7px;
+}
+
+.cc-editor-shell .cc-timeline-tool-button[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--cc-accent) 20%, var(--cc-panel-alt)) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc-accent) 70%, transparent);
+  color: var(--cc-accent) !important;
+  font-weight: 650;
+}
+
+.cc-editor-shell .cc-timeline-tool-button.cc-timeline-mode-btn[aria-pressed='true'],
+.cc-editor-shell .cc-timeline-tool-group > .cc-timeline-tool-button:first-of-type[aria-pressed='true'] {
+  background: var(--cc-accent) !important;
+  color: var(--cc-on-accent) !important;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--cc-accent) 38%, transparent);
+}
+
+.cc-editor-shell .cc-timeline-play-button {
+  border-radius: 999px !important;
+  background: radial-gradient(circle at 35% 30%, var(--cc-hover), var(--cc-panel-alt)) !important;
+  border: 1.5px solid var(--cc-accent) !important;
+  color: var(--cc-text-strong) !important;
+  box-shadow:
+    0 2px 8px rgba(var(--cc-shadow-rgb), 0.35),
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.14);
+  transition: transform 120ms ease, box-shadow 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.cc-editor-shell .cc-timeline-play-button:hover:not(:disabled) {
+  background: var(--cc-hover) !important;
+  border-color: var(--cc-accent) !important;
+  color: var(--cc-accent) !important;
+  box-shadow:
+    0 0 0 6px color-mix(in srgb, var(--cc-accent) 26%, transparent),
+    0 6px 20px rgba(var(--cc-shadow-rgb), 0.55);
+}
+
+.cc-editor-shell .cc-timeline-play-button:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.cc-editor-shell .cc-timeline-timecode {
+  justify-self: start;
+  width: max-content;
+  background: var(--cc-inset);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 4px 14px;
+  color: var(--cc-text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-editor-shell .cc-timeline-zoom {
+  -webkit-appearance: none;
+  appearance: none;
+  accent-color: var(--cc-accent);
+  height: 4px;
+  border-radius: 999px;
+  background: var(--cc-inset);
+  cursor: pointer;
+}
+
+.cc-editor-shell .cc-timeline-zoom::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 999px;
+  background: var(--cc-text-strong);
+  border: 2px solid var(--cc-accent);
+  box-shadow: 0 1px 4px rgba(var(--cc-shadow-rgb), 0.55);
+}
+
+.cc-editor-shell .cc-timeline-zoom::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--cc-text-strong);
+  border: 2px solid var(--cc-accent);
+  box-shadow: 0 1px 4px rgba(var(--cc-shadow-rgb), 0.55);
+}
+
+.cc-editor-shell .cc-playhead {
+  width: 2px;
+  margin-left: -1px;
+  background: var(--cc-accent);
+  box-shadow: 0 0 8px rgba(var(--cc-accent-rgb), 0.55);
+}
+
+.cc-editor-shell .cc-playhead-handle {
+  margin-left: 0.5px;
+  background: var(--cc-heading-bg);
+}
+
+.cc-editor-shell .cc-playhead-grip {
+  margin-left: 1px;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 2px 2px 0 0;
+  background: var(--cc-heading-bg);
+  color: var(--cc-heading-ink);
+  clip-path: polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%);
+  box-shadow: 0 2px 6px rgba(var(--cc-shadow-rgb), 0.5);
+}
+
+.cc-editor-shell .cc-playhead-grip::before {
+  left: 4px;
+  right: 4px;
+  top: 4px;
+  height: 2px;
+  border-radius: 1px;
+  opacity: 0.9;
+}
+
+.cc-editor-shell .cc-playhead-grip:hover {
+  background: color-mix(in srgb, var(--cc-heading-bg) 86%, var(--cc-heading-ink));
+}
+
+.cc-editor-shell .cc-playhead-line-grip::after {
+  background: var(--cc-heading-bg);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--cc-heading-bg) 80%, transparent);
+}
+
+.cc-editor-shell .cc-timeline-clip {
+  border-radius: 10px;
+}
+
+.cc-editor-shell .cc-clip-surface {
+  border-radius: 9px;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.14),
+    inset 0 0 0 1px rgba(var(--cc-shadow-rgb), 0.45);
+}
+
+.cc-editor-shell .cc-timeline-clip[data-compact-clip="true"],
+.cc-editor-shell .cc-timeline-clip[data-compact-clip="true"] .cc-clip-surface {
+  border-radius: 4px;
+}
+
+.cc-editor-shell .cc-timeline-clip[data-narrow-clip="true"],
+.cc-editor-shell .cc-timeline-clip[data-narrow-clip="true"] .cc-clip-surface {
+  border-radius: 2px;
+}
+
+.cc-editor-shell .cc-timeline-clip.is-selected {
+  box-shadow:
+    0 0 0 1.5px var(--cc-accent),
+    0 4px 12px rgba(var(--cc-shadow-rgb), 0.45);
+}
+
+.cc-editor-shell .cc-asset-thumb-wrap,
+.cc-editor-shell .cc-add-solid-canvas-card {
+  border-radius: 14px;
+  border: 1px solid transparent;
+  box-shadow: 0 2px 8px rgba(var(--cc-shadow-rgb), 0.22);
+  transition: background-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.cc-editor-shell .cc-asset-card:hover .cc-asset-thumb-wrap,
+.cc-editor-shell .cc-add-solid-canvas-card:hover {
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(var(--cc-shadow-rgb), 0.36);
+  transform: translateY(-1px);
+}
+
+.cc-editor-shell .cc-asset-card.selected .cc-asset-thumb-wrap {
+  border-color: var(--cc-accent);
+  box-shadow:
+    0 0 0 1.5px var(--cc-accent),
+    0 4px 14px rgba(var(--cc-shadow-rgb), 0.45);
+}
+
+.cc-editor-shell .cc-insp-tabs button.active {
+  color: var(--cc-accent);
+  border-bottom-color: var(--cc-accent);
+}
+
+/* --- Concept 1 soft rounded modular panels + preview-bottom transport --- */
+.cc-editor-shell {
+  padding: 0 12px 12px;
+}
+
+.cc-editor-shell .cc-topbar {
+  margin-inline: -12px;
+  background: var(--cc-bg) !important;
+  border-bottom: none !important;
+}
+
+.cc-editor-shell .cc-topbar:not(.cc-window-titlebar--mac) {
+  padding-left: 16px !important;
+}
+
+.cc-editor-shell .cc-topbar:not(.cc-window-titlebar--windows) {
+  padding-right: 16px !important;
+}
+
+.cc-editor-shell .cc-topbar.cc-window-titlebar--windows {
+  padding-right: max(var(--cc-win-titlebar-safe-right, 168px), calc(100% - env(titlebar-area-width, 100%) + 18px)) !important;
+}
+
+.cc-editor-shell .cc-topbar.cc-window-titlebar--mac {
+  padding-left: 84px !important;
+}
+
+.cc-editor-shell .cc-editor-library-column {
+  padding: 4px 4px 6px 0;
+}
+
+.cc-editor-shell .cc-library-panel {
+  border-radius: 0;
+  border: 0;
+  background: transparent !important;
+  overflow: visible;
+  box-shadow: none;
+}
+
+.cc-editor-shell .cc-library-workbench {
+  gap: 10px;
+}
+
+.cc-editor-shell .cc-library-rail {
+  flex: 0 0 82px;
+  padding: 6px 5px;
+  gap: 4px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  background: var(--cc-panel);
+  box-shadow: 0 6px 20px rgba(var(--cc-shadow-rgb), 0.24);
+}
+
+.cc-editor-shell .cc-library-tool {
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  gap: 3px;
+  padding: 5px 4px;
+  min-height: 44px;
+  border-radius: 12px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.cc-editor-shell .cc-library-tool.selected {
+  background: color-mix(in srgb, var(--cc-accent) 18%, var(--cc-panel-alt));
+  border-color: transparent;
+  color: var(--cc-accent);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--cc-accent) 16%, transparent);
+  font-weight: 650;
+}
+
+.cc-editor-shell .cc-library-content {
+  border-radius: 16px;
+  border: 1px solid transparent;
+  background: var(--cc-panel);
+  box-shadow: 0 6px 20px rgba(var(--cc-shadow-rgb), 0.24);
+  overflow: hidden;
+}
+
+.cc-editor-shell .cc-editor-preview-column {
+  padding: 4px 0 6px 4px;
+}
+
+.cc-editor-shell .cc-preview-workspace {
+  gap: 10px;
+}
+
+.cc-editor-shell .cc-preview-panel {
+  border-radius: 16px;
+  border: 1px solid transparent;
+  box-shadow: 0 6px 20px rgba(var(--cc-shadow-rgb), 0.26);
+}
+
+.cc-editor-shell .cc-preview-header {
+  height: 30px !important;
+  min-height: 30px !important;
+  border-bottom: none !important;
+  padding: 2px 12px 0 !important;
+}
+
+.cc-editor-shell .cc-preview-header-actions button {
+  border-radius: 999px !important;
+  padding-inline: 10px !important;
+  background: var(--cc-panel-alt) !important;
+}
+
+.cc-editor-shell .cc-preview-stage {
+  margin: 2px 8px 2px !important;
+  padding: 4px 8px !important;
+  border-radius: 10px;
+  background: var(--cc-inset);
+}
+
+.cc-editor-shell .cc-preview-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 12px 5px !important;
+  min-height: 0 !important;
+  border-top: none;
+  background: var(--cc-panel);
+  flex-shrink: 0;
+}
+
+.cc-editor-shell .cc-preview-play-button {
+  width: 30px !important;
+  min-width: 30px !important;
+  height: 30px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: 1.5px solid color-mix(in srgb, var(--cc-accent) 68%, var(--cc-border)) !important;
+  box-shadow: 0 2px 8px rgba(var(--cc-shadow-rgb), 0.35) !important;
+}
+
+.cc-editor-shell .cc-right-panel-shell {
+  flex: 0 0 340px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  background: var(--cc-panel);
+  box-shadow: 0 6px 20px rgba(var(--cc-shadow-rgb), 0.24);
+  overflow: hidden;
+}
+
+.cc-editor-shell .cc-right-panel-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  margin: 8px 10px 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--cc-inset);
+  border: 1px solid transparent;
+}
+
+.cc-editor-shell .cc-right-panel-tabs button {
+  flex: 1 1 0;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--cc-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.cc-editor-shell .cc-right-panel-tabs button[aria-selected='true'] {
+  background: var(--cc-accent);
+  color: var(--cc-on-accent);
+  box-shadow: 0 1px 4px rgba(var(--cc-shadow-rgb), 0.35);
+}
+
+.cc-editor-shell .cc-right-panel-shell .cc-inspector-host,
+.cc-editor-shell .cc-right-panel-shell .cc-text-workspace-host {
+  flex: 1 1 0;
+  width: 100%;
+  min-height: 0;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.cc-editor-shell .cc-inspector {
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  overflow: hidden;
+}
+
+@container preview-workspace (max-width:720px) {
+  .cc-editor-shell .cc-right-panel-shell {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 12;
+    width: min(360px, 55%);
+    box-shadow: -12px 0 28px color-mix(in srgb, var(--cc-bg) 55%, transparent);
+  }
+  .cc-editor-shell .cc-right-panel-shell .cc-inspector-host,
+  .cc-editor-shell .cc-right-panel-shell .cc-text-workspace-host {
+    position: static;
+    width: 100%;
+    box-shadow: none;
+  }
+}
+
+.cc-editor-shell .cc-insp-tabs {
+  margin: 8px 10px 4px;
+  padding: 3px;
+  gap: 3px;
+  border-radius: 999px;
+  background: var(--cc-inset);
+  border: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+}
+
+.cc-editor-shell .cc-insp-tabs button {
+  height: 32px !important;
+  border-radius: 999px;
+  border-bottom: 0 !important;
+  font-size: 13px !important;
+}
+
+.cc-editor-shell .cc-insp-tabs button.active {
+  background: var(--cc-panel-alt);
+  color: var(--cc-accent);
+  box-shadow: 0 1px 4px rgba(var(--cc-shadow-rgb), 0.35);
+}
+
+.cc-editor-shell .cc-editor-timeline-column {
+  margin-top: 4px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  background: var(--cc-panel);
+  box-shadow: 0 6px 20px rgba(var(--cc-shadow-rgb), 0.32);
+}
+
+.cc-editor-shell .cc-timeline {
+  border-left: 0 !important;
+  border-radius: 0 0 16px 16px;
+  background: transparent !important;
+}
+
+.cc-editor-shell .cc-timeline-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.cc-editor-shell .cc-timeline-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: 0;
+  border-top: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  gap: 5px !important;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cc-editor-shell .cc-timeline-tabs button,
+.cc-editor-shell .cc-timeline-tabs > div {
+  border-radius: 999px !important;
+  padding: 3px 9px !important;
+  font-size: 13px !important;
+}
+
+.cc-editor-shell .cc-timeline-toolbar {
+  background: transparent !important;
+  border: 0 !important;
+  min-height: 0 !important;
+  padding: 6px 14px 5px !important;
+  gap: 6px;
+}
+
+.cc-editor-shell .cc-timeline-control-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  width: auto !important;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.cc-editor-shell .cc-timeline-view-controls {
+  width: auto !important;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+.cc-editor-shell .cc-timeline-timecode {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.cc-editor-shell .cc-timeline-tool-group {
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.cc-editor-shell .cc-timeline-tool-button,
+.cc-editor-shell .cc-placement-toggle,
+.cc-editor-shell .cc-caption-toggle,
+.cc-editor-shell .cc-aspect-fit-label {
+  border-radius: 999px !important;
+}
+
+.cc-editor-shell .cc-media-search-wrap input {
+  border-radius: 999px;
+  border-color: transparent;
+}
+
+.cc-editor-shell .cc-utilities-popover,
+.cc-editor-shell .cc-track-create-menu,
+.cc-editor-shell .cc-media-popover,
+.cc-editor-shell .cc-clip-context-menu,
+.cc-editor-shell .cc-modal {
+  border-radius: 14px;
+  border: 1px solid transparent;
+}
+
+/* --- Left rail "特效" (Shapes + Gaussian Blur / Mosaic) panel --- */
+.cc-editor-shell .cc-effects-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cc-editor-shell .cc-effects-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cc-editor-shell .cc-effects-section-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--cc-text-strong);
+  padding-left: 10px;
+  border-left: 2px solid var(--cc-accent);
+}
+
+.cc-editor-shell .cc-effects-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cc-editor-shell .cc-effects-grid-wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.cc-editor-shell .cc-effect-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+  padding: 8px 5px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: var(--cc-panel-alt);
+  color: var(--cc-text);
+  cursor: pointer;
+  transition: background-color 140ms ease, transform 120ms ease, box-shadow 140ms ease;
+}
+
+.cc-editor-shell .cc-effect-card-wide {
+  flex-direction: row;
+  text-align: left;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+}
+
+.cc-editor-shell .cc-effect-card:hover {
+  border-color: transparent;
+  background: var(--cc-hover);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--cc-accent) 70%, transparent), 0 4px 12px rgba(var(--cc-shadow-rgb), 0.35);
+  transform: translateY(-1px);
+}
+
+.cc-editor-shell .cc-effect-card:active {
+  transform: translateY(0);
+}
+
+.cc-editor-shell .cc-effect-card-thumb {
+  width: 48px;
+  height: 30px;
+  border-radius: 10px;
+  background: var(--cc-inset);
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.cc-editor-shell .cc-effect-card-wide .cc-effect-card-thumb {
+  width: 56px;
+  height: 36px;
+  border-radius: 10px;
+}
+
+.cc-editor-shell .cc-effect-card-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cc-editor-shell .cc-effect-card-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cc-text-strong);
+}
+
+.cc-editor-shell .cc-effect-card-wide .cc-effect-card-label {
+  font-size: 13px;
+}
+
+.cc-editor-shell .cc-effect-card-hint {
+  font-size: 10.5px;
+  line-height: 1.25;
+  color: var(--cc-text-dim);
+}
+
+.cc-editor-shell .cc-effect-card-wide .cc-effect-card-hint {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* --- Polish pass: reclaim preview/timeline room, fix keyframe bar & contrast --- */
+.cc-editor-shell .cc-motion-path-toolbar {
+  top: auto !important;
+  bottom: 6px !important;
+  left: 6px !important;
+  gap: 4px;
+  opacity: 0.78;
+  transition: opacity 120ms ease;
+}
+
+.cc-editor-shell .cc-motion-path-toolbar:is(:hover, :focus-within) {
+  opacity: 1;
+}
+
+.cc-editor-shell .cc-motion-path-toolbar button {
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  background: rgba(var(--cc-shadow-rgb), 0.72);
+  border: 1px solid var(--cc-border-light);
+  backdrop-filter: blur(6px);
+}
+
+.cc-editor-shell .cc-motion-path-toolbar button:disabled:nth-child(2) {
+  display: none;
+}
+
+.cc-editor-shell .cc-clip-label.audio {
+  color: var(--cc-heading-ink);
+  text-shadow: 0 1px 2px rgba(var(--cc-shadow-rgb), 0.55);
+}
+
+.cc-editor-shell .cc-timeline-drag-status:empty {
+  min-height: 0 !important;
+  padding-block: 0 !important;
+}
+
+.cc-editor-shell .cc-aspect-fit-label {
+  background: transparent !important;
+  border-style: dashed !important;
+  opacity: 0.78;
+  cursor: default;
+}
+
+@media (max-width: 1040px) {
+  .cc-editor-shell .cc-topbar-title {
+    max-width: 22vw;
+  }
+
+  .cc-editor-shell .cc-topbar-actions {
+    gap: 0;
+  }
+
+  .cc-editor-shell .cc-topbar-icon-button {
+    width: 36px !important;
+    height: 36px !important;
+  }
+
+  .cc-editor-shell .cc-topbar-export {
+    min-width: 70px !important;
+    padding-inline: 10px !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .cc-editor-shell .cc-topbar-title {
+    max-width: 18vw;
+  }
+
+  .cc-editor-shell .cc-editor-settings-entry .cc-topbar-icon-button {
+    width: 36px !important;
+    padding-inline: 0 !important;
+  }
+
+  .cc-editor-shell .cc-editor-settings-entry .cc-tool-label {
+    display: none;
+  }
+
+  .cc-editor-shell .cc-editor-brand-mark {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-editor-shell .cc-topbar-icon-button,
+  .cc-editor-shell .cc-topbar-export,
+  .cc-editor-shell .cc-timeline-tool-button,
+  .cc-editor-shell .cc-timeline-play-button,
+  .cc-editor-shell .cc-panel-divider-grip,
+  .cc-editor-shell .cc-asset-thumb-wrap,
+  .cc-editor-shell .cc-insp-row,
+  .cc-editor-shell .cc-insp-range::-webkit-slider-thumb {
+    transition: none;
+  }
+}
+
+/* UI feedback stays separate from the timeline's frame and pointer geometry. */
+.cc-editor-shell {
+  --cc-motion-feedback: 140ms;
+  --cc-motion-overlay: 200ms;
+  --cc-motion-ease: cubic-bezier(.2, .75, .3, 1);
+}
+
+.cc-editor-shell :is(.cc-topbar-icon-button, .cc-timeline-tool-button) > svg {
+  transition: transform var(--cc-motion-feedback) var(--cc-motion-ease);
+}
+.cc-editor-shell :is(.cc-topbar-icon-button, .cc-timeline-tool-button):not(:disabled):active > svg {
+  transform: scale(.92);
+}
+
+/* Menus retain their exact anchor and hit positions while appearing. */
+.cc-editor-shell :is(.cc-utilities-popover, .cc-media-popover, .cc-track-create-menu, .cc-caption-cue-menu, .cc-clip-context-menu) {
+  animation: cc-ui-menu-enter var(--cc-motion-feedback) var(--cc-motion-ease);
+}
+/* Asset context menus are portalled directly to the document body. */
+body > .cc-media-popover {
+  animation: cc-ui-menu-enter 140ms cubic-bezier(.2, .75, .3, 1);
+}
+@keyframes cc-ui-menu-enter {
+  from { opacity: .72; }
+  to { opacity: 1; }
+}
+
+/* The dialog surface settles in place; the backdrop and editor do not move. */
+.cc-editor-shell :is(.cc-modal, .cc-mobile-upload-dialog, .cc-settings-readable, .cc-export-panel) {
+  animation: cc-ui-dialog-enter var(--cc-motion-overlay) var(--cc-motion-ease);
+}
+@keyframes cc-ui-dialog-enter {
+  0% { opacity: .8; transform: scale(.985); }
+  70% { opacity: 1; transform: scale(1.003); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cc-editor-shell :is(.cc-topbar-icon-button, .cc-timeline-tool-button) > svg { transition: none; }
+  .cc-editor-shell :is(.cc-topbar-icon-button, .cc-timeline-tool-button):not(:disabled):active > svg { transform: none; }
+  .cc-editor-shell :is(.cc-utilities-popover, .cc-media-popover, .cc-track-create-menu, .cc-caption-cue-menu, .cc-clip-context-menu, .cc-modal, .cc-mobile-upload-dialog, .cc-settings-readable, .cc-export-panel) { animation: none; }
+  body > .cc-media-popover { animation: none; }
+}
+
+/* --- Option B (Graphite Champagne) + Jianying-style rounded cards, toggles & aligned controls --- */
+.cc-editor-shell .cc-asset-add-btn,
+.cc-editor-shell .cc-resource-add-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cc-accent);
+  color: var(--cc-on-accent);
+  box-shadow: 0 2px 8px rgba(var(--cc-shadow-rgb), 0.52);
+  opacity: 0;
+  transform: scale(0.92);
+  pointer-events: none;
+  z-index: 4;
+  transition: opacity 140ms ease, transform 140ms ease, filter 120ms ease;
+}
+
+.cc-editor-shell .cc-asset-add-btn {
+  cursor: pointer;
+  padding: 0;
+}
+
+.cc-editor-shell .cc-asset-card:is(:hover, :focus-within) .cc-asset-duration {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.cc-editor-shell .cc-asset-card:is(:hover, :focus-within) .cc-asset-add-btn,
+.cc-editor-shell .cc-resource-card:is(:hover, :focus-visible, .hovered) .cc-resource-add-badge {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+.cc-editor-shell .cc-asset-add-btn:hover {
+  filter: brightness(1.08);
+  transform: scale(1.06);
+}
+
+.cc-editor-shell .cc-insp-align-bar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cc-editor-shell .cc-insp-segmented {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--cc-inset);
+}
+
+.cc-editor-shell .cc-insp-segmented button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 26px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--cc-text-muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.cc-editor-shell .cc-insp-segmented button:hover {
+  background: var(--cc-hover);
+  color: var(--cc-text-strong);
+}
+
+.cc-editor-shell .cc-insp-segmented button[aria-pressed='true'],
+.cc-editor-shell .cc-insp-segmented button.active {
+  background: var(--cc-accent);
+  color: var(--cc-on-accent);
+  font-weight: 650;
+}
+
+.cc-editor-shell .cc-insp-style-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.cc-editor-shell .cc-insp-style-pills .cc-insp-segmented {
+  flex: 1 1 92px;
+}
+
+.cc-editor-shell .cc-insp-color-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--cc-inset);
+  color: var(--cc-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cc-editor-shell .cc-insp-color-chip input[type='color'] {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.cc-editor-shell .cc-insp-collapsible-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--cc-panel-alt);
+}
+
+.cc-editor-shell .cc-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+  color: var(--cc-text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.cc-editor-shell .cc-switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex: 0 0 36px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: var(--cc-inset);
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.cc-editor-shell .cc-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--cc-text-strong);
+  box-shadow: 0 1px 3px rgba(var(--cc-shadow-rgb), 0.45);
+  transition: transform 150ms ease;
+}
+
+.cc-editor-shell .cc-switch:checked {
+  background: var(--cc-accent);
+}
+
+.cc-editor-shell .cc-switch:checked::after {
+  transform: translateX(16px);
+  background: var(--cc-on-accent);
+}
+
+.cc-editor-shell .cc-switch:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
+}
+
+.cc-editor-shell .cc-insp-btn,
+.cc-editor-shell .cc-cap-btn,
+.cc-editor-shell .cc-resource-tertiary-tabs button {
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
+  background: var(--cc-panel-alt);
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.cc-editor-shell .cc-insp-btn:hover:not(:disabled),
+.cc-editor-shell .cc-cap-btn:hover:not(:disabled),
+.cc-editor-shell .cc-resource-tertiary-tabs button:hover {
+  background: var(--cc-hover);
+  color: var(--cc-text-strong);
+}
+
+.cc-editor-shell .cc-resource-tertiary-tabs button[aria-selected='true'],
+.cc-editor-shell .cc-resource-tertiary-tabs button.active {
+  background: var(--cc-accent) !important;
+  color: var(--cc-on-accent) !important;
+  font-weight: 650;
+}
+
+.cc-editor-shell .cc-insp-btn.primary,
+.cc-editor-shell .cc-cap-btn.primary {
+  background: var(--cc-accent) !important;
+  color: var(--cc-on-accent) !important;
+  font-weight: 650;
+}
+
+.cc-editor-shell :is(.cc-insp-select, .cc-cap-select, .cc-cap-input) {
+  border: 1px solid transparent !important;
+  border-radius: 10px !important;
+  background: var(--cc-inset);
+}
+
+.cc-editor-shell .cc-insp-textarea {
+  border: 1px solid transparent !important;
+  border-radius: 12px !important;
+  background: var(--cc-inset);
+  padding: 8px 10px;
+}
+
+.cc-editor-shell .cc-media-search {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
+  background: var(--cc-inset);
+}
+
+.cc-editor-shell .cc-media-purpose {
+  border-bottom: 0;
+  border-radius: 12px;
+  margin: 4px 0;
+}
+
+.cc-editor-shell .cc-inspector .cc-caption-style-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.cc-editor-shell .cc-inspector .cc-caption-style-header > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.cc-editor-shell .cc-inspector .cc-caption-style-header .cc-caption-font-scope {
+  margin-left: auto;
+  padding: 2px;
+  gap: 2px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.cc-editor-shell .cc-inspector .cc-caption-style-header .cc-caption-font-scope button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  height: 26px;
+  min-height: 26px !important;
+  padding: 0 9px !important;
+  border: 0 !important;
+  border-radius: 999px;
+  font-size: 12px !important;
+  line-height: 1;
+  white-space: nowrap !important;
+}
+
+.cc-editor-shell .cc-inspector .cc-caption-style-header .cc-insp-group-reset {
+  flex: 0 0 auto;
+  min-height: 26px !important;
+  padding: 0 4px;
+  font-size: 12px !important;
+  white-space: nowrap;
+}
+
+.cc-editor-shell .cc-capedit-size-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--cc-inset);
+  color: var(--cc-accent);
+  font-size: 11.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-editor-shell .cc-asset-add-btn,
+  .cc-editor-shell .cc-resource-add-badge,
+  .cc-editor-shell .cc-insp-segmented button,
+  .cc-editor-shell .cc-switch,
+  .cc-editor-shell .cc-switch::after {
+    transition: none;
+  }
+}

@@ -22,7 +22,7 @@ export const CLIP_COLOR: Record<TimelineItem['kind'], string> = {
   solid: '#4a5568',
   sequence: '#5b4b8a',
   audio: theme.clipAudio,
-  'motion-graphic': theme.clipMg, text: theme.clipText,
+  'motion-graphic': theme.clipMg, mosaic: theme.clipMg, text: theme.clipText,
 };
 /** default time scale — 1s ≈ 36px @30fps (shorter clips, less “giant color block”) */
 export const PX_PER_FRAME = 1.2;
@@ -241,14 +241,59 @@ export function fmtRuler(frames: number, fps: number): string {
   return `${mm}:${String(ss).padStart(2, '0')}`;
 }
 
-export type DragMode = 'move' | 'trim-left' | 'trim-right' | 'slip';
+export type DragMode = 'move' | 'trim-left' | 'trim-right' | 'slip' | 'roll';
 export type EditMode = 'selection' | 'blade' | 'trim' | 'slip' | 'pen' | 'rate-stretch';
 export interface Drag {
   id: string; mode: DragMode; baseStart: number; baseDur: number; baseTrack: TrackId;
-  baseSrcIn: number; startX: number; deltaF: number; targetTrack: TrackId; snapAt: number | null;
+  baseSrcIn: number; startX: number; startY?: number; activated?: boolean; deltaF: number; targetTrack: TrackId; snapAt: number | null;
+  rightId?: string;
+  rawDeltaF?: number;
+  lastClientX?: number;
+  lastScrollLeft?: number;
+  lastPx?: number;
+  /** Shared planner result: the visible insertion and the committed edit agree. */
+  plannedState?: TimelineState;
+  planError?: string;
+  limitMessage?: string;
+  newTrackDrop?: boolean;
+  newTrackPlacement?: 'top' | 'bottom';
 }
 // how close (px) an edge must come to a snap target before it locks on
 export const SNAP_PX = 7;
+
+export interface ClipEdgeHandleLayout {
+  trimWidth: number;
+  leftOffset: number;
+  rightOffset: number;
+  showRollRight: boolean;
+}
+
+export function clipEdgeHandleLayout(
+  clipWidthPx: number,
+  editMode: EditMode,
+  hasRollLeft: boolean,
+  hasRollRight: boolean,
+  rightWidthPx = 0,
+): ClipEdgeHandleLayout {
+  const explicitTrim = editMode === 'trim' || editMode === 'rate-stretch';
+  if (explicitTrim) {
+    const trimWidth = Math.min(6, Math.max(1, clipWidthPx / 3));
+    return { trimWidth, leftOffset: -trimWidth / 2, rightOffset: -trimWidth / 2, showRollRight: false };
+  }
+  if (clipWidthPx < 18) {
+    const trimWidth = Math.min(6, Math.max(1, clipWidthPx / 3));
+    return { trimWidth, leftOffset: -trimWidth / 2, rightOffset: -trimWidth / 2, showRollRight: false };
+  }
+  if (clipWidthPx < 32) {
+    return { trimWidth: 3, leftOffset: 0, rightOffset: 0, showRollRight: false };
+  }
+  return {
+    trimWidth: 5,
+    leftOffset: hasRollLeft ? 4 : -1,
+    rightOffset: hasRollRight ? 4 : -1,
+    showRollRight: hasRollRight && rightWidthPx >= 24,
+  };
+}
 
 // Paint dense, filled audio peaks instead of a repeated decorative zig-zag.
 // Generate a stable waveform from clip identity so the

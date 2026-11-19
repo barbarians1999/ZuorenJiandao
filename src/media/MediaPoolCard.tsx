@@ -12,6 +12,8 @@ import { durationLabel, mediaRatioLabel } from './mediaPoolFormat';
 import { MgThumb } from './MgThumb';
 import { usePreviewMediaSource } from './previewMedia';
 import { assetCanTranscribe } from '../transcript/transcribe-jobs';
+import type { MediaPlacementPurpose } from './placementPurpose';
+import type { MediaSourceRanges } from '../editor/mediaSourceRange';
 
 interface MediaAssetCardProps {
   asset: MediaAsset;
@@ -24,6 +26,9 @@ interface MediaAssetCardProps {
   view: 'grid' | 'list';
   musicAnalysis?: MusicAnalysisCardState;
   canRelink: boolean;
+  dragPurpose?: MediaPlacementPurpose;
+  sourceRanges?: MediaSourceRanges;
+  onOpenSourceRange?: (id: string) => void;
   onAdd: (asset: MediaAsset) => void;
   onPointerChange: (id: string | null) => void;
   onDragChange: (id: string | null) => void;
@@ -142,12 +147,12 @@ export const MediaAssetCard = memo(function MediaAssetCard(props: MediaAssetCard
       onDragStart={(event) => {
         if (missing) return;
         props.onDragChange(asset.id);
-        setMediaAssetDrag(event, asset, props.selected ? props.selectedAssetIds : [asset.id]);
+        setMediaAssetDrag(event, asset, props.selected ? props.selectedAssetIds : [asset.id], props.dragPurpose, props.sourceRanges);
       }}
       onDragEnd={() => props.onDragChange(null)}
       onClickCapture={(event) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (target?.closest('[data-music-analysis-control], .cc-asset-favorite, .cc-asset-more, .cc-asset-transcribe, .cc-asset-transcribe-status')) return;
+        if (target?.closest('[data-music-analysis-control], .cc-asset-favorite, .cc-asset-more, .cc-asset-transcribe, .cc-asset-transcribe-status, .cc-asset-source-range, .cc-asset-add-btn')) return;
         // Plain click selects and opens the asset menu beside the card;
         // Ctrl/Shift/meta toggles extra items. Clicking the selected card
         // again deselects it. Double-click adds to the timeline.
@@ -187,6 +192,11 @@ export const MediaAssetCard = memo(function MediaAssetCard(props: MediaAssetCard
       }}
     >
       <AssetThumbArea {...props} />
+      {!missing && (asset.kind === 'video' || asset.kind === 'audio') && props.onOpenSourceRange && <button
+        type="button" className={`cc-asset-source-range${props.sourceRanges?.[asset.id] ? ' is-marked' : ''}`}
+        title="预览原片，设置入点和出点后只加入选段" aria-label={`选段：${asset.name}`}
+        onClick={(event) => { event.stopPropagation(); props.onOpenSourceRange?.(asset.id); }}
+        onDoubleClick={(event) => event.stopPropagation()}>{props.sourceRanges?.[asset.id] ? '已选段' : '选段'}</button>}
       <button className="cc-asset-name" title={asset.name} tabIndex={-1}>{asset.name}</button>
       {!missing && props.musicAnalysis && props.musicAnalysis.state !== 'unavailable' && <MusicAnalysisBadge asset={asset} state={props.musicAnalysis} />}
     </div>
@@ -204,7 +214,7 @@ function AssetThumbArea(props: MediaAssetCardProps) {
           ? t('点击重新链接')
           : t(isTimelineMediaAssetKind(asset.kind)
             ? '单击选中，双击加入时间线，或拖到指定轨道：{name}'
-            : '单击选中，或拖到 AI 对话框：{name}', { name: asset.name })}
+            : '单击选中，或拖到时间线：{name}', { name: asset.name })}
         style={missing ? undefined : { cursor: 'grab' }}
         onClick={() => { if (missing && props.canRelink) props.onRelink(asset.id); }}
       >
@@ -215,6 +225,21 @@ function AssetThumbArea(props: MediaAssetCardProps) {
             : <AssetPreview key={asset.src} asset={asset} fps={props.fps} active={active} onLoadError={props.onLoadError} onLoadSuccess={props.onLoadSuccess} />}
       </button>
       <AssetBadges {...props} />
+      {!missing && isTimelineMediaAssetKind(asset.kind) && (
+        <button
+          type="button"
+          className="cc-asset-add-btn"
+          title={t('添加到时间线：{name}', { name: asset.name })}
+          aria-label={t('添加到时间线：{name}', { name: asset.name })}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onAdd(asset);
+          }}
+          onDoubleClick={(event) => event.stopPropagation()}
+        >
+          <Icon name="plus" size={14} strokeWidth={2.2} />
+        </button>
+      )}
     </div>
   );
 }

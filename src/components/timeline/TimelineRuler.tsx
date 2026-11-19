@@ -1,7 +1,7 @@
 // Time ruler (moved verbatim from Timeline.tsx): click/hold drag seek; point in selection mode = time point,
 // Drag = time period (startPick). The scale density changes with scaling to "good-looking" main scales; the I/O input and output flags are stacked on top.
 // Mark the pin with the project level (click the pin to open the comment editor). The timecode span is written directly by the playhead painter to frames other than the initial value.
-import { type RefObject } from 'react';
+import { memo, useRef, type RefObject } from 'react';
 import { theme } from '../../theme';
 import { MARKER_HEX, type Marker, type TimelineState } from '../../editor/types';
 import type { TimelinePickDrag } from '../../agent/selection-refs';
@@ -32,12 +32,13 @@ interface TimelineRulerProps {
   pinnedMarkerId: string | null;
 }
 
-export function TimelineRuler({
+export const TimelineRuler = memo(function TimelineRuler({
   state, empty, px, majorFrames, minorFrames, minorTicksPerMajor, rulerEndFrame, visibleWindow,
   pickMode, startPick, seekTo, rulerTimecodeRef, playheadFrame, zoneIn, zoneOut,
   markers, onEditMarker, pinnedMarkerId,
 }: TimelineRulerProps) {
   const t = useT();
+  const lastScrubX = useRef<number | null>(null);
   const tickWindow = rulerTickWindow(visibleWindow, rulerEndFrame, majorFrames, minorTicksPerMajor);
   const visibleMarkers = markers.filter((marker) => marker.scope === 'project' && (
     marker.id === pinnedMarkerId
@@ -48,21 +49,36 @@ export function TimelineRuler({
     ? intersectFrameRange(zoneIn, zoneOut - zoneIn, visibleWindow)
     : null;
   return (
-    <div
-      className="cc-timeline-ruler"
-      onPointerDown={(e) => {
-        if (pickMode) { startPick(e, 'ruler'); return; }
-        if (e.button !== 0) return;
-        e.currentTarget.setPointerCapture(e.pointerId); // Press and drag = continuous seek; raise your hand to release automatically
-        e.currentTarget.style.cursor = 'grabbing';
-        seekTo(e.clientX);
-      }}
-      onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) seekTo(e.clientX); }}
-      onPointerUp={(e) => { e.currentTarget.style.cursor = ''; }}
-      style={{ display: 'flex', height: RULER_H, borderBottom: `0.5px solid ${theme.border}`, fontSize: 10, color: theme.textDim, cursor: pickMode ? 'crosshair' : 'pointer', userSelect: 'none' }}
-    >
-      <div className="cc-ruler-head" style={{ width: HEADER_W }}><span ref={rulerTimecodeRef}>{fmtClock(playheadFrame, state.fps)}</span></div>
-      <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
+    <>
+      <div className="cc-ruler-head" style={{ width: HEADER_W, height: RULER_H, marginBottom: -RULER_H }}>
+        <span ref={rulerTimecodeRef}>{fmtClock(playheadFrame, state.fps)}</span>
+      </div>
+      <div
+        className="cc-timeline-ruler"
+        data-timeline-pixels-per-frame={px}
+        onPointerDown={(e) => {
+          if ((e.target as Element).closest('.cc-ruler-head, button, input, select, textarea')) return;
+          if (pickMode) { startPick(e, 'ruler'); return; }
+          if (e.button !== 0) return;
+          e.currentTarget.setPointerCapture(e.pointerId); // Press and drag = continuous seek; raise your hand to release automatically
+          e.currentTarget.style.cursor = 'grabbing';
+          lastScrubX.current = e.clientX;
+          seekTo(e.clientX);
+        }}
+        onPointerMove={(e) => {
+          if (pickMode || !e.currentTarget.hasPointerCapture(e.pointerId) || lastScrubX.current === e.clientX) return;
+          lastScrubX.current = e.clientX;
+          seekTo(e.clientX);
+        }}
+        onPointerUp={(e) => {
+          if (!pickMode && e.currentTarget.hasPointerCapture(e.pointerId) && lastScrubX.current !== e.clientX) seekTo(e.clientX);
+          lastScrubX.current = null;
+          e.currentTarget.style.cursor = '';
+        }}
+        onPointerCancel={(e) => { lastScrubX.current = null; e.currentTarget.style.cursor = ''; }}
+        onLostPointerCapture={(e) => { lastScrubX.current = null; e.currentTarget.style.cursor = ''; }}
+        style={{ position: 'sticky', top: 0, marginLeft: HEADER_W, height: RULER_H, overflow: 'hidden', borderBottom: `0.5px solid ${theme.border}`, fontSize: 10, color: theme.textDim, cursor: pickMode ? 'crosshair' : 'pointer', userSelect: 'none' }}
+      >
         {empty
           ? Array.from({ length: 5 }).map((_, i) => (
               <span key={i} style={{ position: 'absolute', left: `${i * 25}%`, top: 6, transform: i === 4 ? 'translateX(-100%)' : undefined }}>{fmtRuler(i * state.fps * 10, state.fps)}</span>
@@ -166,6 +182,6 @@ export function TimelineRuler({
           );
         })}
       </div>
-    </div>
+    </>
   );
-}
+});

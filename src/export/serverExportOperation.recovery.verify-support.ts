@@ -78,6 +78,8 @@ async function verifyRefreshReattachesAcceptedServerExport(): Promise<void> {
   const recovered = recoveredStore.getSnapshot().jobs[0];
   assert.equal(recovered?.id, 'server-export-render-before-refresh');
   assert.equal(recovered?.progress.phase, 'completed', recovered?.error ?? undefined);
+  assert.equal(recovered?.progress.detail, undefined, 'recovered delivery clears an inherited write-in-progress detail');
+  assert.equal(recovered?.progress.outputSize, 5, 'recovered delivery retains the completed output size');
   assert.equal(targetWrites, 1, 'refresh recovery must deliver the accepted server result exactly once');
   assert.deepEqual(await listServerExportJobs('project-refresh'), []);
 
@@ -169,7 +171,7 @@ async function verifyRecoveredWriteFailureRetainsCompletedRender(): Promise<void
         result: { path: '/media/recovered-write-failure.mp4', name: 'retained.mp4', sizeBytes: 5 },
       });
     }
-    if (url === '/media/recovered-write-failure.mp4') return new Response('video');
+    if (url.endsWith('/media/recovered-write-failure.mp4')) return new Response('video');
     throw new Error(`unexpected request: ${url}`);
   }) as typeof fetch;
   const store = createExportJobStore();
@@ -181,6 +183,9 @@ async function verifyRecoveredWriteFailureRetainsCompletedRender(): Promise<void
   await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
   const recovered = store.getSnapshot().jobs[0];
   assert.equal(recovered?.progress.phase, 'failed');
+  assert.equal(recovered?.progress.detail, undefined, 'recovered write failure clears the inherited write detail');
+  assert.match(recovered?.error ?? '', /disk full/);
+  assert.match(recovered?.failure?.message ?? '', /disk full/);
   assert.equal(recovered?.failure?.stage, 'destination');
   assert.equal(requests.some((request) => request === `DELETE /export/job/${recovery.renderId}`), false,
     'recovered write failure must retain the completed server output');
@@ -342,10 +347,49 @@ async function verifyExplicitRerenderRetiresRecoveryFirst(): Promise<void> {
   assert.equal(store.getSnapshot().jobs.length, 0, 'retired recovery cannot auto-deliver later');
 }
 
+async function verifyTerminalRenderRecoveryIsRetiredOnlyWhenConfirmed(): Promise<void> {
+  for (const [renderId, response, shouldRetire] of [
+    ['render-terminal-failure', Response.json({ status: 'failed', progress: 0, error: 'render failed' }), true],
+    ['render-missing-404', new Response(null, { status: 404 }), true],
+  ] as const) {
+    resetServerExportRecoveryMemory();
+    const record: PersistedServerExportJob = {
+      version: 1, renderId, projectId: renderId, label: `${renderId}.mp4`, targetPath: null,
+      createdAt: 60, updatedAt: 60, format: 'video', codec: 'h264', base: renderId, fps: 30,
+      state: { fps: 30, items: [], transitions: [], markers: [] } as never,
+      destination, autoQaEnabled: false, stage: 'polling',
+    };
+    await persistServerExportJob(record);
+    globalThis.fetch = (async (input) => {
+      assert.equal(String(input), `/export/job/${renderId}`);
+      return response;
+    }) as typeof fetch;
+    const store = createExportJobStore();
+    await resumePersistedServerExports({ exportJobs: store, projectId: renderId, t: (key) => key });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    assert.equal((await listServerExportJobs(renderId)).length, shouldRetire ? 0 : 1);
+  }
+
+  resetServerExportRecoveryMemory();
+  const record: PersistedServerExportJob = {
+    version: 1, renderId: 'render-temporary-network', projectId: 'render-temporary-network',
+    label: 'temporary.mp4', targetPath: null, createdAt: 70, updatedAt: 70,
+    format: 'video', codec: 'h264', base: 'temporary', fps: 30,
+    state: { fps: 30, items: [], transitions: [], markers: [] } as never,
+    destination, autoQaEnabled: false, stage: 'polling',
+  };
+  await persistServerExportJob(record);
+  globalThis.fetch = (async () => { throw new Error('temporary network failure'); }) as typeof fetch;
+  await resumePersistedServerExports({ exportJobs: createExportJobStore(), projectId: record.projectId, t: (key) => key });
+  await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+  assert.equal((await listServerExportJobs(record.projectId)).length, 1, 'uncertain network failures remain recoverable');
+}
+
 export async function runServerExportRecoveryVerifications(): Promise<void> {
   await verifyRefreshReattachesAcceptedServerExport();
   await verifyRecoveredWriteFailureRetainsCompletedRender();
   await verifyMissingBrowserAuthorityRetainsCompletedRender();
   await verifyRebindResumesCompletedOutputWithoutRender();
   await verifyExplicitRerenderRetiresRecoveryFirst();
+  await verifyTerminalRenderRecoveryIsRetiredOnlyWhenConfirmed();
 }

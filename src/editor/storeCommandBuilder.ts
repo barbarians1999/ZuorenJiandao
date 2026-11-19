@@ -9,24 +9,37 @@ import {
   sequenceReferenceError,
 } from './sequenceGraph';
 import { planSlip } from './slip';
+import { planSubdraft } from './subdraft';
+import { planCompactTracks } from './trackConsolidate';
 import { sourceFramesToTimelineFrames } from './sourceLimit';
+import { mainTrackId } from './magneticTimeline';
+import { DEFAULT_COMPOSITION_MOSAIC } from './compositionMosaic';
+import { resolveMediaSourceRange } from './mediaSourceRange';
 import type { EditorCommands } from './storeCommands';
+import { buildMediaPoolCommands } from './storeMediaPoolCommands';
 import {
   activeEditorState,
   activeTimeline,
   defaultTrackId,
+  isEffectItemKind,
+  isEffectTrack,
+  isTextTrack,
   resolveTrackId,
+  timelineTrackIds,
+  trackKind,
 } from './types';
 import type {
   Marker,
   MediaAsset,
-  MediaRelinkResult,
   ProjectDoc,
   Timeline,
   TimelineItem,
+  TimelineState,
   TrackId,
   TrackKind,
+  TrackVisualRole,
 } from './types';
+import type { SelectionAction } from './selectionState';
 
 // Ids must stay unique across sessions: items are persisted to IndexedDB, so a
 // process-local counter (which resets to 0 on every reload) would regenerate ids
@@ -37,7 +50,12 @@ const uid = (p: string) => `${p}_${crypto.randomUUID()}`;
 // The editor command set over a project dispatch fn — reused by the live store
 // (real dispatch → history) and by the proposal draft engine (draft dispatch
 // that records + applies to a scratch ProjectDoc without touching the real one).
-export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDoc): EditorCommands {
+export function buildCommands(
+  dispatch: ProjectDispatch,
+  getDoc: () => ProjectDoc,
+  selectionDispatch: (action: SelectionAction) => void = dispatch,
+  getLiveState?: () => TimelineState,
+): EditorCommands {
   // Track creations produced while BUILDING an action (pickTrack runs inside
   // the item literal, before dispatch) are staged here and folded into the same
   // batch as that action, so "add audio to a project with no audio track" is
@@ -54,16 +72,60 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
     const pending = takePendingTrackCreates();
     dispatch(pending.length ? { type: 'batch', label, actions: [...pending, action] } : action);
   };
-  const pickTrack = (ref: TrackId | undefined, kind: TrackKind): TrackId => {
+  const pickTrack = (
+    ref: TrackId | undefined,
+    kind: TrackKind,
+    visualRole?: TrackVisualRole,
+    itemKind?: TimelineItem['kind'],
+  ): TrackId => {
     const state = activeTimeline(getDoc());
-    const existing = resolveTrackId(state, ref, kind) ?? defaultTrackId(state, kind);
+    const main = mainTrackId(state);
+    const matchesRole = (track: TrackId): boolean => {
+      if (kind !== 'video') return true;
+      if (visualRole === 'text') return isTextTrack(state, track, main);
+      if (visualRole === 'effect') return isEffectTrack(state, track, main);
+      return !isTextTrack(state, track, main)
+        && (!isEffectTrack(state, track, main) || (itemKind != null && isEffectItemKind(itemKind)));
+    };
+    const resolved = resolveTrackId(state, ref, kind);
+    const existing = resolved && matchesRole(resolved)
+      ? resolved
+      : visualRole === 'text' || visualRole === 'effect'
+        ? timelineTrackIds(state).find((track) => trackKind(state, track) === 'video' && track !== main && matchesRole(track))
+        : (() => { const d = defaultTrackId(state, kind); return d && matchesRole(d) ? d : undefined; })();
     if (existing) return existing;
     const id = uid('track');
     // Staged, not dispatched: the enclosing command commits it with its own
     // action. Any command that does not use dispatchWithTracks/placeItem still
     // gets it flushed as part of its next batch.
-    pendingTrackCreates.push({ type: 'track.create', track: { id, kind } });
+    pendingTrackCreates.push({ type: 'track.create', track: { id, kind, ...(visualRole ? { visualRole } : {}) } });
     return id;
+  };
+  const createVideoTrackAtTop = (name: string, visualRole?: TrackVisualRole): TrackId => {
+    const state = activeTimeline(getDoc());
+    const id = uid('track');
+    const order = timelineTrackIds(state).filter((track) => trackKind(state, track) === 'video').length;
+    pendingTrackCreates.push({ type: 'track.create', track: { id, kind: 'video', name, ...(visualRole ? { visualRole } : {}) }, order });
+    return id;
+  };
+  const pickEffectOverlayTrack = (
+    state: TimelineState,
+    name: string,
+    startFrame: number,
+    durationInFrames: number,
+    explicitTrack?: TrackId,
+  ): TrackId => {
+    const main = mainTrackId(state);
+    if (explicitTrack && trackKind(state, explicitTrack) === 'video'
+      && !isTextTrack(state, explicitTrack, main) && !state.tracks?.[explicitTrack]?.locked) {
+      return explicitTrack;
+    }
+    const endFrame = startFrame + durationInFrames;
+    const free = timelineTrackIds(state).find((candidate) => candidate !== main
+      && isEffectTrack(state, candidate, main) && !state.tracks?.[candidate]?.locked
+      && !state.items.some((item) => item.track === candidate
+        && item.startFrame < endFrame && item.startFrame + item.durationInFrames > startFrame));
+    return free ?? createVideoTrackAtTop(name, 'effect');
   };
   const placeItem = (
     item: Omit<TimelineItem, 'startFrame'>,
@@ -85,17 +147,8 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
     const plan = planOverwrite(state, item, at.startFrame ?? 0, () => uid('item'));
     if (plan) dispatch({ type: 'batch', label: 'Overwrite clip', actions: [...trackCreates, ...before, ...plan.actions] });
   };
-  const commitRelink = (
-    action: Extract<AtomicAction, { type: 'pool.relinkAsset' | 'relinkTimelineItem' }>,
-  ): MediaRelinkResult => {
-    const current = getDoc();
-    if (projectReduce(current, action) === current) {
-      return { ok: false, changed: false, reason: 'no-document-change' };
-    }
-    dispatch(action);
-    return { ok: true, changed: true };
-  };
   return {
+      getState: () => getLiveState?.() ?? activeEditorState(getDoc()),
       createTimeline: (opts) => {
         const d = getDoc();
         const base = activeTimeline(d);
@@ -107,12 +160,20 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
           fit: opts?.fit ?? base.fit,
           items: [], selectedId: null, trackOrder,
           tracks: { [trackOrder[0]]: { kind: 'video' } },
+          interaction: { mainTrackId: trackOrder[0], magnet: false, linkage: false, snapping: true },
           id: uid('tl'), name: opts?.name ?? `序列 ${d.timelines.length + 1}`, order: maxOrder(d) + 1,
         };
         dispatch({ type: 'tl.create', timeline: t, activate: opts?.activate });
         return t.id;
       },
       switchTimeline: (id) => dispatch({ type: 'tl.switch', id }),
+      createSubdraft: (ids) => {
+        const result = planSubdraft(getDoc(), ids, uid);
+        if (!result.ok) return result;
+        dispatch({ type: 'tl.setDoc', doc: result.doc });
+        selectionDispatch({ type: 'select', id: result.itemId });
+        return { ok: true, timelineId: result.timelineId, itemId: result.itemId };
+      },
       duplicateTimeline: (id, opts) => {
         const src = getDoc().timelines.find((t) => t.id === id);
         const newId = uid('tl');
@@ -122,47 +183,13 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
       deleteTimeline: (id) => dispatch({ type: 'tl.delete', id }),
       renameTimeline: (id, name) => dispatch({ type: 'tl.rename', id, name }),
       retargetTimeline: (id, width, height, fit) => dispatch({ type: 'tl.retarget', id, width, height, fit }),
+      setTimelineSnapping: (snapping) => dispatch({ type: 'tl.setSnapping', id: getDoc().activeTimelineId, snapping }),
       setTimelineHidden: (id, hidden) => dispatch({ type: 'tl.setHidden', id, hidden }),
       applyDoc: (doc) => dispatch({ type: 'tl.setDoc', doc }),
       batch: (actions, label) => {
         if (actions.length) dispatch({ type: 'batch', actions, label });
       },
-      createMediaFolder: (name, parentId) => {
-        const existing = getDoc().mediaFolders.find((folder) => folder.parentId === parentId && folder.name === name);
-        if (existing) return existing.id;
-        const id = uid('bin');
-        dispatch({ type: 'pool.createFolder', folder: { id, name, parentId } });
-        return id;
-      },
-      renameMediaFolder: (id, name) => dispatch({ type: 'pool.renameFolder', id, name }),
-      deleteMediaFolder: (id) => dispatch({ type: 'pool.deleteFolder', id }),
-      moveMediaAssets: (ids, folderId) => dispatch({ type: 'pool.moveAssets', ids, folderId }),
-      renameMediaAsset: (id, name) => dispatch({ type: 'pool.updateAsset', id, patch: { name } }),
-      renameMediaAssets: (entries) => dispatch({
-        type: 'batch',
-        actions: entries.map(({ id, name }) => ({ type: 'pool.updateAsset', id, patch: { name } })),
-        label: 'Rename media',
-      }),
-      setMediaAssetFavorite: (id, favorite) => dispatch({ type: 'pool.updateAsset', id, patch: { favorite } }),
-      setMediaAssetsFavorite: (ids, favorite) => dispatch({
-        type: 'batch',
-        actions: ids.map((id) => ({ type: 'pool.updateAsset', id, patch: { favorite } })),
-        label: favorite ? 'Favorite media' : 'Unfavorite media',
-      }),
-      editMediaAsset: (id, patch) => dispatch({ type: 'pool.updateAsset', id, patch }),
-      removeMediaAsset: (id) => dispatch({ type: 'pool.removeAsset', id }),
-      removeMediaAssets: (ids) => dispatch({
-        type: 'batch',
-        actions: ids.map((id) => ({ type: 'pool.removeAsset', id })),
-        label: 'Delete media',
-      }),
-      canonicalizeMediaAsset: (duplicateId, canonicalId) => dispatch({
-        type: 'pool.canonicalizeAsset',
-        duplicateId,
-        canonicalId,
-      }),
-      relinkMediaAsset: (id, next) => commitRelink({ type: 'pool.relinkAsset', id, ...next }),
-      relinkTimelineItem: (id, next) => commitRelink({ type: 'relinkTimelineItem', id, ...next }),
+      ...buildMediaPoolCommands(dispatch, getDoc, uid),
       addSolidItem: (at) => {
         const id = uid('item');
         dispatchWithTracks({
@@ -171,7 +198,7 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
           ripple: at?.ripple,
           item: {
             id,
-            track: pickTrack(at?.track, 'video'),
+            track: pickTrack(at?.track, 'video', undefined, 'solid'),
             durationInFrames: at?.durationInFrames ?? Math.round(5 * 30),
             kind: 'solid',
             name: at?.name ?? '纯色',
@@ -182,12 +209,41 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
         }, 'Add solid');
         return id;
       },
+      addShapeItem: (shape, at) => {
+        const state = activeTimeline(getDoc());
+        const startFrame = Math.max(0, Math.round(at?.startFrame ?? 0));
+        const durationInFrames = Math.max(1, Math.round(at?.durationInFrames ?? state.fps * 3));
+        const trackId = pickEffectOverlayTrack(state, '图形', startFrame, durationInFrames, at?.track);
+        const id = uid('item');
+        dispatchWithTracks({
+          type: 'add', startFrame,
+          item: {
+            id, track: trackId, durationInFrames, kind: 'solid', name: shape === 'ellipse' ? '椭圆' : '矩形',
+            width: state.width, height: state.height, props: { color: '#ff3b30' },
+            mask: { type: shape, x: 0.35, y: 0.35, width: 0.3, height: 0.3, feather: 0 },
+          },
+        }, 'Add shape');
+        return id;
+      },
+      addCompositionMosaic: (at) => {
+        const state = activeTimeline(getDoc());
+        const durationInFrames = Math.max(1, Math.round(at?.durationInFrames ?? state.fps * 3));
+        const id = uid('item');
+        const track = pickEffectOverlayTrack(state, '马赛克', Math.max(0, Math.round(at?.startFrame ?? 0)), durationInFrames, at?.track);
+        dispatchWithTracks({
+          type: 'add', startFrame: at?.startFrame,
+          item: { id, track, durationInFrames, kind: 'mosaic', name: '独立马赛克', width: state.width,
+            height: state.height, mosaic: { ...DEFAULT_COMPOSITION_MOSAIC } },
+        }, 'Add composition mosaic');
+        return id;
+      },
+      setCompositionMosaic: (id, patch) => dispatch({ type: 'setCompositionMosaic', id, patch }),
       setDesignStyle: (style) => dispatch({ type: 'design.set', style }),
       patchDesignStyle: (patch) => dispatch({ type: 'design.patch', patch }),
       addMotionGraphic: (tpl, at) => {
         const item = {
           id: uid('item'),
-          track: pickTrack(at?.track, 'video'),
+          track: pickTrack(at?.track, 'video', undefined, 'motion-graphic'),
           durationInFrames: tpl.durationInFrames,
           kind: 'motion-graphic' as const,
           templateId: tpl.id,
@@ -232,14 +288,27 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
       addTextClip: (at) => {
         const id = uid('item');
         const align = at?.align === 'left' || at?.align === 'right' ? at.align : 'center';
+        const current = activeTimeline(getDoc());
+        const duration = at?.durationInFrames ?? 90;
+        const start = at?.startFrame ?? 0;
+        // A missing V2 must not fall back to the magnetic main lane.
+        let titleTrack = at?.track ? pickTrack(at.track, 'video', 'text')
+          : timelineTrackIds(current).find((track) => track !== mainTrackId(current)
+            && isTextTrack(current, track, mainTrackId(current)) && !current.tracks?.[track]?.locked
+            && !current.items.some((item) => item.track === track && item.startFrame < start + duration
+              && item.startFrame + item.durationInFrames > start));
+        if (!titleTrack) {
+          titleTrack = uid('track');
+          pendingTrackCreates.push({ type: 'track.create', track: { id: titleTrack, kind: 'video', visualRole: 'text' }, order: timelineTrackIds(current).filter((track) => trackKind(current, track) === 'video').length });
+        }
         dispatchWithTracks({
           type: 'add',
           startFrame: at?.startFrame,
           ripple: at?.ripple,
           item: {
             id,
-            track: pickTrack(at?.track ?? 'V2', 'video'), // titles default to the top video track
-            durationInFrames: at?.durationInFrames ?? 90,
+              track: titleTrack,
+              durationInFrames: duration,
             kind: 'text',
             name: at?.name?.trim() || '文字',
             width: 1920,
@@ -258,11 +327,12 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
       addAsset: (asset: MediaAsset) => dispatch({ type: 'addAsset', asset }),
       addMediaItem: (asset, at) => {
         if (!isTimelineMediaAssetKind(asset.kind)) throw new Error(`${asset.name} is not timeline media`);
+        const sourceRange = resolveMediaSourceRange(asset, at);
         const item = asset.kind === 'motion-graphic'
           ? {
               id: uid('item'),
-              track: pickTrack(at?.track, 'video'),
-              durationInFrames: asset.durationInFrames,
+              track: pickTrack(at?.track, 'video', undefined, 'motion-graphic'),
+              durationInFrames: sourceRange?.durationInFrames ?? asset.durationInFrames,
               kind: 'motion-graphic' as const,
               templateId: asset.id,
               sourceAssetId: asset.id,
@@ -276,8 +346,8 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
             }
           : {
               id: uid('item'),
-              track: pickTrack(at?.track, asset.kind === 'audio' ? 'audio' : 'video'),
-              durationInFrames: asset.durationInFrames,
+              track: pickTrack(at?.track, asset.kind === 'audio' ? 'audio' : 'video', undefined, asset.kind),
+              durationInFrames: sourceRange?.durationInFrames ?? asset.durationInFrames,
               kind: asset.kind as Exclude<typeof asset.kind, 'motion-graphic'>,
               sourceAssetId: asset.id,
               name: asset.name,
@@ -286,15 +356,20 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
               originalFilePath: asset.originalFilePath,
               sourceRevision: sourceRevisionOf(asset),
               sourceContentHash: asset.sourceContentHash,
-              srcInFrame: typeof at?.srcInFrame === 'number'
-                ? Math.max(0, Math.round(at.srcInFrame))
+              srcInFrame: sourceRange?.srcInFrame,
+              volume: asset.kind === 'audio' || asset.kind === 'video'
+                ? (typeof at?.volume === 'number' && Number.isFinite(at.volume)
+                    ? Math.max(0, Math.min(2, at.volume))
+                    : 1)
                 : undefined,
-              volume: asset.kind === 'audio' || asset.kind === 'video' ? 1 : undefined,
               width: asset.width,
               height: asset.height,
               // A clip inherits a copy of the asset's ingest transcript,
               // so per-clip word edits never mutate the asset master.
-              ...copyTranscriptIdentity(asset),
+              // An explicit audio source range is in ORIGINAL-source time,
+              // not in the edited word stream (which strips leading silence).
+              // Keep the pool transcript, but do not silently change this trim's clock.
+              ...(sourceRange && asset.kind === 'audio' ? {} : copyTranscriptIdentity(asset)),
             };
         placeItem(item, at);
         return item.id;
@@ -342,7 +417,9 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
       updateItemProps: (id, patch) => dispatch({ type: 'updateProps', id, patch }),
       moveItem: (id, to) => {
         const item = activeTimeline(getDoc()).items.find((candidate) => candidate.id === id);
-        const track = to.track && item ? pickTrack(to.track, item.kind === 'audio' ? 'audio' : 'video') : to.track;
+        const track = to.track && item
+          ? pickTrack(to.track, item.kind === 'audio' ? 'audio' : 'video', item.kind === 'text' ? 'text' : undefined, item.kind)
+          : to.track;
         dispatchWithTracks({ type: 'move', id, ...to, track }, 'Move clip');
       },
       setItemTiming: (id, timing) => dispatch({ type: 'retime', id, ...timing }),
@@ -354,9 +431,11 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
         return result;
       },
       setItemVolume: (id, volume) => dispatch({ type: 'setVolume', id, volume }),
+      toggleSelectedPicture: (ids) => dispatch({ type: 'togglePicture', ids }),
       setItemFade: (id, fade) => dispatch({ type: 'setFade', id, ...fade }),
       setItemTransform: (id, patch) => dispatch({ type: 'setTransform', id, patch }),
       setItemFilters: (id, patch) => dispatch({ type: 'setFilters', id, patch }),
+      setItemMask: (id, mask) => dispatch({ type: 'setMask', id, mask }),
       setItemBackgroundFill: (id, enabled, strength) => dispatch({ type: 'setBackgroundFill', id, enabled, strength }),
       setItemZoom: (id, patch) => dispatch({ type: 'setZoom', id, patch }),
       setItemEffects: (id, effects, defs) => dispatch({ type: 'setEffects', id, effects, defs }),
@@ -398,7 +477,7 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
       toggleTrackFlag: (track, flag) => dispatch({ type: 'toggleTrack', track, flag }),
       createTrack: (kind, opts) => {
         const id = uid('track');
-        dispatch({ type: 'track.create', track: { id, kind, name: opts?.name, role: opts?.role, audioRouting: opts?.audioRouting }, order: opts?.order });
+        dispatch({ type: 'track.create', track: { id, kind, ...(opts?.visualRole ? { visualRole: opts.visualRole } : {}), name: opts?.name, role: opts?.role, audioRouting: opts?.audioRouting }, order: opts?.order });
         return id;
       },
       createCaptionTrack: (captions, opts) => {
@@ -416,6 +495,11 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
       updateTrack: (track, patch) => dispatch({ type: 'track.update', track, patch }),
       deleteTracks: (tracks) => dispatch({ type: 'track.delete', tracks }),
       tightenTrack: (track) => dispatch({ type: 'track.tighten', track }),
+      compactTracks: () => {
+        const res = planCompactTracks(activeTimeline(getDoc()));
+        if (res.movedItemCount > 0 || res.removedTrackIds.length > 0) dispatch({ type: 'track.compact' });
+        return res;
+      },
       setCaptions: (captions, track) => {
         const state = activeTimeline(getDoc());
         const target = track ?? defaultTrackId(state, 'caption') ?? undefined;
@@ -456,10 +540,11 @@ export function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDo
       fixTranscriptWord: (id, wordIndex, text) => dispatch({ type: 'fixTranscriptWord', id, wordIndex, text }),
       renameSpeaker: (id, from, to) => dispatch({ type: 'renameSpeaker', id, from, to }),
       setItemDenoise: (id, denoisedSrc, strength) => dispatch({ type: 'setItemDenoise', id, denoisedSrc, strength }),
-      selectItem: (id, opts) => dispatch({ type: 'select', id, mode: opts?.mode }),
-      selectItems: (ids) => dispatch({ type: 'selectMany', ids }),
-      selectAll: () => dispatch({ type: 'selectAll' }),
+      selectItem: (id, opts) => selectionDispatch({ type: 'select', id, mode: opts?.mode }),
+      selectItems: (ids) => selectionDispatch({ type: 'selectMany', ids }),
+      selectAll: () => selectionDispatch({ type: 'selectAll' }),
       applyState: (state) => dispatch({ type: 'setFullState', state }),
+      applyRollingTrim: (leftId, rightId, deltaF) => dispatch({ type: 'roll', leftId, rightId, deltaF }),
       undo: () => dispatch({ type: 'undo' }),
       redo: () => dispatch({ type: 'redo' }),
       beginHistoryGesture: () => dispatch({ type: 'history.beginGesture' }),

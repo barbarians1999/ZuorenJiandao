@@ -9,6 +9,17 @@ import { Icon } from '../icons';
 import { SliderRow } from './InspectorKeyframeControls';
 import type { FadePatch } from './InspectorTypes';
 import { PreviewFidelityStatus } from './PreviewFidelityStatus';
+import { resolveTextStyle, TEXT_STYLE_PRESETS } from '../../editor/textStyles';
+import {
+  formatFontSizeScale,
+  TEXT_DESIGN_PX_DEFAULT,
+  TEXT_SCALE_MAX,
+  TEXT_SCALE_MIN,
+  TEXT_SCALE_STEP,
+  textPxToScale,
+  textScaleToPx,
+} from '../../editor/fontSizeScale';
+import { FontPicker } from '../../fonts/FontPicker';
 
 const compactNumber = (value: number) => String(Number(value.toFixed(2)));
 
@@ -31,11 +42,11 @@ export function IsolateVoiceControl({
   const run = (action: 'apply' | 'clear', nextStrength?: number) => {
     setBusy(true);
     setErr(null);
-    if (action === 'apply') showAppToast(t('人声隔离处理中…'), { ms: 60_000 });
+    if (action === 'apply') showAppToast(t('正在降低底噪…'), { ms: 60_000 });
     void Promise.resolve(onIsolate(action, nextStrength))
       .then(() => {
-        if (action === 'clear') showAppToast(t('已清除人声隔离'));
-        else showAppToast(t('人声隔离已应用'));
+        if (action === 'clear') showAppToast(t('已清除降噪'));
+        else showAppToast(t('降噪已应用'));
       })
       .catch((e: unknown) => {
         const msg = e instanceof Error ? e.message : String(e);
@@ -48,7 +59,7 @@ export function IsolateVoiceControl({
   return (
     <div>
       <SliderRow
-        label={t('隔离强度')}
+        label={t('降噪强度')}
         val={strength}
         min={0}
         max={100}
@@ -63,31 +74,31 @@ export function IsolateVoiceControl({
           type="button"
           className="cc-insp-btn"
           disabled={busy || !canApply}
-          title={!canApply ? t('需先上传到媒体池（/media/uploads）') : t('用本机 ffmpeg 频谱降噪，保留原轨')}
-          style={{ flex: 1, fontSize: 11 }}
+          title={!canApply ? t('请先把素材导入媒体池') : t('在本机降低背景底噪，保留原素材')}
+          style={{ flex: 1, fontSize: 14 }}
           onClick={() => run('apply', strength)}
         >
-          {busy ? t('处理中…') : active ? t('重新隔离') : t('应用人声隔离')}
+          {busy ? t('处理中…') : active ? t('重新降噪') : t('降低底噪')}
         </button>
         {active && (
           <button
             type="button"
             className="cc-insp-btn"
             disabled={busy}
-            style={{ fontSize: 11 }}
+            style={{ fontSize: 14 }}
             onClick={() => run('clear')}
           >
             {t('清除')}
           </button>
         )}
       </div>
-      <div className="cc-insp-muted" style={{ fontSize: 10, marginTop: 4 }}>
+      <div className="cc-insp-muted" style={{ fontSize: 14, marginTop: 4 }}>
         {active
-          ? t('已应用 · 播放用隔离音轨 · master 不变')
-          : t('开箱 ffmpeg 降噪（非 DeepFilterNet3）')}
+          ? t('已应用降噪，源文件不变。')
+          : t('适合稳定底噪，不能把配乐和人声完全分离。')}
       </div>
       {err && (
-        <div style={{ fontSize: 10, color: 'var(--cc-danger, #f66)', marginTop: 4 }}>{err}</div>
+        <div style={{ fontSize: 14, color: 'var(--cc-danger, #f66)', marginTop: 4 }}>{err}</div>
       )}
     </div>
   );
@@ -165,43 +176,112 @@ export function FadeControl({ item, mixed, fps, onChange }: { item: TimelineItem
   );
 }
 
-// text clip content controls (text/fontSize/color/weight/align) — props-backed.
+// text clip content controls (text/fontSize/color/weight/align/typography) — props-backed.
 export function TextControl({ item, mixed, onPropChange }: { item: TimelineItem; mixed?: (key: string) => boolean; onPropChange: (key: string, value: unknown) => void }) {
   const t = useT();
   const p = item.props ?? {};
-  const selStyle: CSSProperties = { background: theme.bg, color: theme.text, border: `0.5px solid ${theme.borderLight}`, borderRadius: 4, padding: '3px 5px' };
+  const style = resolveTextStyle(p);
+  const fontScale = textPxToScale(style.fontSize);
+  const selStyle: CSSProperties = {
+    background: 'var(--cc-inset)',
+    color: theme.text,
+    border: 'none',
+    borderRadius: 10,
+    padding: '5px 10px',
+  };
+  const range = (label: string, key: string, value: number, min: number, max: number, step: number, suffix: string, fallback = 0) => (
+    <SliderRow label={label} val={value} min={min} max={max} step={step} fmt={`${value}${suffix}`} mixed={mixed?.(key)}
+      onReset={() => onPropChange(key, fallback)} resetDisabled={!mixed?.(key) && Math.abs(value - fallback) < 1e-6}
+      onChange={(next) => onPropChange(key, next)} />
+  );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <label style={{ fontSize: 11, color: theme.textDim }}>
-        <div style={{ marginBottom: 4 }}>{t('文字内容')}</div>
-        <textarea value={mixed?.('text') ? '' : String(p.text ?? '')} placeholder={mixed?.('text') ? '—' : undefined} onChange={(e) => onPropChange('text', e.target.value)} rows={2}
-          style={{ width: '100%', padding: '6px 8px', background: theme.bg, color: theme.text, border: `0.5px solid ${theme.borderLight}`, borderRadius: 5, resize: 'vertical', fontFamily: 'inherit', fontSize: 12 }} />
+      <div>
+        <div className="cc-insp-muted" style={{ marginBottom: 6 }}>{t('标题模板')}</div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {TEXT_STYLE_PRESETS.map((preset) => <button key={preset.id} type="button" className="cc-insp-btn"
+            aria-pressed={p.textStylePreset === preset.id} onClick={() => onPropChange('textStylePreset', preset.id)}>{t(preset.label)}</button>)}
+        </div>
+      </div>
+      <label className="cc-insp-mg-field">
+        <span>{t('文字内容')}</span>
+        <textarea value={mixed?.('text') ? '' : style.text} placeholder={mixed?.('text') ? '—' : undefined} onChange={(e) => onPropChange('text', e.target.value)} rows={2}
+          className="cc-insp-textarea"
+          style={{ width: '100%', padding: '8px 10px', background: 'var(--cc-inset)', color: theme.text, border: 'none', borderRadius: 12, resize: 'vertical', fontFamily: 'inherit', fontSize: 13 }} />
       </label>
-      <label style={{ fontSize: 11, color: theme.textDim }}>
-        <div style={{ marginBottom: 4 }}>{t('字号')} <span style={{ opacity: 0.7 }}>{mixed?.('fontSize') ? '—' : Number(p.fontSize ?? 96)}</span></div>
-        {mixed?.('fontSize') ? <input type="number" min={24} max={300} step={2} placeholder="—" onBlur={(e) => {
-          const value = Number(e.currentTarget.value);
-          if (e.currentTarget.value && Number.isFinite(value)) onPropChange('fontSize', value);
-        }} style={{ width: '100%', ...selStyle }} /> : <input type="range" min={24} max={300} step={2} value={Number(p.fontSize ?? 96)} onChange={(e) => onPropChange('fontSize', Number(e.target.value))} style={{ width: '100%' }} />}
-      </label>
-      <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-        <label style={{ fontSize: 11, color: theme.textDim, display: 'flex', alignItems: 'center', gap: 6 }}>
-          {t('颜色')} {mixed?.('color') && <span>—</span>} <input type="color" value={String(p.color ?? '#ffffff')} onChange={(e) => onPropChange('color', e.target.value)} />
+      <div className="cc-insp-mg-field"><span>{t('字体')}</span>
+        <FontPicker value={typeof p.fontFamily === 'string' ? p.fontFamily : 'sans-serif'}
+          targetKey={item.id}
+          fontAssetId={typeof p.fontAssetId === 'string' ? p.fontAssetId : undefined}
+          sampleText={style.text} mixed={mixed?.('fontFamily') || mixed?.('fontAssetId')}
+          onChange={(choice) => { onPropChange('fontFamily', choice.fontFamily); onPropChange('fontAssetId', choice.fontAssetId); }} />
+      </div>
+      <SliderRow
+        label={t('字号')}
+        val={fontScale}
+        min={TEXT_SCALE_MIN}
+        max={TEXT_SCALE_MAX}
+        step={TEXT_SCALE_STEP}
+        fmt={formatFontSizeScale(fontScale)}
+        mixed={mixed?.('fontSize')}
+        onReset={() => onPropChange('fontSize', TEXT_DESIGN_PX_DEFAULT)}
+        resetDisabled={!mixed?.('fontSize') && Math.abs(style.fontSize - TEXT_DESIGN_PX_DEFAULT) < 0.5}
+        onChange={(nextScale) => onPropChange('fontSize', textScaleToPx(nextScale))}
+      />
+      <div className="cc-insp-style-pills">
+        <label className="cc-insp-color-chip" title={t('文字颜色')}>
+          <span>{t('颜色')}</span>
+          {mixed?.('color') && <span>—</span>}
+          <input type="color" value={style.color} onChange={(e) => onPropChange('color', e.target.value)} />
         </label>
-        <label style={{ fontSize: 11, color: theme.textDim, display: 'flex', alignItems: 'center', gap: 6 }}>
-          {t('对齐')}
-          <select value={mixed?.('align') ? '__mixed' : String(p.align ?? 'center')} onChange={(e) => onPropChange('align', e.target.value)} style={selStyle}>
-            {mixed?.('align') && <option value="__mixed" disabled>—</option>}
-            <option value="left">{t('左')}</option><option value="center">{t('中')}</option><option value="right">{t('右')}</option>
-          </select>
-        </label>
-        <label style={{ fontSize: 11, color: theme.textDim, display: 'flex', alignItems: 'center', gap: 6 }}>
-          {t('粗细')}
-          <select value={mixed?.('fontWeight') ? '__mixed' : String(p.fontWeight ?? 700)} onChange={(e) => onPropChange('fontWeight', Number(e.target.value))} style={selStyle}>
-            {mixed?.('fontWeight') && <option value="__mixed" disabled>—</option>}
-            <option value="400">{t('常规')}</option><option value="700">{t('粗体')}</option><option value="900">{t('特粗')}</option>
-          </select>
-        </label>
+        <div className="cc-insp-segmented" role="group" aria-label={t('对齐')}>
+          {(['left', 'center', 'right'] as const).map((align) => (
+            <button key={align} type="button" aria-pressed={!mixed?.('align') && style.align === align}
+              onClick={() => onPropChange('align', align)}>
+              {t(align === 'left' ? '左' : align === 'center' ? '中' : '右')}
+            </button>
+          ))}
+        </div>
+        <div className="cc-insp-segmented" role="group" aria-label={t('粗细与样式')}>
+          <button type="button" aria-pressed={!mixed?.('fontWeight') && style.fontWeight >= 700}
+            title={t('粗体')}
+            onClick={() => onPropChange('fontWeight', style.fontWeight >= 700 ? 400 : 700)}>B</button>
+          <button type="button" aria-pressed={style.fontStyle === 'italic'}
+            title={t('斜体')}
+            onClick={() => onPropChange('fontStyle', style.fontStyle === 'italic' ? 'normal' : 'italic')}>I</button>
+          <button type="button" aria-pressed={style.textDecoration === 'underline'}
+            title={t('下划线')}
+            onClick={() => onPropChange('textDecoration', style.textDecoration === 'underline' ? 'none' : 'underline')}>U</button>
+        </div>
+      </div>
+      {range(t('字距'), 'letterSpacing', style.letterSpacing, -10, 40, 1, 'px', 0)}
+      {range(t('行距'), 'lineHeight', Number(style.lineHeight.toFixed(2)), 0.6, 3, 0.05, '', 1.2)}
+      <div className="cc-insp-collapsible-group">
+        <div className="cc-insp-section">{t('描边与阴影')}</div>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label className="cc-insp-color-chip">{t('描边')}<input type="color" value={style.strokeColor} onChange={(e) => onPropChange('strokeColor', e.target.value)} /></label>
+          <label className="cc-switch-row">
+            <span>{t('启用阴影')}</span>
+            <input className="cc-switch" type="checkbox" role="switch" checked={style.shadowEnabled} onChange={(e) => onPropChange('shadowEnabled', e.target.checked)} />
+          </label>
+        </div>
+        {range(t('宽度'), 'strokeWidth', style.strokeWidth, 0, 30, 1, 'px', 0)}
+        {style.shadowEnabled && <div className="cc-insp-stack">
+          <label className="cc-insp-row">
+            <span className="cc-insp-label">{t('阴影颜色')}</span>
+            <input type="text" value={style.shadowColor} onChange={(e) => onPropChange('shadowColor', e.target.value)} style={{ gridColumn: '2 / -1', width: '100%', ...selStyle }} />
+          </label>
+          {range(t('模糊'), 'shadowBlur', style.shadowBlur, 0, 80, 1, 'px', 16)}
+          {range(t('水平偏移'), 'shadowOffsetX', style.shadowOffsetX, -80, 80, 1, 'px', 0)}
+          {range(t('垂直偏移'), 'shadowOffsetY', style.shadowOffsetY, -80, 80, 1, 'px', 3)}
+        </div>}
+      </div>
+      <div className="cc-insp-collapsible-group">
+        <div className="cc-insp-section">{t('背景框')}</div>
+        <label className="cc-insp-color-chip">{t('背景色')}<input type="color" value={style.backgroundColor} onChange={(e) => onPropChange('backgroundColor', e.target.value)} /></label>
+        {range(t('不透明度'), 'backgroundOpacity', style.backgroundOpacity, 0, 100, 1, '%', 0)}
+        {range(t('内边距'), 'backgroundPadding', style.backgroundPadding, 0, 120, 1, 'px', 0)}
+        {range(t('圆角'), 'backgroundRadius', style.backgroundRadius, 0, 120, 1, 'px', 0)}
       </div>
     </div>
   );
@@ -291,7 +371,8 @@ export function TransitionControl({ transition, fps, onAdd, onSet, onRemove, aud
 }) {
   const t = useT();
   const selStyle: CSSProperties = { background: theme.bg, color: theme.text, border: `0.5px solid ${theme.borderLight}`, borderRadius: 4, padding: '3px 5px' };
-  const needsDir = transition && (transition.type === 'soft-wipe' || transition.type === 'whip-pan');
+  const symmetric = transition?.type === 'blinds-reveal' || transition?.type === 'split-slide';
+  const needsDir = transition && (transition.type === 'soft-wipe' || transition.type === 'whip-pan' || symmetric);
   const options = audioMode ? AUDIO_TRANSITION_ORDER : TRANSITION_ORDER;
   // When audioMode, ignore a visual transition on this clip (shouldn't exist)
   const shown = transition && (audioMode
@@ -301,12 +382,12 @@ export function TransitionControl({ transition, fps, onAdd, onSet, onRemove, aud
     : null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ fontSize: 10.5, color: theme.textDim, opacity: 0.8 }}>
+      <div style={{ fontSize: audioMode ? 14 : 10.5, color: theme.textDim, opacity: 0.8 }}>
         {audioMode
-          ? t('与前一段相邻音频交叉淡化（出点渐弱 / 入点渐强）')
+          ? t('让前一段声音渐弱、这一段声音渐强；只适用于同轨相邻音频。')
           : t('从前一个相邻片段进入本片段')}
       </div>
-      <label style={{ fontSize: 11, color: theme.textDim, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <label style={{ fontSize: audioMode ? 14 : 11, color: theme.textDim, display: 'flex', alignItems: 'center', gap: 8 }}>
         {t('类型')}
         <select value={shown?.type ?? ''} style={selStyle} onChange={(e) => {
           const v = e.target.value as TransitionType | '';
@@ -321,15 +402,15 @@ export function TransitionControl({ transition, fps, onAdd, onSet, onRemove, aud
       {shown && !audioMode && <PreviewFidelityStatus status={previewStatus} />}
       {shown && (
         <>
-          <label style={{ fontSize: 11, color: theme.textDim }}>
+          <label style={{ fontSize: audioMode ? 14 : 11, color: theme.textDim }}>
             <div style={{ marginBottom: 4 }}>{t('时长')} <span style={{ opacity: 0.7 }}>{(shown.durationInFrames / fps).toFixed(1)}s</span></div>
             <input type="range" min={2} max={Math.max(4, fps * 2)} step={1} value={shown.durationInFrames} onChange={(e) => onSet({ durationInFrames: Number(e.target.value) })} style={{ width: '100%' }} />
           </label>
           {needsDir && !audioMode && (
             <label style={{ fontSize: 11, color: theme.textDim, display: 'flex', alignItems: 'center', gap: 8 }}>
               {t('方向')}
-              <select value={shown.direction ?? 'left'} style={selStyle} onChange={(e) => onSet({ direction: e.target.value as TransitionItem['direction'] })}>
-                <option value="left">{t('左')}</option><option value="right">{t('右')}</option><option value="up">{t('上')}</option><option value="down">{t('下')}</option>
+              <select value={symmetric ? shown.direction === 'up' || shown.direction === 'down' ? 'up' : 'left' : shown.direction ?? 'left'} style={selStyle} onChange={(e) => onSet({ direction: e.target.value as TransitionItem['direction'] })}>
+                {symmetric ? <><option value="left">{t('横向')}</option><option value="up">{t('纵向')}</option></> : <><option value="left">{t('左')}</option><option value="right">{t('右')}</option><option value="up">{t('上')}</option><option value="down">{t('下')}</option></>}
               </select>
             </label>
           )}

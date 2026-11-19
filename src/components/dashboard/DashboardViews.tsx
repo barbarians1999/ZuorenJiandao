@@ -3,7 +3,7 @@ import type { ProjectMeta } from '../../persist/projectStoreCoordinators';
 import { theme } from '../../theme';
 import { useT } from '../../i18n/locale';
 import { DashboardHeaderLinks } from '../DashboardHeaderLinks';
-import { BrandMark, Icon, ZuorenJiandaoWordmark } from '../icons';
+import { BrandMark, Icon } from '../icons';
 import { bindAction } from '../../shortcuts/actionRegistry';
 // Opened on demand, so they load on demand — see dashboardDialogs.tsx.
 import {
@@ -12,29 +12,14 @@ import {
 import { useDashboardDialogPrefetch } from './dashboardDialogLoaders';
 import { StorageMigrationBanner } from '../settings/StorageMigrationBanner';
 import { SkinPicker } from '../settings/SkinPicker';
-import { LocaleToggle } from '../TopBar';
+import { ToolbarUtilities } from '../ToolbarUtilities';
+import { TopBarIconButton } from '../TopBarIconButton';
 import {
-  card, importBtn, miniBtn, modelSetupButton, modelSetupCard, modelSetupIcon,
-  nameInput, newCard, searchBox, searchClear, searchEmpty, searchIcon, searchInput,
-  settingsBtn, thumb,
+  card, importBtn, miniBtn, nameInput, searchBox, searchClear, searchEmpty, searchIcon, searchInput,
+  thumb,
 } from './dashboardStyles';
 import { relativeProjectTime, type DashboardModel, type DashboardProps } from './useDashboardModel';
-
-function ModelSetupCard({ onOpen }: { onOpen: () => void }) {
-  const t = useT();
-  return (
-    <section role="status" style={modelSetupCard}>
-      <span style={modelSetupIcon}><Icon name="sparkles" size={18} /></span>
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <strong style={{ display: 'block', color: theme.textStrong, fontSize: 13.5 }}>{t('配置模型后开始使用 Agent')}</strong>
-        <span style={{ display: 'block', marginTop: 3, color: theme.textDim, fontSize: 11.5, lineHeight: 1.5 }}>
-          {t('配置任一云端或本地模型，即可在编辑器中使用对话式剪辑。')}
-        </span>
-      </span>
-      <button type="button" onClick={onOpen} style={modelSetupButton}>{t('配置模型')}</button>
-    </section>
-  );
-}
+import './dashboard-ui.css';
 
 function ProjectSearch({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const t = useT();
@@ -61,17 +46,17 @@ export function DashboardTitlebarContent({ model }: { model: DashboardModel }) {
   const t = useT();
   return (
     <>
-      <BrandMark size={20} />
-      <ZuorenJiandaoWordmark />
-      <span style={{ color: theme.textDim, fontSize: 13 }}>{t('· 我的工程')}</span>
-      <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-        <DashboardHeaderLinks />
-        <button onClick={() => model.setDialog('mcp', true)} data-tip={t('外部 Agent 接入 (MCP)')} aria-label={t('外部 Agent 接入 (MCP)')} className="cc-header-btn cc-tip cc-tip-r" style={settingsBtn}><Icon name="plug" size={16} /></button>
-        <button onClick={() => model.setDialog('shortcuts', true)} data-tip={t('编辑快捷键')} aria-label={t('编辑快捷键')} className="cc-header-btn cc-tip cc-tip-r" style={settingsBtn}><Icon name="keyboard" size={16} /></button>
-        <LocaleToggle />
+      <span role="img" aria-label={t('左人剪刀')} className="cc-dashboard-brand"><BrandMark size={22} /></span>
+      <span style={{ color: theme.textDim, fontSize: 13 }}>{t('我的工程')}</span>
+      <span className="cc-dashboard-header-actions">
+        <ToolbarUtilities>
+          <TopBarIconButton icon="plug" label={t('外部 Agent 接入 (MCP)')} onClick={() => model.setDialog('mcp', true)} />
+          <TopBarIconButton icon="keyboard" label={t('编辑快捷键')} onClick={() => model.setDialog('shortcuts', true)} />
+          <TopBarIconButton icon="database" label={t('数据存储')} onClick={() => model.setDialog('storage', true)} />
+          <DashboardHeaderLinks />
+        </ToolbarUtilities>
         <SkinPicker />
-        <button onClick={() => model.setDialog('storage', true)} data-tip={t('数据存储')} aria-label={t('数据存储')} className="cc-header-btn cc-tip cc-tip-r" style={settingsBtn}><Icon name="database" size={16} /></button>
-        <button onClick={() => model.setDialog('settings', true)} data-tip={t('设置 · API 密钥')} aria-label={t('设置 · API 密钥')} className="cc-header-btn cc-tip cc-tip-r" style={settingsBtn}><Icon name="sliders" size={16} /></button>
+        <TopBarIconButton icon="sliders" label={t('设置')} onClick={() => model.setDialog('settings', true)} />
       </span>
     </>
   );
@@ -89,8 +74,6 @@ function ProjectToolbar({ projects, model }: { projects: ProjectMeta[]; model: D
       <span className="cc-dashboard-toolbar-actions">
         <ProjectSearch value={model.query} onChange={model.setQuery} />
         <button className="cc-dashboard-action" onClick={() => model.setDialog('cleanup', true)} style={importBtn} title={t('清理所有工程都不引用的上传素材(测试/已删工程残留)')}><Icon name="trash" size={13} /> {t('清理素材')}</button>
-        <button className="cc-dashboard-action" onClick={() => model.transfer.fileRef.current?.click()} disabled={model.transfer.busy} style={importBtn} title={t('导入 .ccproj 工程文件(兼容旧 .ccproj.json)')}><Icon name="upload" size={13} /> {t('导入工程')}</button>
-        <input ref={model.transfer.fileRef} type="file" accept=".ccproj,.json,application/json,application/x-openchatcut-project" onChange={model.transfer.pickImport} style={{ display: 'none' }} />
         <span style={{ color: theme.textDim, fontSize: 12.5 }}>
           {model.normalizedQuery
             ? t('{n} / {total} 个', { n: model.visibleProjects.length, total: projects.length })
@@ -101,7 +84,7 @@ function ProjectToolbar({ projects, model }: { projects: ProjectMeta[]; model: D
   );
 }
 
-function ProjectName({ project, model }: { project: ProjectMeta; model: DashboardModel }) {
+function ProjectName({ project, model, onOpen }: { project: ProjectMeta; model: DashboardModel; onOpen: (id: string) => void }) {
   const t = useT();
   if (model.rename.editingId === project.id) {
     return <input
@@ -110,34 +93,45 @@ function ProjectName({ project, model }: { project: ProjectMeta; model: Dashboar
       onChange={(event) => model.rename.setDraft(event.target.value)}
       onBlur={model.rename.commit}
       onKeyDown={(event) => {
-        if (event.key === 'Enter') model.rename.commit();
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.key === 'Enter') { event.preventDefault(); model.rename.commit(); }
         if (event.key === 'Escape') model.rename.cancel();
       }}
+      aria-label={`${t('重命名')}: ${project.name}`}
+      className="cc-project-name-edit"
       style={nameInput}
     />;
   }
-  return <div onDoubleClick={() => model.rename.start(project)} title={t('双击重命名')} style={{ fontSize: 13, fontWeight: 550, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{project.name}</div>;
+  return <button
+    type="button"
+    className="cc-project-name"
+    onClick={() => onOpen(project.id)}
+    title={t('打开 {name}', { name: project.name })}
+    aria-label={t('打开 {name}', { name: project.name })}
+  >{project.name}</button>;
 }
 
 function ProjectActions({ project, props, model }: { project: ProjectMeta; props: DashboardProps; model: DashboardModel }) {
   const t = useT();
   if (model.rename.confirmId === project.id) {
     return <button
+      type="button"
       onClick={() => {
         void model.transfer.run(props.onDelete(project.id).then(() => t('已永久删除「{name}」', { name: project.name })));
         model.rename.setConfirmId(null);
       }}
       disabled={model.transfer.busy}
+      aria-label={`${t('确认删除')}: ${project.name}`}
       style={{ ...miniBtn, color: theme.danger }}
       title={t('彻底删除工程,并清掉只有它引用的素材文件')}
     >{t('确认删除')}</button>;
   }
   return (
     <>
-      <button className="cc-project-mini-action" onClick={() => model.rename.start(project)} style={miniBtn} title={t('重命名')}><Icon name="pencil" size={13} /></button>
-      <button className="cc-project-mini-action" onClick={() => props.onDuplicate(project.id)} style={miniBtn} title={t('复制')}><Icon name="copy" size={13} /></button>
-      <button className="cc-project-mini-action" onClick={() => void model.transfer.run(props.onExport(project.id, project.name))} disabled={model.transfer.busy} style={miniBtn} title={t('导出为流式 .ccproj(含素材,可在桌面版/其它机器导入)')}><Icon name="download" size={13} /></button>
-      <button className="cc-project-mini-action" onClick={() => model.rename.setConfirmId(project.id)} style={miniBtn} title={t('删除')}><Icon name="trash" size={13} /></button>
+      <button type="button" className="cc-project-mini-action" onClick={() => model.rename.start(project)} style={miniBtn} title={t('重命名')} aria-label={`${t('重命名')}: ${project.name}`}><Icon name="pencil" size={13} /></button>
+      <button type="button" className="cc-project-mini-action" onClick={() => props.onDuplicate(project.id)} style={miniBtn} title={t('复制')} aria-label={`${t('复制')}: ${project.name}`}><Icon name="copy" size={13} /></button>
+      <button type="button" className="cc-project-mini-action" onClick={() => void model.transfer.run(props.onExport(project.id, project.name))} disabled={model.transfer.busy} style={miniBtn} title={t('导出为流式 .ccproj(含素材,可在桌面版/其它机器导入)')} aria-label={`${t('导出为流式 .ccproj(含素材,可在桌面版/其它机器导入)')}: ${project.name}`}><Icon name="download" size={13} /></button>
+      <button type="button" className="cc-project-mini-action" onClick={() => model.rename.setConfirmId(project.id)} style={miniBtn} title={t('删除')} aria-label={`${t('删除')}: ${project.name}`}><Icon name="trash" size={13} /></button>
     </>
   );
 }
@@ -151,12 +145,10 @@ function ProjectCard({ project, props, model }: { project: ProjectMeta; props: D
           ? <img src={model.thumbs[project.id]} alt="" draggable={false} loading="lazy" decoding="async" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
           : <span style={{ color: theme.borderLight, display: 'inline-flex' }}><Icon name="play" size={26} /></span>}
       </button>
-      <div style={{ padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <ProjectName project={project} model={model} />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 11, color: theme.textDim, fontVariantNumeric: 'tabular-nums' }}>{relativeProjectTime(project.updatedAt, t)}</span>
-          <div style={{ display: 'flex', gap: 2 }} className="acts"><ProjectActions project={project} props={props} model={model} /></div>
-        </div>
+      <div className="cc-project-row-main">
+        <ProjectName project={project} model={model} onOpen={props.onOpen} />
+        <span className="cc-project-updated">{relativeProjectTime(project.updatedAt, t)}</span>
+        <div className="cc-project-row-actions"><ProjectActions project={project} props={props} model={model} /></div>
       </div>
     </div>
   );
@@ -166,13 +158,13 @@ function ProjectGrid({ props, model }: { props: DashboardProps; model: Dashboard
   const t = useT();
   return (
     <>
-      <div className="cc-project-grid">
-        <button className="cc-project-new-card" onClick={props.onNew} style={newCard} title={t('新建工程')}>
-          <span className="cc-project-new-icon"><Icon name="plus" size={19} /></span>
-          <span className="cc-project-new-copy"><strong>{t('新建工程')}</strong><small>{t('从空白时间线开始')}</small></span>
-        </button>
-        {model.visibleProjects.map((project) => <ProjectCard key={project.id} project={project} props={props} model={model} />)}
-      </div>
+      {model.visibleProjects.length > 0 && <>
+        <div className="cc-project-list-heading" aria-hidden="true"><span /><span>{t('名称')}</span><span>{t('最近')}</span><span /></div>
+        <div className="cc-project-grid" role="list">
+          {model.visibleProjects.map((project) => <div role="listitem" key={project.id}><ProjectCard project={project} props={props} model={model} /></div>)}
+        </div>
+      </>}
+      {!model.normalizedQuery && props.projects.length === 0 && <div className="cc-dashboard-empty"><strong>{t('新建工程')}</strong><span>{t('从空白时间线开始')}</span></div>}
       {model.normalizedQuery && model.visibleProjects.length === 0 && (
         <div role="status" style={searchEmpty}><Icon name="search" size={14} />{t('没有找到匹配“{query}”的工程', { query: model.query.trim() })}</div>
       )}
@@ -181,11 +173,16 @@ function ProjectGrid({ props, model }: { props: DashboardProps; model: Dashboard
 }
 
 export function DashboardContent({ props, model }: { props: DashboardProps; model: DashboardModel }) {
+  const t = useT();
   return (
     <main className="cc-dashboard-main" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
       <div className="cc-dashboard-content">
         <StorageMigrationBanner onOpenDialog={() => model.setDialog('storage', true)} />
-        {model.modelSnapshot.loaded && model.modelSnapshot.choices.length === 0 && <ModelSetupCard onOpen={() => model.setDialog('settings', true)} />}
+        <div className="cc-dashboard-primary-actions">
+          <button type="button" className="cc-dashboard-new-project" onClick={() => { void props.onNew(); }}><Icon name="plus" size={18} />{t('新建工程')}</button>
+          <button type="button" className="cc-dashboard-import-project" onClick={() => model.transfer.fileRef.current?.click()} disabled={model.transfer.busy}><Icon name="upload" size={18} />{t('导入工程')}</button>
+          <input ref={model.transfer.fileRef} type="file" accept=".ccproj,.json,application/json,application/x-openchatcut-project" onChange={model.transfer.pickImport} style={{ display: 'none' }} />
+        </div>
         <ProjectToolbar projects={props.projects} model={model} />
         <ProjectGrid props={props} model={model} />
       </div>

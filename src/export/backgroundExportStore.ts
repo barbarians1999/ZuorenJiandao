@@ -16,6 +16,7 @@ export interface BackgroundExportJob {
   id: string;
   label: string;
   targetPath: string | null;
+  targetKey?: string;
   createdAt: number;
   updatedAt: number;
   busy: string | null;
@@ -27,6 +28,7 @@ export interface BackgroundExportJob {
   progress: ExportProgress;
   qa: ExportQaUiState | null;
   renderEngine: RenderEngine;
+  serverRenderId?: string | null;
 }
 
 export interface BackgroundExportSnapshot {
@@ -46,6 +48,7 @@ export interface BackgroundExportJobSetters {
   endTargetCommit(): void;
   markTargetCommitted(): void;
   setRenderEngine: StateSetter<RenderEngine>;
+  setServerRenderId?: (renderId: string | null) => void;
 }
 
 export interface BackgroundExportExecution {
@@ -56,6 +59,8 @@ export interface BackgroundExportExecution {
 export interface StartBackgroundExport {
   label: string;
   targetPath: string | null;
+  /** Destination authority plus filename; targetPath is only a display label. */
+  targetKey?: string;
   execute(execution: BackgroundExportExecution): Promise<void>;
 }
 export interface RecoverBackgroundExport extends StartBackgroundExport {
@@ -80,6 +85,18 @@ const TERMINAL_PHASE: Partial<Record<ExportProgress['phase'], true>> = {
   failed: true,
   cancelled: true,
 };
+
+function clearInheritedDownloadDetail(previous: ExportProgress, next: ExportProgress): ExportProgress {
+  if (previous.phase !== 'downloading'
+    || next.phase === 'downloading'
+    || next.detail !== previous.detail) return next;
+  return { ...next, detail: undefined };
+}
+
+/** Reopening export resumes active work; completed history must not replace new settings. */
+export function initialViewedExportJobId(jobs: readonly BackgroundExportJob[]): string | null {
+  return jobs.findLast((job) => !TERMINAL_PHASE[job.progress.phase])?.id ?? null;
+}
 type StateUpdate<Value> = Value | ((value: Value) => Value);
 
 function nextValue<Value>(current: Value, update: StateUpdate<Value>): Value {
@@ -112,8 +129,10 @@ export function createExportJobStore(now: () => number = Date.now): ExportJobSto
     const index = snapshot.jobs.findIndex((job) => job.id === jobId);
     if (index < 0) return;
     const current = snapshot.jobs[index];
-    const changed = transform(current);
+    let changed = transform(current);
     if (changed === current) return;
+    const progress = clearInheritedDownloadDetail(current.progress, changed.progress);
+    if (progress !== changed.progress) changed = { ...changed, progress };
     const jobs = [...snapshot.jobs];
     jobs[index] = Object.freeze({ ...changed, updatedAt: now() });
     publish(jobs);
@@ -160,6 +179,23 @@ export function createExportJobStore(now: () => number = Date.now): ExportJobSto
     }),
     setQa: (value) => update(jobId, (job) => ({ ...job, qa: nextValue(job.qa, value) })),
     setRenderEngine: (value) => update(jobId, (job) => ({ ...job, renderEngine: nextValue(job.renderEngine, value) })),
+    setServerRenderId: (renderId) => {
+      if (renderId !== null) {
+        update(jobId, (job) => (job.serverRenderId === renderId ? job : { ...job, serverRenderId: renderId }));
+        return;
+      }
+      const clearedId = snapshot.jobs.find((job) => job.id === jobId)?.serverRenderId;
+      let changed = false;
+      const updatedAt = now();
+      const nextJobs = snapshot.jobs.map((job) => {
+        if ((job.id === jobId || (clearedId && job.serverRenderId === clearedId)) && job.serverRenderId !== null) {
+          changed = true;
+          return Object.freeze({ ...job, serverRenderId: null, updatedAt });
+        }
+        return job;
+      });
+      if (changed) publish(nextJobs);
+    },
   });
   const failUnexpectedly = (jobId: string, reason: unknown) => {
     const existing = snapshot.jobs.find((job) => job.id === jobId);
@@ -191,6 +227,7 @@ export function createExportJobStore(now: () => number = Date.now): ExportJobSto
       id,
       label: input.label,
       targetPath: input.targetPath,
+      targetKey: input.targetKey,
       createdAt: startedAt,
       updatedAt: startedAt,
       busy: '等待导出…',
@@ -202,6 +239,7 @@ export function createExportJobStore(now: () => number = Date.now): ExportJobSto
       progress: { phase: 'queued', percent: 0, startedAt } satisfies ExportProgress,
       qa: null,
       renderEngine: 'idle',
+      serverRenderId: id.startsWith('server-export-') ? id.slice('server-export-'.length) : null,
     });
     const controller = new AbortController();
     controllers.set(id, controller);
@@ -230,8 +268,9 @@ export function createExportJobStore(now: () => number = Date.now): ExportJobSto
       return () => activeListeners.delete(listener);
     },
     start(input) {
-      const existing = input.targetPath
-        ? snapshot.jobs.find((job) => job.targetPath === input.targetPath && !TERMINAL_PHASE[job.progress.phase])
+      const key = input.targetKey ?? input.targetPath;
+      const existing = key
+        ? snapshot.jobs.find((job) => (job.targetKey ?? job.targetPath) === key && !TERMINAL_PHASE[job.progress.phase])
         : undefined;
       if (existing) return existing.id;
       const id = globalThis.crypto?.randomUUID?.() ?? `export-${now()}-${Math.random().toString(36).slice(2)}`;

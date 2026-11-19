@@ -6,6 +6,8 @@ import * as previewTransformModule from './previewTransform';
 import {
   cyclePreviewCandidate,
   edgeCropPreviewTransform,
+  edgeResizeClipMask,
+  edgeResizeCompositionMosaic,
   effectivePreviewTransform,
   hitPreviewCandidates,
   movePreviewTransform,
@@ -362,5 +364,90 @@ assert.match(
   /previewClientDelta\(gesture\.startClient/,
   'move/scale/rotate must use viewport client delta, not a cached overlay origin',
 );
+
+// Tight geometry for solid shape masks, text clips, and mosaic overlays (Bug #2).
+{
+  const solidShape: TimelineItem = {
+    id: 'shape-rect',
+    track: 'V1',
+    startFrame: 0,
+    durationInFrames: 90,
+    kind: 'solid',
+    name: '矩形',
+    props: { color: '#ff0000' },
+    mask: { type: 'rectangle', x: 0.25, y: 0.3, width: 0.5, height: 0.25, feather: 0 },
+  };
+  const shapeState = stateOf({ width: 1000, height: 1000, items: [solidShape] });
+  const shapeGeom = previewCandidateGeometry(shapeState, visiblePreviewCandidates(shapeState, 0)[0]!);
+  assert.deepEqual(shapeGeom.baseRect, { x: 250, y: 300, width: 500, height: 250 });
+  assert.deepEqual(hitPreviewCandidates(shapeState, 0, { x: 500, y: 400 }).map(({ item }) => item.id), ['shape-rect']);
+  assert.deepEqual(hitPreviewCandidates(shapeState, 0, { x: 50, y: 50 }), [], '点在形状外时不应误中全屏纯色层');
+
+  const resizedMask = edgeResizeClipMask(
+    shapeState,
+    effectivePreviewTransform(solidShape, 0),
+    solidShape.mask!,
+    { x: 900, y: 400 },
+    'e',
+  );
+  assert.ok(Math.abs(resizedMask.x - 0.25) < 1e-9, '拖动右边时左边必须固定');
+  assert.ok(Math.abs(resizedMask.width - 0.65) < 1e-9);
+  const clampedMask = edgeResizeClipMask(
+    shapeState,
+    effectivePreviewTransform(solidShape, 0),
+    solidShape.mask!,
+    { x: 100, y: 400 },
+    'e',
+  );
+  assert.ok(clampedMask.width >= 0.01 - 1e-9, '遮罩收缩不得突破最小宽度');
+}
+
+{
+  const shortText: TimelineItem = {
+    id: 'text-short',
+    track: 'V1',
+    startFrame: 0,
+    durationInFrames: 90,
+    kind: 'text',
+    name: '文字',
+    props: { text: '你好世界', fontSize: 64 },
+  };
+  const multiText: TimelineItem = {
+    ...shortText,
+    id: 'text-multi',
+    props: { text: '第一行内容\n第二行内容', fontSize: 64 },
+  };
+  const textState = stateOf({ width: 1080, height: 1920, items: [shortText, multiText] });
+  const shortGeom = previewCandidateGeometry(textState, visiblePreviewCandidates(textState, 0).find((c) => c.item.id === 'text-short')!);
+  const multiGeom = previewCandidateGeometry(textState, visiblePreviewCandidates(textState, 0).find((c) => c.item.id === 'text-multi')!);
+  assert.ok(shortGeom.baseRect.width < 1080, '短文字框宽度必须贴合文本而不是占满整画布宽度');
+  assert.ok(shortGeom.baseRect.height < 1920, '短文字框高度必须贴合文本而不是占满整画布高度');
+  assert.ok(multiGeom.baseRect.height > shortGeom.baseRect.height, '换行文字框高度必须随行数增长');
+}
+
+{
+  const mosaicItem: TimelineItem = {
+    id: 'mosaic-1',
+    track: 'V1',
+    startFrame: 0,
+    durationInFrames: 90,
+    kind: 'mosaic',
+    name: '马赛克',
+    transform: { crop: { left: 0.4, right: 0.4, top: 0.4, bottom: 0.4 } },
+    mosaic: { shape: 'rectangle', centerX: 0.5, centerY: 0.5, width: 0.4, height: 0.2, strength: 70, feather: 0, opacity: 1 },
+  };
+  const mosaicState = stateOf({ width: 1000, height: 1000, items: [mosaicItem] });
+  const mosaicGeom = previewCandidateGeometry(mosaicState, visiblePreviewCandidates(mosaicState, 0)[0]!);
+  assert.deepEqual(mosaicGeom.baseRect, { x: 300, y: 400, width: 400, height: 200 }, '马赛克选中框必须忽略无效的 transform.crop 并贴合 mosaic 区域');
+  const resizedMosaic = edgeResizeCompositionMosaic(
+    mosaicState,
+    effectivePreviewTransform(mosaicItem, 0),
+    mosaicItem.mosaic!,
+    { x: 900, y: 500 },
+    'e',
+  );
+  assert.ok(Math.abs((resizedMosaic.centerX - resizedMosaic.width / 2) - 0.3) < 1e-9, '马赛克拖动右边时左边必须固定');
+  assert.ok(Math.abs(resizedMosaic.width - 0.6) < 1e-9);
+}
 
 console.log('previewTransform.verify: ok (候选/画框/关键帧/命中/循环/移动/缩放/旋转/方向键微移)');

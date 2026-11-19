@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { EditorCommands } from '../editor/store';
 import type { TimelineItem, TimelineState } from '../editor/types';
@@ -6,18 +6,28 @@ import { Icon } from '../components/icons';
 import { useT } from '../i18n/locale';
 import { analyzeMotion } from './analyzeMotion';
 import { buildTrackingKeyframeActions, trackingTargets, type TrackingApplyMode } from './keyframeActions';
+import { buildMosaicTrack, mosaicTrackingInputKey, trackingRunIsCurrent } from './mosaicTracking';
+import { GAUSSIAN_MOSAIC_ID, readMosaic, readMosaicAt, setMosaicTrack } from '../editor/mosaic';
 import { TrackingError, type TrackingProgress, type TrackingRegion, type TrackingResult } from './types';
 import { TrackingRegionPicker } from './TrackingRegionPicker';
 import './motion-tracking.css';
 
 interface MotionTrackingDialogProps { state: TimelineState; commands: EditorCommands; item: TimelineItem; onClose: () => void }
 interface AnalysisState {
-  progress: TrackingProgress | null; result: TrackingResult | null; error: string | null; running: boolean;
+  progress: TrackingProgress | null; result: TrackingResult | null; resultKey: string | null; error: string | null; running: boolean;
   run: () => Promise<void>; cancel: () => void; reset: () => void; setError: (message: string | null) => void;
 }
 
 const STABILIZE = '__stabilize__';
+const MOSAIC_TRACK = '__mosaic_track__';
 const INITIAL_REGION: TrackingRegion = { x: 0.35, y: 0.3, width: 0.3, height: 0.4 };
+
+function mosaicRegionForTracking(item: TimelineItem): TrackingRegion {
+  const { region } = readMosaicAt(item, 0);
+  const x = Math.max(0, Math.min(1, region.centerX - region.width / 2));
+  const y = Math.max(0, Math.min(1, region.centerY - region.height / 2));
+  return { x, y, width: Math.max(.02, Math.min(region.width, 1 - x)), height: Math.max(.02, Math.min(region.height, 1 - y)) };
+}
 
 function errorLabel(error: unknown, t: ReturnType<typeof useT>): string {
   if (!(error instanceof TrackingError)) return error instanceof Error ? error.message : String(error);
@@ -31,31 +41,52 @@ function errorLabel(error: unknown, t: ReturnType<typeof useT>): string {
 
 function useTrackingAnalysis(state: TimelineState, item: TimelineItem, region: TrackingRegion, minConfidence: number): AnalysisState {
   const t = useT();
+  const inputKey = mosaicTrackingInputKey(state, item, region, minConfidence);
+  const inputKeyRef = useRef(inputKey);
+  inputKeyRef.current = inputKey;
   const [progress, setProgress] = useState<TrackingProgress | null>(null);
   const [result, setResult] = useState<TrackingResult | null>(null);
+  const [resultKey, setResultKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
+  const invalidate = useCallback(() => {
+    generationRef.current += 1;
+    abortRef.current?.abort(); abortRef.current = null;
+    setProgress(null); setResult(null); setResultKey(null); setError(null); setRunning(false);
+  }, []);
+  useEffect(() => { invalidate(); return invalidate; }, [inputKey, invalidate]);
   const run = async () => {
+    abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    const generation = ++generationRef.current;
+    const requestKey = inputKey;
     setRunning(true); setResult(null); setError(null);
+    setResultKey(null);
     setProgress({ processedFrames: 0, totalFrames: 1, confidence: null });
     try {
-      setResult(await analyzeMotion({
+      const next = await analyzeMotion({
         src: item.src!, fps: state.fps, srcInFrame: item.srcInFrame ?? 0,
         durationInFrames: item.durationInFrames, playbackRate: item.playbackRate ?? 1,
-        region, minConfidence, signal: controller.signal, onProgress: setProgress,
-      }));
+        region, minConfidence, signal: controller.signal,
+        onProgress: (value) => { if (trackingRunIsCurrent(generationRef.current, generation, inputKeyRef.current, requestKey)) setProgress(value); },
+      });
+      if (trackingRunIsCurrent(generationRef.current, generation, inputKeyRef.current, requestKey)) {
+        setResult(next); setResultKey(requestKey);
+      }
     } catch (cause) {
-      if (!(cause instanceof DOMException && cause.name === 'AbortError')) setError(errorLabel(cause, t));
+      if (trackingRunIsCurrent(generationRef.current, generation, inputKeyRef.current, requestKey)
+        && !(cause instanceof DOMException && cause.name === 'AbortError')) setError(errorLabel(cause, t));
     } finally {
-      if (abortRef.current === controller) abortRef.current = null;
-      setRunning(false);
+      if (trackingRunIsCurrent(generationRef.current, generation, inputKeyRef.current, requestKey)) {
+        if (abortRef.current === controller) abortRef.current = null;
+        setRunning(false);
+      }
     }
   };
-  const reset = () => { setProgress(null); setResult(null); setError(null); };
-  return { progress, result, error, running, run, cancel: () => abortRef.current?.abort(), reset, setError };
+  return { progress, result, resultKey, error, running, run, cancel: invalidate, reset: invalidate, setError };
 }
 
 function TrackingHeader({ item, close }: { item: TimelineItem; close: () => void }) {
@@ -68,7 +99,7 @@ function TrackingHeader({ item, close }: { item: TimelineItem; close: () => void
 
 interface TrackingSettingsProps {
   targets: TimelineItem[]; targetId: string; running: boolean; minConfidence: number; percent: number;
-  result: TrackingResult | null; locked: boolean; error: string | null;
+  result: TrackingResult | null; locked: boolean; error: string | null; mosaicMode: boolean; mosaicEligible: boolean;
   onTarget: (id: string) => void; onConfidence: (value: number) => void;
 }
 
@@ -78,6 +109,7 @@ function TrackingSettings(props: TrackingSettingsProps) {
     <label><span>{t('应用方式')}</span><select value={props.targetId} disabled={props.running} onChange={(event) => props.onTarget(event.target.value)}>
       <option value={STABILIZE}>{t('稳定所选视频画面')}</option>
       {props.targets.map((target) => <option key={target.id} value={target.id}>{t('让「{name}」跟随目标', { name: target.name })}</option>)}
+      <option value={MOSAIC_TRACK} disabled={!props.mosaicEligible}>{t(props.mosaicEligible ? '跟踪局部马赛克' : '添加单个局部马赛克后可跟踪')}</option>
     </select></label>
     <label><span>{t('最低置信度')}</span><strong>{props.minConfidence.toFixed(2)}</strong><input type="range" min={0.5} max={0.9} step={0.01} value={props.minConfidence} disabled={props.running} onChange={(event) => props.onConfidence(Number(event.target.value))} /></label>
     <div className="cc-tracking-progress"><div><span>{props.running ? t('正在跟踪画面…') : props.result ? t('跟踪分析完成') : t('等待框选目标')}</span><strong>{props.percent}%</strong></div><i><b style={{ transform: `scaleX(${props.percent / 100})` }} /></i></div>
@@ -85,21 +117,24 @@ function TrackingSettings(props: TrackingSettingsProps) {
       <strong>{t('{n} 个有效跟踪点', { n: props.result.points.length })}</strong>
       <span>{t('平均置信度 {value}', { value: props.result.averageConfidence.toFixed(2) })}</span>
       {props.result.stoppedBecauseLost && <small>{t('目标连续丢失，已提前停止；低置信度帧不会写入关键帧。')}</small>}
+      {props.mosaicMode && <small>{t('跟踪区间外保持端点位置；重复纹理、遮挡或目标缩放可能使路径漂移，请检查轨迹。')}</small>}
     </div>}
     {props.locked && <p className="cc-tracking-error">{t('目标轨道已锁定')}</p>}
     {props.error && <p className="cc-tracking-error">{props.error}</p>}
-    <p className="cc-tracking-note">{t('应用后会替换目标现有的 X/Y 关键帧；可在“变换”中继续手动修正。')}</p>
+    <p className="cc-tracking-note">{props.mosaicMode
+      ? t('只移动一个局部马赛克框，保持尺寸不变；不会移动视频。')
+      : t('应用后会替换目标现有的 X/Y 关键帧；可在“变换”中继续手动修正。')}</p>
   </aside>;
 }
 
-interface TrackingFooterProps { analysis: AnalysisState; applied: boolean; canApply: boolean; apply: () => void }
-function TrackingFooter({ analysis, applied, canApply, apply }: TrackingFooterProps) {
+interface TrackingFooterProps { analysis: AnalysisState; applied: boolean; canApply: boolean; mosaicMode: boolean; apply: () => void }
+function TrackingFooter({ analysis, applied, canApply, mosaicMode, apply }: TrackingFooterProps) {
   const t = useT();
-  return <footer><span>{applied ? t('已应用；一次撤销可还原全部跟踪关键帧') : ''}</span><div>
+  return <footer><span>{applied ? t('已应用；一次撤销可还原全部跟踪数据') : ''}</span><div>
     {analysis.running
       ? <button type="button" onClick={analysis.cancel}>{t('取消跟踪')}</button>
       : <button type="button" onClick={() => void analysis.run()}>{analysis.result ? t('重新分析') : t('开始分析')}</button>}
-    <button type="button" className="primary" disabled={!canApply || applied} onClick={apply}>{t('应用关键帧')}</button>
+    <button type="button" className="primary" disabled={!canApply || applied} onClick={apply}>{t(mosaicMode ? '应用马赛克跟踪' : '应用关键帧')}</button>
   </div></footer>;
 }
 
@@ -111,20 +146,46 @@ export function MotionTrackingDialog({ state, commands, item, onClose }: MotionT
   const [minConfidence, setMinConfidence] = useState(0.68);
   const [applied, setApplied] = useState(false);
   const analysis = useTrackingAnalysis(state, item, region, minConfidence);
+  const inputKey = mosaicTrackingInputKey(state, item, region, minConfidence);
+  const mosaicMode = targetId === MOSAIC_TRACK;
+  const mosaicInfo = readMosaic(item.effects);
+  const mosaicEligible = item.kind === 'video' && mosaicInfo.mode === 'local' && mosaicInfo.count === 1;
   const mode: TrackingApplyMode = targetId === STABILIZE ? 'stabilize' : 'follow';
-  const target = mode === 'stabilize' ? item : targets.find((candidate) => candidate.id === targetId) ?? null;
+  const target = mode === 'stabilize' || mosaicMode ? item : targets.find((candidate) => candidate.id === targetId) ?? null;
   const locked = !!target && !!state.tracks?.[target.track]?.locked;
   const percent = analysis.progress ? Math.round(analysis.progress.processedFrames * 100 / Math.max(1, analysis.progress.totalFrames)) : 0;
   const close = () => { analysis.cancel(); onClose(); };
   const apply = () => {
-    if (!analysis.result || !target || locked) return;
+    if (!analysis.result || analysis.resultKey !== inputKey || !target || locked) return;
+    if (mosaicMode) {
+      const liveState = commands.getState?.();
+      if (!liveState) return analysis.setError(t('无法读取当前片段状态；请重新打开跟踪后再应用。'));
+      const live = liveState.items.find((candidate) => candidate.id === item.id);
+      const liveMosaic = live ? readMosaic(live.effects) : null;
+      if (!mosaicEligible || liveState.selectedId !== item.id || !live
+        || liveMosaic?.mode !== 'local' || liveMosaic.count !== 1
+        || mosaicTrackingInputKey(liveState, live, region, minConfidence) !== inputKey) {
+        return analysis.setError(t('素材、马赛克或跟踪设置已变化，请重新分析。'));
+      }
+      const track = buildMosaicTrack(live, analysis.result);
+      const mosaicEffect = live.effects?.find((effect) => effect.assetId === GAUSSIAN_MOSAIC_ID);
+      const effects = mosaicEffect && track ? setMosaicTrack(live.effects ?? [], mosaicEffect.id, track) : null;
+      if (!effects) return analysis.setError(t('有效跟踪区间不足；请重新分析马赛克区域。'));
+      commands.batch([{ type: 'setEffects', id: live.id, effects }], 'Apply experimental mosaic tracking');
+      setApplied(true);
+      return;
+    }
     const actions = buildTrackingKeyframeActions({ state, source: item, target, result: analysis.result, mode });
     if (!actions.length) return analysis.setError(t('有效跟踪点与目标片段没有足够的重叠范围'));
     commands.batch(actions, 'Apply experimental motion tracking');
     setApplied(true);
   };
   const changeRegion = (next: TrackingRegion) => { setRegion(next); analysis.reset(); setApplied(false); };
-  const changeTarget = (id: string) => { setTargetId(id); setApplied(false); };
+  const changeTarget = (id: string) => {
+    setTargetId(id);
+    if (id === MOSAIC_TRACK) setRegion(mosaicRegionForTracking(item));
+    analysis.reset(); setApplied(false);
+  };
   const changeConfidence = (value: number) => { setMinConfidence(value); analysis.reset(); setApplied(false); };
   return createPortal(<div className="cc-tracking-overlay" role="dialog" aria-modal="true" aria-labelledby="cc-tracking-title" onClick={analysis.running ? undefined : close}>
     <section className="cc-tracking-dialog" onClick={(event) => event.stopPropagation()}>
@@ -132,8 +193,11 @@ export function MotionTrackingDialog({ state, commands, item, onClose }: MotionT
       <div className="cc-tracking-body"><main>
         <TrackingRegionPicker item={item} fps={state.fps} region={region} points={analysis.result?.points ?? []} disabled={analysis.running} onChange={changeRegion} />
         <p>{t('在起始画面拖拽框选纹理清晰的目标；按住 Ctrl/⌘ 滚轮可缩放预览。分析后轨迹会显示在画面上。')}</p>
-      </main><TrackingSettings targets={targets} targetId={targetId} running={analysis.running} minConfidence={minConfidence} percent={percent} result={analysis.result} locked={locked} error={analysis.error} onTarget={changeTarget} onConfidence={changeConfidence} /></div>
-      <TrackingFooter analysis={analysis} applied={applied} canApply={!!analysis.result && analysis.result.points.length >= 2 && !!target && !locked} apply={apply} />
+      </main><TrackingSettings targets={targets} targetId={targetId} running={analysis.running} minConfidence={minConfidence} percent={percent}
+        result={analysis.result} locked={locked} error={analysis.error} mosaicMode={mosaicMode} mosaicEligible={mosaicEligible}
+        onTarget={changeTarget} onConfidence={changeConfidence} /></div>
+      <TrackingFooter analysis={analysis} applied={applied} mosaicMode={mosaicMode}
+        canApply={analysis.resultKey === inputKey && !!analysis.result && analysis.result.points.length >= 2 && !!target && !locked && (!mosaicMode || mosaicEligible)} apply={apply} />
     </section>
   </div>, document.body);
 }

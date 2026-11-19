@@ -10,7 +10,7 @@ import { dirname, join, relative, posix } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const OUT_DIR = join(ROOT, 'public', 'whisper-cli');
+const OUT_DIR = process.env.OPENCHATCUT_WHISPER_OUTPUT_DIR || join(ROOT, 'public', 'whisper-cli');
 const BUILD_CACHE = join(ROOT, '.cache', 'whisper-cli');
 export const VERSION = 'v1.9.2';
 const BASE = `https://github.com/ggml-org/whisper.cpp/releases/download/${VERSION}`;

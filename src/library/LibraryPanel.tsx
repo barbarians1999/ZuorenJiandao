@@ -1,58 +1,35 @@
-import { useMemo, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { SequenceLibraryOption } from './sequenceOptions';
 import type { PlayerRef } from '@remotion/player';
 import { theme } from '../theme';
 import { useT } from '../i18n/locale';
 import type { Tpl } from '../types';
-import type { MediaAsset, MediaAssetRelinkPatch, MediaFolder, TimelineItem, TrackId, TransitionType, ZoomShape } from '../editor/types';
+import type { MediaAsset, MediaAssetRelinkPatch, MediaFolder, TimelineItem, TrackId, TransitionType } from '../editor/types';
 import type { MobileUploadRecord } from '../media/mobileUploadApi';
-import { AUDIO_TRANSITION_ORDER, TRANSITION_LABELS, TRANSITION_ORDER, ZOOM_SHAPE_LABELS, ZOOM_SHAPE_ORDER } from '../editor/types';
 import type { CaptionsData } from '../captions/types';
 import type { TranscriptWord } from '../transcript/types';
 import type { AudioAsset } from '../audio/library';
-import { FX_EFFECTS, FX_IDS, LUT_EFFECTS, LUT_IDS } from '../gl/fx/effects';
-import { TranscriptPanel, type TranscriptTrackOption } from '../transcript/TranscriptPanel';
+import { type TranscriptTrackOption } from '../transcript/TranscriptPanel';
 import { CaptionsPanel } from '../captions/CaptionsPanel';
-import { newManualCaptions } from '../captions/manualCaptions';
 import { MediaPoolPanel } from '../media/MediaPoolPanel';
 import { useDirectoryImport } from '../media/useDirectoryImport';
-import { SkillsTabPanel } from './SkillsTabPanel';
-import { TemplateBrowser } from './TemplateBrowser';
-import { ResourceBrowser, type ResourceItem } from './ResourceBrowser';
-import { TransitionThumb } from './TransitionThumb';
-import { FxThumb } from './FxThumb';
-import { ZoomThumb } from './ZoomThumb';
 import { SoundBrowser } from './SoundBrowser';
-import { EnvelopeThumb } from './PluginBrowser';
-import { asPluginZoom, pluginResourceItems, usePluginPacks } from './pluginResources';
+import { EffectsBrowser } from './EffectsBrowser';
 import { ExtensionCenter } from './ExtensionCenter';
-import { isPluginAssetId } from '../plugins/types';
-import { customTransitionUniforms, getCustomTransition } from '../gl/customTransitions';
 import type { ZoomEffect } from '../editor/types';
-import { Icon } from '../components/icons';
-import { parseSrt } from '../captions/srt';
+import type { MediaPlacementPurpose } from '../media/placementPurpose';
+import type { ProjectQuickStart } from '../app/projectQuickStart';
+import { QuickStartGuide } from './QuickStartGuide';
+import { LibraryNavigation, isResourceTool, type LibraryTool } from './LibraryNavigation';
+import type { MediaSourceRange, MediaSourceRanges } from '../editor/mediaSourceRange';
+import type { CaptionSelectOptions, CaptionSelectionRef } from '../captions/captionSelection';
 
-// Two built-in LUTs implemented with published camera-log transfer functions.
-// They apply through the same pipeline as other effects.
-const LUT_ITEMS: ResourceItem[] = LUT_IDS.map((id) => ({ id, name: LUT_EFFECTS[id].name }));
-/** Screen transitions — GLSL transitions in catalog order. */
-const TRANSITION_ITEMS: ResourceItem[] = TRANSITION_ORDER.map((t) => ({
-  id: t, name: TRANSITION_LABELS[t],
-}));
-/** Audio transition — trAudioCrossFade. */
-const AUDIO_CROSSFADE_THUMB = '/library-previews/audio-crossfade.jpg';
-const AUDIO_TRANSITION_ITEMS: ResourceItem[] = AUDIO_TRANSITION_ORDER.map((t) => ({
-  id: t, name: TRANSITION_LABELS[t],
-  badge: '音频',
-  thumb: AUDIO_CROSSFADE_THUMB,
-}));
-const FX_ITEMS: ResourceItem[] = FX_IDS.map((id) => ({ id, name: FX_EFFECTS[id].name }));
-const ZOOM_ITEMS: ResourceItem[] = ZOOM_SHAPE_ORDER.map((s) => ({ id: s, name: ZOOM_SHAPE_LABELS[s] }));
-interface LibraryPanelProps {
+export interface LibraryPanelProps {
+  timelineId: string;
   semanticScopeId: string;
   templates: Tpl[];
   onAddTemplate: (tpl: Tpl) => void;
-  onAddAudio: (asset: AudioAsset) => void;
+  onAddAudio: (asset: AudioAsset) => boolean | void;
   playerRef: RefObject<PlayerRef | null>;
   fps: number;
   items: TimelineItem[];
@@ -64,6 +41,11 @@ interface LibraryPanelProps {
   onSetCaptions: (c: CaptionsData | null, track?: TrackId) => void;
   onCreateCaptionTrack: (captions: CaptionsData, opts?: { name?: string; order?: number }) => TrackId;
   onUpdateCaptions: (patch: Partial<CaptionsData>, track?: TrackId) => void;
+  onLiveUpdateCaptions?: (patch: Partial<CaptionsData> | null, track?: TrackId) => void;
+  selectedCaptions?: readonly CaptionSelectionRef[];
+  onSelectCaption?: (selection: CaptionSelectionRef | null, options?: CaptionSelectOptions) => void;
+  onSelectCaptionRange?: (selections: CaptionSelectionRef[], options: { additive: boolean; preserveWithItems: boolean }) => void;
+  onSeekFrame?: (frame: number) => void;
   onSetItemTranscript: (id: string, words: TranscriptWord[]) => void;
   onToggleWord: (id: string, idx: number) => void;
   onCleanScript: (id: string, opts: { silenceFrames?: number; removeFillers: boolean }) => void;
@@ -88,9 +70,8 @@ interface LibraryPanelProps {
   onImportMobileMedia: (record: MobileUploadRecord) => Promise<void>;
   onIngestDirectoryAsset: (asset: MediaAsset) => void;
   onTranscribeAsset: (asset: MediaAsset) => void;
-  onAddMediaItem: (asset: MediaAsset) => void;
-  onAddMediaAssetsToTimeline: (assets: MediaAsset[]) => void;
-  onUseMediaAI: (assets: MediaAsset[]) => void;
+  onAddMediaItem: (asset: MediaAsset, options?: Partial<MediaSourceRange> & { volume?: number }) => void;
+  onAddMediaAssetsToTimeline: (assets: MediaAsset[], options?: { purpose?: MediaPlacementPurpose; sourceRanges?: MediaSourceRanges }) => void;
   onCreateMediaFolder: (name: string, parentId?: string) => string;
   onRenameMediaFolder: (id: string, name: string) => void;
   onDeleteMediaFolder: (id: string) => void;
@@ -103,12 +84,10 @@ interface LibraryPanelProps {
   onRemoveMediaAssets: (ids: string[]) => void;
   onPasteMediaAssets: (assets: MediaAsset[], folderId?: string) => void;
   onRelinkMediaAsset?: (id: string, next: MediaAssetRelinkPatch) => void;
-  /** Creative-mode skill selection (Skill tab): mirrors the chat composer state. */
-  creativeMode: string | null;
-  onCreativeModeChange: (id: string | null) => void;
   onAddSolid?: () => void;
-  /** ⋮ menu「Generated with AI」: seed the chat with this template as a reference */
-  onUseTemplateAI: (tpl: Tpl) => void;
+  onAddShape?: (shape: 'rectangle' | 'ellipse') => void;
+  onAddMosaic?: () => void;
+  onAddText: () => void;
   /** currently-selected clip — resource-library tabs apply to it */
   selectedItem: TimelineItem | null;
   /** custom = plugin transition (type='custom-shader' snapshot frag into TransitionItem) */
@@ -116,24 +95,36 @@ interface LibraryPanelProps {
   onApplyFx: (assetId: string) => void;
   /** The built-in curve passes {shape}; the plugin curve passes {envelope, label} (see PluginBrowser.asPluginZoom) */
   onApplyZoom: (zoom: ZoomEffect) => void;
+  pasteTranscriptRequest?: number;
+  quickStart?: ProjectQuickStart;
+  textWorkspaceActive?: boolean;
+  onOpenTextWorkspace?: (page: '字幕' | '文字稿剪辑') => void;
+  onRequestPasteTranscript?: () => void;
 }
 
-const MAIN_TABS = ['我的素材', '序列', '资源库', '文字稿', '字幕', '技能'] as const;
-const SUB_TABS = ['MG 动画', '音效', '转场', '特效', '缩放', 'LUT'] as const;
+const MAIN_TABS = ['我的素材', '特效', '字幕', '插入文字', '序列', '资源库'] as const;
 function localizeDefaultSequenceName(name: string, t: ReturnType<typeof useT>): string {
   const match = /^序列 (\d+)$/.exec(name);
   return match ? t('序列 {n}', { n: match[1]! }) : name;
 }
-export function LibraryPanel({ semanticScopeId, templates, onAddTemplate, onAddAudio, playerRef, fps, items, getSequenceOptions, onAddSequence, trackOptions, captionTracks, onSetCaptions, onCreateCaptionTrack, onUpdateCaptions, onSetItemTranscript, onToggleWord, onCleanScript, onSetGapCap, onSetTranscriptPlayOrder, onReorderTrackItems, onClearEdits, assets, mediaFolders, usedAssetIds, offlineAssetIds, onAssetLoadError, onImportMedia, onImportMobileMedia, onIngestDirectoryAsset, onTranscribeAsset, onAddMediaItem, onAddMediaAssetsToTimeline, onUseMediaAI, onCreateMediaFolder, onRenameMediaFolder, onDeleteMediaFolder, onMoveMediaAssets, onRenameMediaAsset, onRenameMediaAssets, onSetMediaAssetFavorite, onSetMediaAssetsFavorite, onRemoveMediaAsset, onRemoveMediaAssets, onPasteMediaAssets, onRelinkMediaAsset, creativeMode, onCreativeModeChange, onAddSolid, onUseTemplateAI, selectedItem, onApplyTransition, onApplyFx, onApplyZoom }: LibraryPanelProps) {
+export function LibraryPanel({ timelineId, semanticScopeId, onAddAudio, playerRef, fps, items, trackOptions, captionTracks, onSetCaptions, onCreateCaptionTrack, onUpdateCaptions, selectedCaptions, onSelectCaption, onSelectCaptionRange, onSeekFrame, selectedItem, onAddText, pasteTranscriptRequest = 0, getSequenceOptions, onAddSequence, assets, mediaFolders, usedAssetIds, offlineAssetIds, onAssetLoadError, onImportMedia, onImportMobileMedia, onIngestDirectoryAsset, onTranscribeAsset, onAddMediaItem, onAddMediaAssetsToTimeline, onCreateMediaFolder, onRenameMediaFolder, onDeleteMediaFolder, onMoveMediaAssets, onRenameMediaAsset, onRenameMediaAssets, onSetMediaAssetFavorite, onSetMediaAssetsFavorite, onRemoveMediaAsset, onRemoveMediaAssets, onPasteMediaAssets, onRelinkMediaAsset, onAddSolid, onAddShape, onAddMosaic, onApplyTransition, onApplyFx, onApplyZoom, quickStart, onOpenTextWorkspace, onRequestPasteTranscript }: LibraryPanelProps) {
   const t = useT();
-  const selKind = selectedItem?.kind ?? null;
-  const isVisual = selKind != null && selKind !== 'audio';
-  const [mainTab, setMainTab] = useState<(typeof MAIN_TABS)[number]>('我的素材');
-  const [assetFocus, setAssetFocus] = useState<'all' | 'bgm'>('all');
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [subTab, setSubTab] = useState<(typeof SUB_TABS)[number]>('MG 动画');
+  const [mainTab, setMainTab] = useState<(typeof MAIN_TABS)[number]>(quickStart === 'captions' ? '字幕' : '我的素材');
+  const [activeTool, setActiveTool] = useState<LibraryTool>(quickStart === 'captions' ? '字幕' : '我的素材');
+  const [quickStartVisible, setQuickStartVisible] = useState(Boolean(quickStart));
+  const [quickImportRequested, setQuickImportRequested] = useState(false);
   const [extensionOpen, setExtensionOpen] = useState(false);
   const [directoryImportError, setDirectoryImportError] = useState<string | null>(null);
+  const lastPasteRef = useRef(pasteTranscriptRequest);
+  const scopeIdentity = `${semanticScopeId}:${timelineId}`;
+  useEffect(() => {
+    if (pasteTranscriptRequest > lastPasteRef.current) {
+      lastPasteRef.current = pasteTranscriptRequest;
+      setExtensionOpen(false);
+      setActiveTool('字幕');
+      setMainTab('字幕');
+    }
+  }, [pasteTranscriptRequest]);
   const directoryImport = useDirectoryImport({
     projectId: semanticScopeId,
     fps,
@@ -142,77 +133,86 @@ export function LibraryPanel({ semanticScopeId, templates, onAddTemplate, onAddA
     onError: setDirectoryImportError,
     t,
   });
-  // The installed extension items are merged into each category (with the "Extension" corner mark); zoom/transition is split by id in onApply
-  const pluginPacks = usePluginPacks();
-  const transitionItems = [...TRANSITION_ITEMS, ...pluginResourceItems(pluginPacks, 'transition')];
-  const fxItems = [...FX_ITEMS, ...pluginResourceItems(pluginPacks, 'fx')];
-  const lutItems = [...LUT_ITEMS, ...pluginResourceItems(pluginPacks, 'lut')];
-  const zoomItems = [...ZOOM_ITEMS, ...pluginResourceItems(pluginPacks, 'zoom')];
-  const applyTransitionById = (id: string) => {
-    if (!isPluginAssetId(id)) { onApplyTransition(id as TransitionType); return; }
-    const def = getCustomTransition(id);
-    if (def) onApplyTransition('custom-shader', { frag: def.frag, uniforms: customTransitionUniforms(def), label: def.label });
-  };
-  const applyZoomById = (id: string) => {
-    const data = zoomItems.find((x) => x.id === id)?.data;
-    const pluginZoom = data ? asPluginZoom(data) : null;
-    onApplyZoom(pluginZoom ?? { shape: id as ZoomShape, magnification: 1.5, envelope: undefined, label: undefined });
-  };
-  // Audio transition: The source catalog has no independent entries and the false entry has been hidden (§4.2)
-  const showSfx = mainTab === '资源库' && subTab === '音效';     // sound effects
-  const isTranscript = mainTab === '文字稿';
-  const isCaptions = mainTab === '字幕';
   const isMyAssets = mainTab === '我的素材';
   const isSequences = mainTab === '序列';
   const sequenceOptions = useMemo(() => isSequences ? getSequenceOptions() : [], [isSequences, getSequenceOptions]);
-  const isSkills = mainTab === '技能';
-  const openCaptionStyles = (sourceItemIds: string[]) => {
-    const target = captionTracks[0];
-    if (!target?.captions && sourceItemIds.length) {
-      onSetCaptions({ enabled: true, template: 'black-bar', pacing: 'phrase', sourceItemId: sourceItemIds[0]!, sources: sourceItemIds.length > 1 ? sourceItemIds : undefined, sourceMode: sourceItemIds.length > 1 ? 'item' : undefined, bilingual: false }, target?.id);
-    }
-    setMainTab('字幕');
-  };
-  const importSrt = async (file: File) => {
-    try {
-      const words = parseSrt(await file.text());
-      const entryId = `srt_${crypto.randomUUID()}`;
-      onCreateCaptionTrack({
-        ...newManualCaptions(),
-        sourceEntries: [{ id: entryId, itemId: `manual:${entryId}`, label: file.name, words }],
-      }, { name: file.name.replace(/\.srt$/i, '') || file.name });
-      setMainTab('字幕');
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      window.alert(`${t('SRT 导入失败')}：${t(detail)}`);
-    }
-  };
 
   return (
-    <section className="cc-library-panel">
-      <div className="cc-main-tabs cc-main-tabs-primary">
-        <button className={`cc-main-tab${mainTab === '我的素材' && assetFocus === 'all' && !advancedOpen ? ' selected' : ''}`} onClick={() => { setAdvancedOpen(false); setExtensionOpen(false); setAssetFocus('all'); setMainTab('我的素材'); }}>{t('剪辑')}</button>
-        <button className={`cc-main-tab${mainTab === '我的素材' && assetFocus === 'bgm' && !advancedOpen ? ' selected' : ''}`} onClick={() => { setAdvancedOpen(false); setExtensionOpen(false); setAssetFocus('bgm'); setMainTab('我的素材'); }}>{t('背景音乐')}</button>
-        <button className={`cc-main-tab${mainTab === '字幕' && !advancedOpen ? ' selected' : ''}`} onClick={() => { setAdvancedOpen(false); setExtensionOpen(false); setMainTab('字幕'); }}>{t('字幕')}</button>
-        <button className={`cc-main-tab${advancedOpen ? ' selected' : ''}`} onClick={() => setAdvancedOpen((value) => !value)}>{t('更多工具')}</button>
-      </div>
-      {advancedOpen && <div className="cc-main-tabs cc-main-tabs-advanced">
-        {MAIN_TABS.filter((tab) => tab !== '字幕').map((tab) => (
-          <button key={tab} onClick={() => { setExtensionOpen(false); if (tab === '我的素材') setAssetFocus('all'); setMainTab(tab); }} className={`cc-main-tab${mainTab === tab ? ' selected' : ''}`}>{t(tab)}</button>
-        ))}
-      </div>}
+    <section className="cc-library-panel cc-library-workspace">
+      {quickStart && quickStartVisible && <QuickStartGuide intent={quickStart}
+        onImport={() => { setExtensionOpen(false); setActiveTool('我的素材'); setMainTab('我的素材'); setQuickImportRequested(true); }}
+        onPaste={() => { setExtensionOpen(false); setActiveTool('字幕'); setMainTab('字幕'); onRequestPasteTranscript?.(); }}
+        onDismiss={() => setQuickStartVisible(false)} />}
+      <div className="cc-library-workbench">
+      <LibraryNavigation active={extensionOpen ? '扩展中心' : activeTool}
+        onSelect={(tab) => {
+          setActiveTool(tab);
+          setExtensionOpen(tab === '扩展中心');
+          if (isResourceTool(tab)) { setMainTab('资源库'); }
+          else if (tab !== '扩展中心') setMainTab(tab);
+        }} />
+      <div className="cc-library-content">
       {extensionOpen ? (
         <ExtensionCenter onClose={() => setExtensionOpen(false)} />
-      ) : isCaptions ? (
-        <CaptionsPanel playerRef={playerRef} fps={fps} items={items} trackOptions={trackOptions} selectedItem={selectedItem} captionTracks={captionTracks} onSetCaptions={onSetCaptions} onUpdateCaptions={onUpdateCaptions} onCreateCaptionTrack={onCreateCaptionTrack} />
-      ) : isTranscript ? (
-        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, borderTop: `0.5px solid ${theme.border}` }}>
-          <TranscriptPanel playerRef={playerRef} fps={fps} items={items} trackOptions={trackOptions} onSetItemTranscript={onSetItemTranscript} onToggleWord={onToggleWord} onCleanScript={onCleanScript} onSetGapCap={onSetGapCap} onSetTranscriptPlayOrder={onSetTranscriptPlayOrder} onReorderTrackItems={onReorderTrackItems} onClearEdits={onClearEdits} onImportSrt={(file) => { void importSrt(file); }} onOpenCaptionStyles={openCaptionStyles} />
+      ) : mainTab === '字幕' ? (
+        <div className="cc-left-captions-workbench" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <div className="cc-library-heading">{t('字幕生成与样式')}</div>
+          <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+            <CaptionsPanel
+              mode="generate-only"
+              projectId={semanticScopeId}
+              timelineId={timelineId}
+              draftKey={scopeIdentity}
+              key={`left:${scopeIdentity}`}
+              playerRef={playerRef}
+              fps={fps}
+              items={items}
+              trackOptions={trackOptions}
+              selectedItem={selectedItem}
+              captionTracks={captionTracks}
+              selectedCaptions={selectedCaptions}
+              onSelectCaption={onSelectCaption}
+              onSelectCaptionRange={onSelectCaptionRange}
+              onSeekFrame={onSeekFrame}
+              onSetCaptions={onSetCaptions}
+              onUpdateCaptions={onUpdateCaptions}
+              onCreateCaptionTrack={onCreateCaptionTrack}
+              openPasteTranscriptRequest={pasteTranscriptRequest}
+              onCaptionsReady={() => onOpenTextWorkspace?.('字幕')}
+            />
+          </div>
         </div>
+      ) : mainTab === '插入文字' ? (
+        <>
+          <div className="cc-library-heading">{t('插入文字')}</div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <button type="button" className="cc-cap-btn primary" style={{ width: '100%', padding: '12px 14px', fontSize: 13 }} onClick={onAddText}>
+              {t('＋ 插入普通文本')}
+            </button>
+            <p className="cc-cap-hint" style={{ margin: 0, lineHeight: 1.6 }}>
+              {t('在当前播放头插入独立文本框，可在预览画面直接拖动位置；选中后右侧「属性」面板可调整字体、大小、颜色与形状样式。')}
+            </p>
+          </div>
+        </>
+      ) : mainTab === '特效' ? (
+        <>
+          <div className="cc-library-heading">{t('特效与画面包装')}</div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: 12, minHeight: 0 }}>
+            <EffectsBrowser
+              selectedItem={selectedItem}
+              onAddSolid={onAddSolid}
+              onAddShape={onAddShape}
+              onAddMosaic={onAddMosaic}
+              onApplyFx={onApplyFx}
+              onApplyTransition={onApplyTransition}
+              onApplyZoom={onApplyZoom}
+            />
+          </div>
+        </>
       ) : isSequences ? (
         <div className="cc-sequence-panel">
           <div className="cc-sequence-hint">
-            {t('点击把序列作为引用实例加入当前时间线；修改子序列会同步到所有实例。')}
+            {t('选中多个片段，右键「创建子草稿」即可合并。双击时间线上的子草稿可继续编辑；点击下方名称可再次添加。多次使用的同一子草稿会同步修改。')}
           </div>
           <div className="cc-sequence-list">
             {sequenceOptions.map((option) => (
@@ -232,129 +232,21 @@ export function LibraryPanel({ semanticScopeId, templates, onAddTemplate, onAddA
         </div>
       ) : isMyAssets ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, borderTop: `0.5px solid ${theme.border}` }}>
-          <MediaPoolPanel key={assetFocus} initialType={assetFocus === 'bgm' ? 'audio' : 'all'} purpose={assetFocus === 'bgm' ? 'bgm' : undefined} semanticScopeId={semanticScopeId} assets={assets} folders={mediaFolders} fps={fps} usedAssetIds={usedAssetIds} offlineAssetIds={offlineAssetIds} onAssetLoadError={onAssetLoadError} onImport={onImportMedia} onImportMobile={onImportMobileMedia} directoryImport={directoryImport} directoryImportError={directoryImportError} onAddAsset={onAddMediaItem} onAddAssetsToTimeline={onAddMediaAssetsToTimeline} onAddAssetsToChat={onUseMediaAI}
+          <MediaPoolPanel importRequested={quickImportRequested} onImportRequestHandled={() => setQuickImportRequested(false)} semanticScopeId={semanticScopeId} assets={assets} folders={mediaFolders} fps={fps} usedAssetIds={usedAssetIds} offlineAssetIds={offlineAssetIds} onAssetLoadError={onAssetLoadError} onImport={onImportMedia} onImportMobile={onImportMobileMedia} directoryImport={directoryImport} directoryImportError={directoryImportError} onAddAsset={onAddMediaItem} onAddAssetsToTimeline={(selectedAssets, sourceRanges) => onAddMediaAssetsToTimeline(selectedAssets, { sourceRanges })}
             onCreateFolder={onCreateMediaFolder} onRenameFolder={onRenameMediaFolder} onDeleteFolder={onDeleteMediaFolder}
             onMoveAssets={onMoveMediaAssets} onRenameAsset={onRenameMediaAsset} onTranscribe={onTranscribeAsset} onRenameAssets={onRenameMediaAssets} onSetFavorite={onSetMediaAssetFavorite} onSetAssetsFavorite={onSetMediaAssetsFavorite} onRemoveAsset={onRemoveMediaAsset} onRemoveAssets={onRemoveMediaAssets} onPasteAssets={onPasteMediaAssets}
-            onRelinkAsset={onRelinkMediaAsset} onAddSolid={onAddSolid} />
-        </div>
-      ) : isSkills ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, borderTop: `0.5px solid ${theme.border}` }}>
-          <SkillsTabPanel
-            creativeMode={creativeMode}
-            onCreativeModeChange={onCreativeModeChange}
-          />
+            onRelinkAsset={onRelinkMediaAsset} />
         </div>
       ) : (
       <>
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, padding: '10px 12px 7px 16px', fontSize: 12, borderBottom: `0.5px solid ${theme.border}` }}>
-        <div style={{ display: 'flex', gap: 14, minWidth: 0, overflowX: 'auto', whiteSpace: 'nowrap', flex: 1 }}>
-          {SUB_TABS.map((tab) => (
-            <button key={tab} onClick={() => setSubTab(tab)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: subTab === tab ? theme.text : theme.textDim, borderBottom: `2px solid ${subTab === tab ? theme.accent : 'transparent'}`, padding: '0 0 4px' }}>{t(tab)}</button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => setExtensionOpen(true)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 5,
-            flex: '0 0 auto',
-            border: `0.5px solid ${theme.border}`,
-            borderRadius: 4,
-            background: theme.panelAlt,
-            color: theme.text,
-            padding: '4px 7px',
-            fontSize: 10.5,
-            cursor: 'pointer',
-          }}
-        >
-          <Icon name="grid" size={12} />
-          {t('扩展中心')}
-        </button>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '10px 10px 14px', minHeight: 0 }}>
-        {mainTab === '资源库' && subTab === 'MG 动画' ? (
-          <TemplateBrowser templates={templates} onAdd={onAddTemplate} onUseAI={onUseTemplateAI} />
-        ) : showSfx ? (
-          <SoundBrowser fps={fps} onAdd={onAddAudio} />
-        ) : subTab === '转场' ? (
-          <div className="cc-transition-browser">
-            {/* Audio crossfade — trAudioCrossFade; highlighting available when audio clip is selected*/}
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 11, color: theme.textDim, margin: '0 4px 8px', letterSpacing: 0.3 }}>
-                {t('音频转场 · Audio Cross Fade')}
-              </div>
-              <ResourceBrowser
-                layout="grid"
-                dragKind="transition"
-                hint="点击应用到选中音频（需同轨前一段相邻音频）。出点渐弱、入点渐强。"
-                items={AUDIO_TRANSITION_ITEMS}
-                applicable={selKind === 'audio'}
-                onApply={(id) => onApplyTransition(id as TransitionType)}
-                thumb={() => AUDIO_CROSSFADE_THUMB}
-              />
-            </div>
-            <div style={{ fontSize: 11, color: theme.textDim, margin: '0 4px 8px', letterSpacing: 0.3 }}>
-              {t('画面转场 · Video')}
-            </div>
-            <ResourceBrowser
-              layout="grid"
-              dragKind="transition"
-              hint="悬停预览 · 点击应用到选中画面片段（入场，需前一个相邻同轨片段）"
-              items={transitionItems}
-              applicable={selectedItem != null && selKind !== 'audio'}
-              onApply={applyTransitionById}
-              // Built-in and plugin:/custom: the same set of A/B samples + hover 0→1 preview (true GLSL)
-              renderThumb={(id, hovered) => <TransitionThumb type={id} playing={hovered} />}
-            />
-          </div>
-        ) : subTab === '特效' ? (
-          <ResourceBrowser
-            layout="grid"
-            dragKind="fx"
-            hint="悬停预览 · 点击应用到选中视频/图片"
-            items={fxItems}
-            applicable={selKind === 'video' || selKind === 'image'}
-            onApply={(id) => onApplyFx(id)}
-            renderThumb={(id, hovered) => <FxThumb assetId={id} playing={hovered} />}
-          />
-        ) : subTab === '缩放' ? (
-          <ResourceBrowser
-            layout="grid"
-            dragKind="zoom"
-            hint="悬停预览 · 点击应用到选中片段（默认 1.5×，属性可细调）"
-            items={zoomItems}
-            applicable={isVisual}
-            onApply={applyZoomById}
-            renderThumb={(id, hovered) => {
-              const data = zoomItems.find((x) => x.id === id)?.data;
-              const pluginZoom = data ? asPluginZoom(data) : null;
-              // plugin envelope: real sample + envelope zoom animation (same look and feel as built-in ZoomThumb)
-              if (pluginZoom?.envelope) {
-                return <EnvelopeThumb envelope={pluginZoom.envelope} magnification={pluginZoom.magnification} playing={hovered} />;
-              }
-              return <ZoomThumb shape={pluginZoom?.shape ?? id as ZoomShape} playing={hovered} />;
-            }}
-          />
-        ) : subTab === 'LUT' ? (
-          <ResourceBrowser
-            layout="grid"
-            dragKind="lut"
-            hint="悬停预览 · 点击应用到选中视频/图片（强度可在属性细调）"
-            items={lutItems}
-            applicable={selKind === 'video' || selKind === 'image'}
-            onApply={(id) => onApplyFx(id)}
-            renderThumb={(id, hovered) => <FxThumb assetId={id} playing={hovered} />}
-          />
-        ) : (
-          <div style={{ color: theme.textDim, fontSize: 12, padding: 8 }}>{t('「{main} · {sub}」内容待接入。', { main: t(mainTab), sub: t(subTab) })}</div>
-        )}
+      <div className="cc-library-heading">{t('音效')}</div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 12, minHeight: 0 }}>
+        <SoundBrowser fps={fps} onAdd={onAddAudio} onAuditionStart={() => playerRef.current?.pause()} />
       </div>
       </>
       )}
+      </div>
+      </div>
     </section>
   );
 }

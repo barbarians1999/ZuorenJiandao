@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -34,12 +35,13 @@ const cliOverride = process.env.OPENCHATCUT_COPILOT_PATH;
 const packageFixture = await mkdtemp(join(tmpdir(), 'copilot package with spaces-'));
 try {
   delete process.env.OPENCHATCUT_COPILOT_PATH;
-  const bundled = fileURLToPath(import.meta.resolve(`@github/copilot-${process.platform}-${process.arch}`));
-  assert.equal(await resolveCopilotCli(), bundled, 'the installed platform package is discovered without a PATH installation');
-  const archivePath = join(packageFixture, 'app.asar', 'node_modules', 'copilot', basename(bundled));
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  assert(!pkg.dependencies['@github/copilot-sdk'], 'retired Copilot SDK must not be a shipped runtime dependency');
+  assert(!Object.keys(pkg.dependencies).some((name) => name.startsWith('@github/copilot-')));
+  const archivePath = join(packageFixture, 'app.asar', 'node_modules', 'copilot', 'copilot.exe');
   const unpacked = archivePath.replace('app.asar', 'app.asar.unpacked');
   await mkdir(dirname(unpacked), { recursive: true });
-  await copyFile(bundled, unpacked);
+  await writeFile(unpacked, 'non-executable path-resolution fixture');
   process.env.OPENCHATCUT_COPILOT_PATH = archivePath;
   assert.equal(await resolveCopilotCli(), unpacked,
     'packaged executables resolve to their on-disk asar twin, including paths with spaces');

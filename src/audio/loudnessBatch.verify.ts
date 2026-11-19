@@ -46,6 +46,7 @@ const commands = {
 const originalFetch = globalThis.fetch;
 const originalContext = globalThis.OfflineAudioContext;
 let beforeResponse = () => {};
+let decodedSamples = new Float32Array([0.1, -0.1, 0.1, -0.1]);
 const fetches: string[] = [];
 globalThis.fetch = async (input) => {
   fetches.push(String(input));
@@ -54,7 +55,7 @@ globalThis.fetch = async (input) => {
 };
 globalThis.OfflineAudioContext = class {
   async decodeAudioData() {
-    return { numberOfChannels: 1, length: 4, sampleRate: 44100, getChannelData: () => new Float32Array([0.1, -0.1, 0.1, -0.1]) };
+    return { numberOfChannels: 1, length: decodedSamples.length, sampleRate: 44100, getChannelData: () => decodedSamples };
   }
 } as unknown as typeof OfflineAudioContext;
 
@@ -62,6 +63,7 @@ function reset(items = initial.timelines[0].items) {
   history = { past: [], present: { ...structuredClone(initial), timelines: [{ ...initial.timelines[0], items }] }, future: [] };
   beforeResponse = () => {};
   fetches.length = 0;
+  decodedSamples = new Float32Array([0.1, -0.1, 0.1, -0.1]);
 }
 
 try {
@@ -69,6 +71,8 @@ try {
   assert.deepEqual(fetches, ['/one.wav']);
   assert.equal(history.past.length, 1, 'UI normalization remains one atomic undo step');
   assert.equal(getState().items[0].volume, getState().items[1].volume);
+  assert.deepEqual(getDoc().assets, initial.assets, 'normalization never changes media-pool source assets');
+  assert.deepEqual(getState().items.map((item) => item.src), initial.timelines[0].items.map((item) => item.src));
   assert.deepEqual(historyReduce(history, { type: 'undo' }).present, initial);
 
   reset([audio('first', '/one.wav'), audio('second', '/broken.wav')]);
@@ -80,13 +84,47 @@ try {
     history = { ...history, present: { ...getDoc(), timelines: [{ ...getDoc().timelines[0],
       items: [audio('first', '/relinked.wav'), getState().items[1]] }] } };
   };
-  await assert.rejects(normalizeSelectedLoudness(getState().items, getState, getDoc, commands), /source changed/);
+  await assert.rejects(normalizeSelectedLoudness(getState().items, getState, getDoc, commands), /发生变化/);
   assert.equal(history.past.length, 0, 'relink cannot apply gain measured from the old source');
 
   reset();
   beforeResponse = () => { history.present = { ...getDoc(), activeTimelineId: 'other' }; };
-  await assert.rejects(normalizeSelectedLoudness(getState().items, getState, getDoc, commands), /source changed/);
+  await assert.rejects(normalizeSelectedLoudness(getState().items, getState, getDoc, commands), /发生变化/);
   assert.equal(history.past.length, 0, 'switching timelines aborts the entire UI operation');
+
+  reset();
+  beforeResponse = () => {
+    const items = getState().items.map((item) => item.id === 'first' ? { ...item, srcInFrame: 1 } : item);
+    history.present = { ...getDoc(), timelines: [{ ...getDoc().timelines[0], items }] };
+  };
+  await assert.rejects(normalizeSelectedLoudness(getState().items, getState, getDoc, commands), /分析期间发生变化/);
+  assert.equal(history.past.length, 0, 'trim changes during analysis cancel the entire batch');
+
+  reset();
+  beforeResponse = () => {
+    const items = getState().items.map((item) => item.id === 'first' ? { ...item, volume: 0.5 } : item);
+    history.present = { ...getDoc(), timelines: [{ ...getDoc().timelines[0], items }] };
+  };
+  await assert.rejects(normalizeSelectedLoudness(getState().items, getState, getDoc, commands), /分析期间发生变化/);
+  assert.equal(history.past.length, 0, 'base volume changes during analysis cancel the entire batch');
+
+  reset([{
+    ...audio('keyed', '/one.wav'), keyframes: { volume: [{ frame: 0, value: 0.5 }] },
+  }]);
+  await assert.rejects(normalizeSelectedLoudness(getState().items, getState, getDoc, commands), /音量关键帧/);
+  assert.equal(fetches.length, 0, 'unsupported volume keyframes are rejected before decoding');
+
+  reset([{ ...audio('denoised', '/one.wav'), denoisedSrc: '/one-denoised.wav' }]);
+  await assert.rejects(normalizeSelectedLoudness(getState().items, getState, getDoc, commands), /降噪处理/);
+  assert.equal(fetches.length, 0, 'unsupported dry/wet mixes are rejected before decoding');
+
+  reset([audio('peak', '/one.wav')]);
+  decodedSamples = new Float32Array(44100).fill(0.05);
+  decodedSamples[0] = 0.5;
+  const peakResult = await normalizeSelectedLoudness(getState().items, getState, getDoc, commands);
+  assert.equal(peakResult.peakLimited, 1, 'sample peak limits the requested normalization gain');
+  assert(Math.abs(getState().items[0].volume! - (10 ** (-1 / 20)) / 0.5) < 0.01);
+  assert.equal(history.past.length, 1, 'peak-limited normalization remains one undo step');
 
   reset([audio('first', '/one.wav'), audio('second', '/one.wav'), audio('bad', '/broken.wav'), audio('missing', '')]);
   const ctx: AgentContext = { getDoc, getState, commands: commands as EditorCommands, getCreativeMode: () => null, templates: [], audio: [] };

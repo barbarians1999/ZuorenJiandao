@@ -1,5 +1,6 @@
 import type { RefObject } from 'react';
-import { activeEditorState, type ProjectDoc } from '../editor/types';
+import { selectedIdsOf, type ProjectDoc, type TimelineState } from '../editor/types';
+import { showAppToast } from '../ui/appToast';
 import type { EditorCommands } from '../editor/store';
 import { keyboardPreviewNudgePlan, type PreviewNudgeDirection } from '../components/preview/previewTransform';
 import { saveVersion } from '../persist/versionStore';
@@ -7,10 +8,13 @@ import type { TimelineShortcutApi } from './timelineApi';
 import type { ActionBindings } from './useActionBindings';
 import { useActionBindings } from './useActionBindings';
 import { useShortcutDispatcher } from './useShortcutDispatcher';
+import { groupedItemIds, groupTimelineItems, ungroupTimelineItems } from '../editor/linkGroups';
 
 interface EditorActionDeps {
   commands: EditorCommands;
   docRef: RefObject<ProjectDoc>;
+  /** Live editor state includes session-only selection; persisted doc does not. */
+  stateRef: RefObject<TimelineState>;
   fps: number;
   projectId: string;
   timelineRef: RefObject<TimelineShortcutApi | null>;
@@ -19,7 +23,7 @@ interface EditorActionDeps {
   openHistory: () => void;
   openShortcuts: () => void;
   toggleLayout: () => void;
-  focusAgent: () => void;
+  openSettings: () => void;
   selectAll: () => void;
 }
 
@@ -33,7 +37,7 @@ function previewCanvasHasKeyboardFocus(): boolean {
 
 function nudgeSelectedPreview(deps: EditorActionDeps, direction: PreviewNudgeDirection): boolean {
   if (!previewCanvasHasKeyboardFocus()) return false;
-  const state = activeEditorState(deps.docRef.current);
+  const state = deps.stateRef.current;
   const item = state.selectedId ? state.items.find((candidate) => candidate.id === state.selectedId) : null;
   if (!item || state.tracks?.[item.track]?.locked || state.tracks?.[item.track]?.hidden) return false;
   const plan = keyboardPreviewNudgePlan(
@@ -79,9 +83,34 @@ function editingActions(deps: EditorActionDeps): ActionBindings {
     copy: () => tl()?.copySelected(),
     cut: () => tl()?.cutSelected(),
     paste: () => tl()?.pasteClipboard(),
+    'toggle-picture': () => deps.commands.toggleSelectedPicture(selectedIdsOf(deps.stateRef.current)),
     'paste-effects': () => tl()?.pasteEffects(),
     duplicate: () => tl()?.duplicateSelected(),
     delete: ({ shift }) => tl()?.deleteSelected(shift),
+    'ripple-delete': () => tl()?.deleteSelected(true),
+    group: () => {
+      const state = deps.stateRef.current;
+      const ids = selectedIdsOf(state);
+      const next = groupTimelineItems(state, ids, globalThis.crypto.randomUUID());
+      if (next !== state) {
+        deps.commands.applyState(next);
+        deps.commands.selectItems(groupedItemIds(next, ids));
+      } else if (ids.length < 2) showAppToast('先选中两个或更多片段，再组合。');
+    },
+    ungroup: () => {
+      const state = deps.stateRef.current;
+      const ids = selectedIdsOf(state);
+      const next = ungroupTimelineItems(state, ids);
+      if (next !== state) {
+        deps.commands.applyState(next);
+        deps.commands.selectItems(ids);
+      }
+    },
+    'create-subdraft': () => {
+      const state = deps.stateRef.current;
+      const result = deps.commands.createSubdraft(selectedIdsOf(state));
+      if (!result.ok) showAppToast(result.error, { error: true });
+    },
     split: () => tl()?.splitAtPlayhead(),
     'interaction-mode-selection': () => tl()?.setEditMode('selection'),
     'interaction-mode-trim': () => tl()?.setEditMode('trim'),
@@ -94,6 +123,8 @@ function editingActions(deps: EditorActionDeps): ActionBindings {
     'trim-start': () => tl()?.trimSelectedToPlayhead('start'),
     'trim-end': () => tl()?.trimSelectedToPlayhead('end'),
     'select-all': () => deps.selectAll(),
+    'select-before-playhead': () => tl()?.selectBeforePlayhead(),
+    'select-after-playhead': () => tl()?.selectAllAfterPlayhead(),
     'select-after': () => tl()?.selectAfterPlayhead(),
     'move-up': () => tl()?.moveSelectedTrack(-1),
     'move-down': () => tl()?.moveSelectedTrack(1),
@@ -139,7 +170,7 @@ function viewActions(deps: EditorActionDeps): ActionBindings {
     'open-design': () => deps.openDesign(),
     'open-history': () => deps.openHistory(),
     'toggle-layout': () => deps.toggleLayout(),
-    'ask-ai': () => deps.focusAgent(),
+    'open-settings': () => deps.openSettings(),
   };
 }
 

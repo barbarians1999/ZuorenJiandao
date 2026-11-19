@@ -11,6 +11,9 @@ import { createServer } from 'vite';
 const localeModuleId = '\0workflow-picker-test-locale';
 const vite = await createServer({
   appType: 'custom',
+  // Only SSR markup is tested here; do not optimize the full browser graph or
+  // watch unrelated generated media/build trees.
+  optimizeDeps: { noDiscovery: true, include: [] },
   plugins: [{
     name: 'workflow-picker-test-locale',
     enforce: 'pre',
@@ -27,7 +30,7 @@ const vite = await createServer({
       `;
     },
   }],
-  server: { middlewareMode: true },
+  server: { middlewareMode: true, watch: null },
 });
 
 let pickerMarkup = '';

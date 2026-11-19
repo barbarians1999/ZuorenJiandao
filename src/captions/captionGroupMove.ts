@@ -16,6 +16,7 @@ import {
 import { resolveCaptionWordIndices, resolveEntryWords } from './resolve';
 import { captionWordOverride, setCaptionWordOverride } from './wordOverrides';
 import { orderedCaptionSourceEntries } from './sourceOrder';
+import { projectCaptionSourceSpans } from './captionSourceSpans';
 
 interface ManualCueLocation {
   trackId: TrackId;
@@ -30,6 +31,23 @@ interface AutomaticCueLocation {
   startMs: number;
   srcIdxs: number[];
   wordRefs: string[];
+  displayCueEditId?: string;
+  displayCuePartId?: string;
+  displayCueLaneId?: string;
+  sourceItemId?: string;
+}
+
+export function displayCueMoveProblem(state: TimelineState, selections: readonly CaptionSelectionRef[]): string | null {
+  for (const resolved of resolveOrderedCaptionSelections(state, selections)) {
+    if (resolved.target.kind !== 'single') continue;
+    const cue = resolved.target.rows[resolved.target.cueIndex];
+    if (!cue?.displayCueEditId || !cue.displayCuePartId || !cue.entry || !cue.sourceSpans?.length) continue;
+    const source = state.items.find((item) => item.id === cue.entry!.itemId);
+    if (!source || new Set(projectCaptionSourceSpans(source, cue.sourceSpans, state.fps).map((span) => span.segmentKey)).size > 1) {
+      return '这句字幕跨越多个剪辑区间，无法安全移动；请先拆开字幕。';
+    }
+  }
+  return null;
 }
 
 export interface TimelineSelectionMovePreview {
@@ -136,7 +154,21 @@ function selectedCueLocations(
       });
     } else {
       const cue = resolved.target.rows[resolved.target.cueIndex];
-      if (!cue?.srcIdxs.length) continue;
+      if (!cue) continue;
+      if (cue.displayCueEditId && cue.displayCuePartId) {
+        automatic.push({
+          trackId: resolved.trackId,
+          startMs: resolved.target.cue.start,
+          srcIdxs: [],
+          wordRefs: [],
+          displayCueEditId: cue.displayCueEditId,
+          displayCuePartId: cue.displayCuePartId,
+          displayCueLaneId: cue.laneId,
+          sourceItemId: cue.entry?.itemId,
+        });
+        continue;
+      }
+      if (!cue.srcIdxs.length) continue;
       automatic.push({
         trackId: resolved.trackId,
         startMs: resolved.target.cue.start,
@@ -205,51 +237,21 @@ function earliestPersistableDeltaFrames(startMs: number, fps: number): number {
   return deltaFrames;
 }
 
-function latestPersistableDeltaFrames(deltaMs: number, fps: number): number {
-  let deltaFrames = Math.floor(Math.max(0, deltaMs) * fps / 1000);
-  while (Math.round((deltaFrames + 1) * 1000 / fps) <= deltaMs) deltaFrames += 1;
-  while (Math.round(deltaFrames * 1000 / fps) > deltaMs) deltaFrames -= 1;
-  return deltaFrames;
+function earliestDeltaForBoundaryMs(boundaryMs: number, fps: number): number {
+  let frames = Math.floor(boundaryMs * fps / 1000);
+  while (Math.round(frames * 1000 / fps) < boundaryMs) frames += 1;
+  while (Math.round((frames - 1) * 1000 / fps) >= boundaryMs) frames -= 1;
+  return frames;
 }
 
-function manualSelectionDeltaBounds(
-  state: TimelineState,
-  locations: readonly ManualCueLocation[],
-): { minFrames: number; maxFrames: number } {
-  const selectedByLane = selectedCueIndexesByLane(locations);
-  let minDeltaMs = Number.NEGATIVE_INFINITY;
-  let maxDeltaMs = Number.POSITIVE_INFINITY;
-
-  for (const location of locations) {
-    const laneKey = `${location.trackId}\u0000${location.laneId}`;
-    const selectedIndexes = selectedByLane.get(laneKey);
-    const captions = captionsOnTrack(state, location.trackId);
-    const lane = captions?.sourceEntries?.find(
-      (entry) => entry.id === location.laneId && isManualCaptionEntry(entry),
-    );
-    if (!selectedIndexes || !lane?.words) continue;
-    for (const [index, word] of lane.words.entries()) {
-      if (selectedIndexes.has(index)) continue;
-      if (word.end <= location.startMs) {
-        minDeltaMs = Math.max(minDeltaMs, word.end - location.startMs);
-      }
-      if (word.start >= location.endMs) {
-        maxDeltaMs = Math.min(maxDeltaMs, word.start - location.endMs);
-      }
-    }
-  }
-
-  return {
-    minFrames: Number.isFinite(minDeltaMs)
-      ? earliestPersistableDeltaFrames(-minDeltaMs, state.fps)
-      : Number.NEGATIVE_INFINITY,
-    maxFrames: Number.isFinite(maxDeltaMs)
-      ? latestPersistableDeltaFrames(maxDeltaMs, state.fps)
-      : Number.POSITIVE_INFINITY,
-  };
+function latestDeltaForBoundaryMs(boundaryMs: number, fps: number): number {
+  let frames = Math.ceil(boundaryMs * fps / 1000);
+  while (Math.round(frames * 1000 / fps) > boundaryMs) frames -= 1;
+  while (Math.round((frames + 1) * 1000 / fps) <= boundaryMs) frames += 1;
+  return frames;
 }
 
-/** Clamp a mixed selection at frame zero, caption neighbors, and same-track clips. */
+/** Clamp a mixed selection at frame zero and same-track clips without locking manual captions against adjacent cues. */
 export function clampTimelineSelectionDelta(
   state: TimelineState,
   itemIds: readonly string[],
@@ -264,10 +266,9 @@ export function clampTimelineSelectionDelta(
     return item ? state.tracks?.[item.track]?.locked : false;
   })) return 0;
   const locations = selectedCueLocations(state, captionSelections);
-  const manualBounds = manualSelectionDeltaBounds(state, locations.manual);
   const cueLocations = [...locations.manual, ...locations.automatic];
-  let minDelta = manualBounds.minFrames;
-  const maxDelta = manualBounds.maxFrames;
+  let minDelta = Number.NEGATIVE_INFINITY;
+  let maxDelta = Number.POSITIVE_INFINITY;
   let hasMovableItems = false;
 
   for (const item of state.items) {
@@ -277,6 +278,32 @@ export function clampTimelineSelectionDelta(
   }
   for (const location of cueLocations) {
     minDelta = Math.max(minDelta, earliestPersistableDeltaFrames(location.startMs, state.fps));
+  }
+  const manualByLane = new Map<string, Set<number>>();
+  for (const location of locations.manual) {
+    const key = `${location.trackId}\u0000${location.laneId}`;
+    const selected = manualByLane.get(key) ?? new Set<number>();
+    selected.add(location.cueIndex);
+    manualByLane.set(key, selected);
+  }
+  for (const [key, selected] of manualByLane) {
+    const separator = key.indexOf('\u0000');
+    const trackId = key.slice(0, separator);
+    const laneId = key.slice(separator + 1);
+    const words = captionsOnTrack(state, trackId)?.sourceEntries?.find((entry) => entry.id === laneId
+      && isManualCaptionEntry(entry))?.words ?? [];
+    for (const cueIndex of selected) {
+      const cue = words[cueIndex];
+      if (!cue) continue;
+      for (const [index, other] of words.entries()) {
+        if (selected.has(index) || other.start < cue.end && other.end > cue.start) continue;
+        if (other.end <= cue.start) {
+          minDelta = Math.max(minDelta, earliestDeltaForBoundaryMs(other.end - cue.start, state.fps));
+        } else if (other.start >= cue.end) {
+          maxDelta = Math.min(maxDelta, latestDeltaForBoundaryMs(other.start - cue.end, state.fps));
+        }
+      }
+    }
   }
   if (!hasMovableItems && cueLocations.length === 0) return 0;
   const bounded = Math.min(maxDelta, Math.max(minDelta, Math.round(requestedDeltaFrames)));
@@ -321,7 +348,29 @@ function moveAutomaticCaptionSelections(
         timingOffsetMs: (current?.timingOffsetMs ?? 0) + deltaMs,
       });
     }
-    next = withCaptionTrack(next, trackId, { ...captions, wordOverrides });
+    const movedParts = new Set<string>();
+    const sourceEntries = captions.sourceEntries?.map((entry) => ({
+      ...entry,
+      displayCueEdits: entry.displayCueEdits?.map((edit) => ({
+        ...edit,
+        parts: edit.parts.map((part) => {
+          const key = `${entry.id}:${edit.id}:${part.id}`;
+          if (movedParts.has(key) || !locations.some((location) => location.trackId === trackId
+            && location.displayCueLaneId === entry.id
+            && !selectedItemIds.has(location.sourceItemId ?? '')
+            && location.displayCueEditId === edit.id && location.displayCuePartId === part.id)) return part;
+          movedParts.add(key);
+          return { ...part, sourceSpans: part.sourceSpans.map((span) => ({
+            ...span, timingOffsetMs: (span.timingOffsetMs ?? 0) + deltaMs,
+          })) };
+        }),
+      })),
+    }));
+    next = withCaptionTrack(next, trackId, {
+      ...captions,
+      wordOverrides,
+      ...(sourceEntries ? { sourceEntries } : {}),
+    });
   }
   return next;
 }
@@ -345,9 +394,11 @@ function moveManualCaptionSelections(
       if (!indexes?.size) return entry;
       return {
         ...entry,
-        words: (entry.words ?? []).map((word, index) => indexes.has(index)
-          ? { ...word, start: word.start + deltaMs, end: word.end + deltaMs }
-          : word),
+        words: (entry.words ?? [])
+          .map((word, index) => indexes.has(index)
+            ? { ...word, start: Math.max(0, word.start + deltaMs), end: Math.max(0, word.end + deltaMs) }
+            : word)
+          .sort((a, b) => a.start - b.start || a.end - b.end),
       };
     });
     next = withCaptionTrack(next, trackId, { ...captions, sourceEntries });
@@ -369,6 +420,7 @@ export function moveTimelineSelectionByDelta(
   requestedDeltaFrames: number,
   itemTrackShift: { from: TrackId; to: TrackId } | null = null,
 ): TimelineState {
+  if (displayCueMoveProblem(state, captionSelections)) return state;
   const expandedItemIds = moveLockedItemIds(state, itemIds);
   const locations = selectedCueLocations(state, captionSelections);
   const deltaFrames = clampTimelineSelectionDelta(

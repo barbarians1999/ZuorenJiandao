@@ -1,5 +1,6 @@
 import type { TranscriptCarrier, TranscriptVariant } from '../transcript/types.js';
 import type { TrackId } from './trackTypes.js';
+import type { CompositionMosaic } from './compositionMosaic.js';
 
 /** per-clip color/blur adjustments (CSS filter) — special effects (blur)/LUT(color) */
 export interface ClipFilters {
@@ -84,7 +85,8 @@ export interface Keyframe {
 }
 
 /** keyframable properties (PRD §4.5: Position/scale/transparency/rotation can be K frames; volume is the audio/video volume envelope) */
-export type KeyframeProp = 'x' | 'y' | 'scale' | 'scaleX' | 'scaleY' | 'rotation' | 'opacity' | 'borderRadius' | 'volume';
+export type KeyframeProp = 'x' | 'y' | 'scale' | 'scaleX' | 'scaleY' | 'rotation' | 'opacity' | 'borderRadius'
+  | 'maskX' | 'maskY' | 'maskWidth' | 'maskHeight' | 'maskFeather' | 'volume';
 /** per-prop sparse keyframe curves on an item (sorted by frame — reducer invariant) */
 export type ItemKeyframes = Partial<Record<KeyframeProp, Keyframe[]>>;
 
@@ -98,6 +100,17 @@ export interface FlexCrop {
   top?: number;
   right?: number;
   bottom?: number;
+}
+
+/** Static composition-space mask. Coordinates are normalized to the canvas.
+ * Feather is normalized to the shorter canvas edge (0 = a hard edge). */
+export interface ClipMask {
+  type: 'rectangle' | 'ellipse';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  feather?: number;
 }
 
 /** per-clip visual transform (scale/position/rotation) — scale tab */
@@ -127,22 +140,36 @@ export interface ClipTransform {
  * overrides map property name → value (clamped to the effect's range at render). */
 export type ClipEffectValue = number | number[];
 
+export interface ClipEffectMosaicTrack {
+  sourceIdentity: string;
+  sourceWidth: number;
+  sourceHeight: number;
+  points: Array<{ sourceFrame: number; x: number; y: number }>;
+}
+
 export interface ClipEffect {
   id: string;
   assetId: string;
   overrides?: Record<string, ClipEffectValue>;
+  /** Experimental source-frame-local path for the built-in local mosaic. */
+  mosaicTrack?: ClipEffectMosaicTrack;
 }
 
 export interface TimelineItem extends TranscriptCarrier {
   id: string;
+  /** Explicit directional main-clip attachment; temporal overlap alone is not ownership. */
+  mainClipId?: string;
   track: TrackId;
   startFrame: number;
   durationInFrames: number;
   name: string;
-  kind: 'motion-graphic' | 'audio' | 'video' | 'image' | 'text' | 'gif' | 'svg' | 'solid' | 'sequence';
+  kind: 'motion-graphic' | 'audio' | 'video' | 'image' | 'text' | 'gif' | 'svg' | 'solid' | 'sequence' | 'mosaic';
   // motion-graphic fields:
   templateId?: string;
   code?: string;
+  /** Template/text props and optional preview/export picture motion settings:
+   * visualEntrance, visualExit, visualEntranceFrames, visualExitFrames.
+   * Missing/unknown motion ids resolve to none; sound and source time are unchanged. */
   props?: Record<string, unknown>;
   /** natural box size the template designs against */
   width?: number;
@@ -161,11 +188,15 @@ export interface TimelineItem extends TranscriptCarrier {
   sourceContentHash?: string;
   /** Nested sequence reference. Required when kind='sequence'; absent on legacy items. */
   timelineId?: string;
+  /** Disable only this clip's picture; source audio and timeline duration remain active. */
+  pictureDisabled?: boolean;
   /** Persistent multicam membership; copied by split so angle identity survives edits. */
   multicamGroupId?: string;
   multicamAngleId?: string;
   /** 0..1 playback volume (default 1) — audio + video */
   volume?: number;
+  /** The source audio has been placed on a separate timeline clip. */
+  audioDetached?: boolean;
   /** source in-point (frames) for video/audio trimming or a nested sequence source window */
   srcInFrame?: number;
   /** fade in/out durations (frames): opacity ramp for visual clips, volume ramp
@@ -180,6 +211,10 @@ export interface TimelineItem extends TranscriptCarrier {
   keyframes?: ItemKeyframes;
   /** color/blur adjustments for visual clips (special effects/LUT) */
   filters?: ClipFilters;
+  /** static rectangular or elliptical composition-space mask */
+  mask?: ClipMask;
+  /** Independent adjustment region, applied to the complete lower-track picture. */
+  mosaic?: CompositionMosaic;
   /** blurred cover copy behind the contained clip */
   backgroundFill?: boolean;
   /** user-selected background blur/dimming intensity, 0..100 percent */

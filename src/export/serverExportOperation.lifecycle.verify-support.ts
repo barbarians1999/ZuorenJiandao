@@ -107,6 +107,7 @@ async function verifyDeliveryFailureDoesNotTriggerRenderFallback(): Promise<void
 }
 
 async function verifyPollFailureDoesNotTriggerRenderFallback(): Promise<void> {
+  resetServerExportRecoveryMemory();
   const requests: string[] = [];
   globalThis.fetch = (async (input, init) => {
     const url = String(input);
@@ -121,7 +122,30 @@ async function verifyPollFailureDoesNotTriggerRenderFallback(): Promise<void> {
       && error.name !== 'ServerRenderError'
       && error.message === 'temporary poll failure',
   );
-  assert.equal(requests.at(-1), 'DELETE /export/job/render-active');
+  assert.deepEqual(requests, ['POST /export/job', 'GET /export/job/render-active'],
+    'temporary progress errors must not delete an active render');
+  assert.equal((await listServerExportJobs('project-lifecycle'))[0]?.renderId, 'render-active',
+    'temporary progress errors retain the accepted render for reattachment');
+  resetServerExportRecoveryMemory();
+}
+
+async function verifyProgressConnectionResetRetainsAcceptedRender(): Promise<void> {
+  resetServerExportRecoveryMemory();
+  let renderId = '';
+  const requests: string[] = [];
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    requests.push(`${init?.method ?? 'GET'} ${url}`);
+    if (url === '/export/job') {
+      renderId = (JSON.parse(String(init?.body)) as { operationId: string }).operationId;
+      return Response.json({ renderId });
+    }
+    throw new TypeError('temporary connection reset');
+  }) as typeof fetch;
+  await assert.rejects(exporter()('video'), /temporary connection reset/);
+  assert.deepEqual(requests, ['POST /export/job', `GET /export/job/${renderId}`]);
+  assert.equal((await listServerExportJobs('project-lifecycle'))[0]?.renderId, renderId);
+  resetServerExportRecoveryMemory();
 }
 
 async function verifyCancellationDeletesActiveJob(): Promise<void> {
@@ -470,4 +494,5 @@ export async function runServerExportLifecycleVerifications(): Promise<void> {
   await verifyCancellationAfterRenderDoesNotSave();
   await verifyCancellationDuringServerQaDoesNotSave();
   await verifyNormalServerSaveStillCompletes();
+  await verifyProgressConnectionResetRetainsAcceptedRender();
 }

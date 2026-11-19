@@ -28,6 +28,63 @@ export function integratedLoudnessFromSamples(samples: Float32Array, sampleRate:
   return -0.691 + 10 * Math.log10(Math.max(meanSquare, EPS));
 }
 
+export interface LoudnessSourceRange {
+  startFrame: number;
+  endFrame: number;
+}
+
+export interface LoudnessMeasurement {
+  lufs: number;
+  samplePeak: number;
+}
+
+/** Measure only the source samples that play in the selected output ranges. */
+export function measureLoudnessRanges(
+  channels: readonly Float32Array[],
+  sampleRate: number,
+  fps: number,
+  ranges: readonly LoudnessSourceRange[],
+  playbackRate = 1,
+): LoudnessMeasurement {
+  if (!channels.length || !Number.isFinite(sampleRate) || sampleRate <= 0
+    || !Number.isFinite(fps) || fps <= 0 || !Number.isFinite(playbackRate) || playbackRate <= 0) {
+    throw new Error('无法分析所选片段的音频范围');
+  }
+  const length = Math.min(...channels.map((channel) => channel.length));
+  const monoParts: Float32Array[] = [];
+  let samplePeak = 0;
+  for (const range of ranges) {
+    if (!Number.isFinite(range.startFrame) || !Number.isFinite(range.endFrame) || range.endFrame <= range.startFrame) continue;
+    const start = Math.max(0, range.startFrame * sampleRate / fps);
+    const end = Math.min(length, range.endFrame * sampleRate / fps);
+    if (end <= start) continue;
+    const count = Math.max(1, Math.floor((end - start) / playbackRate));
+    const mono = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      const position = Math.min(end - 1, start + i * playbackRate);
+      const left = Math.floor(position);
+      const right = Math.min(length - 1, left + 1);
+      const fraction = position - left;
+      let mixed = 0;
+      for (const channel of channels) {
+        const value = channel[left]! + (channel[right]! - channel[left]!) * fraction;
+        mixed += value / channels.length;
+        samplePeak = Math.max(samplePeak, Math.abs(value));
+      }
+      mono[i] = mixed;
+    }
+    monoParts.push(mono);
+  }
+  const total = monoParts.reduce((sum, part) => sum + part.length, 0);
+  if (!total) throw new Error('所选片段没有可分析的音频');
+  const samples = new Float32Array(total);
+  let offset = 0;
+  for (const part of monoParts) { samples.set(part, offset); offset += part.length; }
+  const lufs = integratedLoudnessFromSamples(samples, sampleRate);
+  if (lufs <= -70) throw new Error('所选片段没有可分析声音，未修改任何片段。');
+  return { lufs, samplePeak };
+}
+
 const MIN_GAIN = 0.05;
 const MAX_GAIN = 8;
 
@@ -61,6 +118,55 @@ export async function analyzeClipLoudness(src: string): Promise<number> {
   const ctx = new OfflineAudioContext(1, 1, 44100);
   const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
   return integratedLoudnessFromSamples(mixToMono(audioBuffer), audioBuffer.sampleRate);
+}
+
+export interface LoudnessSelection {
+  itemId: string;
+  src: string;
+  fps: number;
+  playbackRate: number;
+  ranges: readonly LoudnessSourceRange[];
+}
+
+async function decodeLoudnessSource(src: string): Promise<AudioBuffer> {
+  const res = await fetch(src);
+  if (!res.ok) throw new Error(`加载音频失败: ${src} (HTTP ${res.status})`);
+  const arrayBuffer = await res.arrayBuffer();
+  const ctx = new OfflineAudioContext(1, 1, 44100);
+  return ctx.decodeAudioData(arrayBuffer);
+}
+
+/** Decode each source once per operation; measure each distinct clip range separately. */
+export async function analyzeLoudnessSelections(
+  selections: readonly LoudnessSelection[],
+  decode: (src: string) => Promise<AudioBuffer> = decodeLoudnessSource,
+): Promise<Map<string, PromiseSettledResult<LoudnessMeasurement>>> {
+  const groups = new Map<string, LoudnessSelection[]>();
+  for (const selection of selections) groups.set(selection.src, [...(groups.get(selection.src) ?? []), selection]);
+  const results = new Map<string, PromiseSettledResult<LoudnessMeasurement>>();
+  const pending = [...groups.entries()];
+  let next = 0;
+  const worker = async () => {
+    while (next < pending.length) {
+      const [src, group] = pending[next++]!;
+      let buffer: AudioBuffer;
+      try { buffer = await decode(src); }
+      catch (reason) {
+        for (const selection of group) results.set(selection.itemId, { status: 'rejected', reason });
+        continue;
+      }
+      const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index));
+      for (const selection of group) {
+        try {
+          results.set(selection.itemId, { status: 'fulfilled', value: measureLoudnessRanges(
+            channels, buffer.sampleRate, selection.fps, selection.ranges, selection.playbackRate,
+          ) });
+        } catch (reason) { results.set(selection.itemId, { status: 'rejected', reason }); }
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(pending.length, LOUDNESS_DECODE_CONCURRENCY) }, worker));
+  return results;
 }
 
 const LOUDNESS_DECODE_CONCURRENCY = 2;

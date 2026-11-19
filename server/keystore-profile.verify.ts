@@ -16,10 +16,8 @@ const previousUserProfile = process.env.USERPROFILE;
 const previousProfile = process.env.OPENCHATCUT_DEV_PROFILE_ID;
 
 try {
-  await Promise.all([
-    mkdir(checkout, { recursive: true }),
-    mkdir(profileRoot, { recursive: true, mode: 0o700 }),
-  ]);
+  await mkdir(checkout, { recursive: true });
+  await assert.rejects(stat(profileRoot), { code: 'ENOENT' });
   await writeFile(checkoutEnv, 'OPENAI_API_KEY=checkout-secret\n', 'utf8');
   process.chdir(checkout);
   // os.homedir() resolves USERPROFILE on Windows; HOME alone only covers POSIX.

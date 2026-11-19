@@ -4,6 +4,9 @@ import { CSS_TRANSITION_TYPES } from './types';
 import type { CssTransitionType, TransitionItem } from './types';
 
 const PREVIEW_APPROXIMATION: Partial<Record<TransitionItem['type'], CssTransitionType>> = {
+  'mosaic-reveal': 'cross-dissolve',
+  'blinds-reveal': 'soft-wipe',
+  'split-slide': 'whip-pan',
   'clean-line-wipe': 'soft-wipe',
   'page-curl': 'soft-wipe',
   'impact-shake': 'whip-pan',

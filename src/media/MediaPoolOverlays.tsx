@@ -26,7 +26,6 @@ interface AssetMenuPortalProps {
   onRemove: () => void;
   onMove: (folderId?: string) => void;
   onAddTimeline?: () => void;
-  onAddChat: () => void;
   /** Transcribe the menu's asset selection (enabled when any is transcribable). */
   onTranscribe?: () => void;
   /** Open the transcript viewer for the menu's anchor asset. */
@@ -197,7 +196,7 @@ function AssetMenuActions(props: AssetMenuPortalProps & { asset: MediaAsset }) {
           {props.folders.map((folder) => <option key={folder.id} value={folder.id}>{folderPath(folder, props.folders)}</option>)}
         </select>
       </label>
-      <AssetMenuDestinations assetName={asset.name} onAddTimeline={props.onAddTimeline} onAddChat={props.onAddChat} />
+      <AssetMenuDestinations assetName={asset.name} onAddTimeline={props.onAddTimeline} />
     </>
   );
 }
@@ -251,7 +250,7 @@ export function MusicModelsNotice({ cards }: { cards: ReadonlyMap<string, MusicA
   if (!unavailable) return null;
   return (
     <div className="cc-media-export-guide" role="note">
-      {t('本地音乐分析模型未安装，素材卡片暂不显示分析入口。在 设置 → 本地 AI 中安装「节拍」与「音乐语义」模型包后即可分析。')}
+      {t('音乐分析不可用。请在设置 → 本地工具中安装「节拍」和「音乐语义」模型。')}
     </div>
   );
 }

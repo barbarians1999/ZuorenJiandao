@@ -1,19 +1,15 @@
-// Transcription provider routing. Credentials remain server-side; local and
-// AssemblyAI keep their specialized execution paths.
+// Local-only transcription. Old provider preferences never enable cloud calls.
 import {
-  isTranscriptionProviderId,
   type TranscriptResult,
   type TranscriptionProviderId,
 } from './types';
 import {
-  transcribePathResumable as assemblyaiTranscribePathResumable,
   type AssemblyAiProviderStatus,
   type AssemblyAiResumeCheckpoint,
   type AssemblyAiCheckpointWriter,
   type TranscribeOptions,
 } from './assemblyai';
 import { localTranscribePathResumable } from './local-asr';
-import { genericCloudTranscribePath } from './generic-cloud-asr';
 
 export const TRANSCRIPTION_PROVIDER_KEY = 'cc.transcriptionProvider';
 export const TRANSCRIPTION_LANGUAGE_KEY = 'cc.transcriptionLanguage';
@@ -53,13 +49,7 @@ export function setAutoTranscribeIngest(setting: AutoTranscribeIngestSetting): v
 
 
 export function preferredTranscriptionProvider(): TranscriptionProviderId {
-  try {
-    const value = localStorage.getItem(TRANSCRIPTION_PROVIDER_KEY);
-    if (isTranscriptionProviderId(value)) return value;
-  } catch {
-    // SSR / private browsing: fall through to the default.
-  }
-  return 'assemblyai';
+  return 'local';
 }
 
 export function preferredTranscriptionLanguage(): string {
@@ -83,9 +73,9 @@ export function preferredTranscriptionDiarization(): boolean {
   return true;
 }
 
-export function setPreferredTranscriptionProvider(provider: TranscriptionProviderId): void {
+export function setPreferredTranscriptionProvider(_provider: TranscriptionProviderId): void {
   try {
-    localStorage.setItem(TRANSCRIPTION_PROVIDER_KEY, provider);
+    localStorage.setItem(TRANSCRIPTION_PROVIDER_KEY, 'local');
     window.dispatchEvent(new Event(TRANSCRIPTION_PROVIDER_CHANGE_EVENT));
   } catch {
     // Best-effort; the default stays in effect.
@@ -114,13 +104,8 @@ export async function transcribePathResumable(
     languageCode: opts.languageCode ?? preferredTranscriptionLanguage(),
     diarize: opts.diarize ?? preferredTranscriptionDiarization(),
   };
-  if (provider === 'local') {
-    return localTranscribePathResumable(path, resume, onCheckpoint, onWait, capturedOptions);
-  }
-  if (provider === 'assemblyai') {
-    return assemblyaiTranscribePathResumable(path, resume, onCheckpoint, onWait, capturedOptions);
-  }
-  return genericCloudTranscribePath(provider, path, onCheckpoint, onWait, capturedOptions);
+  if (provider !== 'local') throw new Error('Cloud transcription was removed. Start a new local transcription task.');
+  return localTranscribePathResumable(path, resume, onCheckpoint, onWait, capturedOptions);
 }
 
 export async function transcribePath(

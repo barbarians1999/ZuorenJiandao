@@ -78,7 +78,7 @@ const countIn = (dir, re = /\.verify\.(ts|tsx|mjs)$/) => readdirSync(dir).filter
   }
   assert.match(verifyCommand('src/export/browserExport.verify.ts'), /tsx/,
     'ordinary suites run under tsx');
-  // A registered suite always uses package.json's own command, whatever it is —
+  // A registered suite always uses the manifest's own command, whatever it is —
   // remotion/render-timeout.verify.mjs is registered under tsx, not node, and
   // this runner must not "correct" it.
   assert.equal(
@@ -119,11 +119,23 @@ try {
   ]);
 
   // Execute only tiny fixture suites, never the real expensive selected suite.
-  for (const runner of ['run-tests.mjs', 'run-affected-verifies.mjs']) {
+  for (const runner of ['run-tests.mjs', 'run-affected-verifies.mjs', 'verification-runner.mjs',
+    'verification-inventory.mjs', 'verification-process.mjs', 'verification-report.mjs', 'test-artifacts.mjs']) {
     copyFileSync(new URL(runner, import.meta.url), join(temporary, 'scripts', runner));
   }
-  const script = `node -e "console.log('fixture passed')"`;
-  writeFileSync(join(temporary, 'package.json'), JSON.stringify({ scripts: { 'test:serial': script } }));
+  writeFileSync(join(temporary, 'src/example.verify.cjs'), "console.log('fixture passed');");
+  const fixtureManifest = {
+    version: 1, defaultGroups: ['logic'], groups: Object.fromEntries(['logic', 'short-render', 'desktop', 'package', 'long'].map(group => [group, group])),
+    scenarios: Object.fromEntries(['change', 'render-change', 'desktop-release', 'long-export-change'].map(name => [name,
+      { groups: name === 'desktop-release' ? ['logic', 'short-render', 'desktop', 'package'] : ['logic', 'short-render', 'desktop', 'package', 'long'], evidence: ['fixture'] }])),
+    suites: {}, items: [
+      { id: 'fixture', file: 'src/example.verify.cjs', command: 'node src/example.verify.cjs', group: 'logic', timeoutMs: 5000 },
+      ...['short-render', 'desktop', 'package', 'long'].map(group => ({ id: group, command: 'node src/example.verify.cjs', group, timeoutMs: 5000 })),
+      ...['js', 'mts'].map(extension => ({ id: extension, file: `src/example.verify.${extension}`, command: `node src/example.verify.${extension}`, group: 'long', timeoutMs: 5000 })),
+    ],
+  };
+  writeFileSync(join(temporary, 'scripts/verification-manifest.json'), JSON.stringify(fixtureManifest));
+  writeFileSync(join(temporary, 'package.json'), JSON.stringify({ version: 'fixture', scripts: { test: 'node scripts/run-tests.mjs' } }));
   const run = (runner, args = []) => spawnSync(process.execPath, [join(temporary, 'scripts', runner), ...args], {
     cwd: temporary, encoding: 'utf8', env: { ...process.env, TEST_CONCURRENCY: '1' },
   });

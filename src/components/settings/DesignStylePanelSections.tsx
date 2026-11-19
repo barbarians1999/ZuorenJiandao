@@ -295,7 +295,7 @@ export function DesignStylePanelFooter({ model, onApply, onClose }: {
     {model.savingName !== null && <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
       <input autoFocus value={model.savingName} placeholder={t('风格名称')}
         onChange={(event) => model.setSavingName(event.target.value)}
-        onKeyDown={(event) => { if (event.key === 'Enter') void model.saveOwned(); if (event.key === 'Escape') model.setSavingName(null); }}
+        onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter') { event.preventDefault(); void model.saveOwned(); } if (event.key === 'Escape') model.setSavingName(null); }}
         style={{ ...textInput, flex: 1 }} />
       <button onClick={() => { void model.saveOwned(); }} style={primaryBtn}>{t('确定')}</button>
       <button onClick={() => model.setSavingName(null)} style={ghostBtn}>{t('取消')}</button>

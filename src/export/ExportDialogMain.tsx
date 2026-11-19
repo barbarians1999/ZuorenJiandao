@@ -1,11 +1,24 @@
 import type { TimelineState } from '../editor/types';
 import { useT } from '../i18n/locale';
 import { ExportDestinationBar } from './ExportDestinationBar';
-import { ExportFooter } from './ExportDialogFooter';
+import { ExportFooter, formatProgressPercent } from './ExportDialogFooter';
 import { ExportTabContent } from './ExportDialogTabs';
 import { EXPORT_TABS, type ExportDialogModel } from './useExportDialogModel';
 import type { ExportTab, RenderEngine } from './useExportWorkflow';
 import type { ExportEngineInfo } from './exportWorkflowTypes';
+import type { ExportPhase } from './exportWorkflowTypes';
+
+const BACKGROUND_PHASE_LABELS: Record<ExportPhase, string> = {
+  queued: '等待中',
+  preparing: '准备中',
+  rendering: '正在生成画面',
+  finalizing: '正在封装',
+  verifying: '正在质量检查',
+  downloading: '正在保存',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+};
 
 function RenderBadge({ tab, renderEngine, engine, reason }: {
   tab: ExportTab;
@@ -35,13 +48,27 @@ function ExportMainHeader({ model }: { model: ExportDialogModel }) {
 
 function BackgroundExportJobs({ model }: { model: ExportDialogModel }) {
   const t = useT();
-  const { jobs, selectedJobId, viewJob, cancelJob } = model.workflow;
+  const { jobs, selectedJobId, viewJob, cancelJob, clearTerminal } = model.workflow;
+  const progress = model.workflow.progress;
+  const footerCanCancel = !!model.workflow.busy
+    && (progress?.phase === 'queued' || progress?.phase === 'preparing' || progress?.phase === 'rendering'
+      || progress?.phase === 'finalizing' || progress?.phase === 'verifying')
+    && (model.workflow.renderEngine === 'checking' || model.workflow.renderEngine === 'browser'
+      || model.workflow.renderEngine === 'server');
   if (jobs.length === 0) return null;
+  const terminalCount = jobs.filter((job) => ['completed', 'failed', 'cancelled'].includes(job.progress.phase)).length;
   return (
     <section className="cc-export-progress" aria-label={t('后台导出任务')}>
       <div className="cc-export-progress-head">
-        <strong>{t('后台导出')}</strong>
-        <span>{jobs.length}</span>
+        <div className="cc-export-progress-title">
+          <strong>{t('后台导出')}</strong>
+          <span>{jobs.length}</span>
+        </div>
+        {terminalCount > 0 && (
+          <button type="button" className="cc-export-clear-terminal" onClick={clearTerminal}>
+            {t('清除已结束')}
+          </button>
+        )}
       </div>
       {jobs.map((job) => {
         const terminal = job.progress.phase === 'completed'
@@ -51,9 +78,9 @@ function BackgroundExportJobs({ model }: { model: ExportDialogModel }) {
           <div className="cc-export-progress-meta" key={job.id}>
             <button type="button" onClick={() => viewJob(job.id)}
               aria-pressed={selectedJobId === job.id}>
-              {job.label} · {job.progress.phase} · {job.progress.percent}%
+              {job.label} · {t(BACKGROUND_PHASE_LABELS[job.progress.phase])} · {formatProgressPercent(job.progress)}
             </button>
-            {!terminal && (
+            {!terminal && !(job.id === selectedJobId && footerCanCancel) && (
               <button type="button" onClick={() => cancelJob(job.id)}>{t('取消')}</button>
             )}
           </div>
@@ -64,6 +91,7 @@ function BackgroundExportJobs({ model }: { model: ExportDialogModel }) {
 }
 
 function StructuredExportFailure({ model }: { model: ExportDialogModel }) {
+  const t = useT();
   const failure = model.workflow.failure;
   if (!failure) return model.workflow.error
     ? <p className="cc-export-error">{model.workflow.error}</p>
@@ -71,8 +99,11 @@ function StructuredExportFailure({ model }: { model: ExportDialogModel }) {
   return (
     <div className="cc-export-error" role="alert">
       <strong>{failure.message}</strong>
-      <div>{failure.stage} · {failure.code} · {failure.retryable ? 'retryable' : 'not retryable'}</div>
-      <div>cleanup: {failure.cleanupStatus}</div>
+      <p>{failure.retryable ? t('可以重试导出；若再次失败，请展开技术详情。') : t('请根据提示检查素材或设置后再次导出。')}</p>
+      <details><summary>{t('技术详情')}</summary>
+      <div>{failure.stage} · {failure.code}</div>
+      <div>{t('临时文件清理')}：{failure.cleanupStatus}</div>
+      </details>
       {failure.targetPath && <div>{failure.targetPath}</div>}
       {failure.mediaIssues?.length ? (
         <ul>
@@ -89,19 +120,27 @@ function StructuredExportFailure({ model }: { model: ExportDialogModel }) {
 
 export function ExportDialogMain({ state, model }: { state: TimelineState; model: ExportDialogModel }) {
   const { workflow } = model;
+  const t = useT();
+  const settingsLocked = !!workflow.busy || workflow.progress?.phase === 'completed';
+  const settingsLockMessage = workflow.busy
+    ? t('导出进行中，设置已锁定。')
+    : t('本次导出已完成；关闭窗口后可调整下一次导出设置。');
   return (
     <main className="cc-export-main">
       <ExportMainHeader model={model} />
       <div className="cc-export-content" role="tabpanel" id={`cc-export-content-${model.tab}`}
         aria-labelledby={`cc-export-tab-${model.tab}`}>
-        <ExportTabContent
-          tab={model.tab} state={state} video={model.video} subtitles={model.subtitles}
-          busy={!!workflow.busy} enabled={workflow.autoQaEnabled} qa={workflow.qa}
-          qualityMode={model.qualityMode} setQualityMode={model.setQualityMode}
-          onToggle={workflow.toggleAutoQa} nleFormat={model.nleFormat}
-          setNleFormat={model.setNleFormat} includeMg={model.includeMg}
-          setIncludeMg={model.setIncludeMg} mgCount={model.mgItems.length} base={model.base}
-        />
+        {settingsLocked && <p className="cc-export-footnote">{settingsLockMessage}</p>}
+        <fieldset className="cc-export-settings" aria-label={t('导出设置')} disabled={settingsLocked}>
+          <ExportTabContent
+            tab={model.tab} state={state} video={model.video} subtitles={model.subtitles}
+            busy={!!workflow.busy} enabled={workflow.autoQaEnabled} qa={workflow.qa}
+            qualityMode={model.qualityMode} setQualityMode={model.setQualityMode}
+            onToggle={workflow.toggleAutoQa} nleFormat={model.nleFormat}
+            setNleFormat={model.setNleFormat} includeMg={model.includeMg}
+            setIncludeMg={model.setIncludeMg} mgCount={model.mgItems.length} base={model.base}
+          />
+        </fieldset>
         <StructuredExportFailure model={model} />
       </div>
       <BackgroundExportJobs model={model} />

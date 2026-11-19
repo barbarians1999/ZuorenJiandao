@@ -40,25 +40,25 @@ export function useTimelineTrackMenus({ state, commands, t }: UseTimelineTrackMe
       && !state.tracks?.[move.targetTrackId]?.locked ? move.targetTrackId : sourceTrackId;
     const sourceLane = source.sourceEntries?.find((entry) => entry.id === move.laneId);
     const sourceCue = sourceLane?.words?.[move.index];
+    const duration = Math.max(20, Math.round(move.endMs - move.startMs));
+    const start = Math.max(0, Math.round(move.startMs));
+    const end = start + duration;
     if (targetTrackId === sourceTrackId) {
-      const others = (sourceLane?.words ?? []).filter((_, index) => index !== move.index);
-      const placed = placeManualCueTiming(others, move.startMs, move.endMs - move.startMs);
-      if (!placed || (sourceCue?.start === placed.start && sourceCue.end === placed.end)) return;
+      if (sourceCue?.start === start && sourceCue.end === end) return;
       const patch = updateManualCue(
         source,
         move.laneId,
         move.index,
         move.text,
-        placed.start,
-        placed.end,
+        start,
+        end,
       );
       if (patch) commands.updateCaptions(patch, sourceTrackId);
       return;
     }
     const target = captionsOnTrack(state, targetTrackId) ?? newManualCaptions();
     const targetWords = promoteCaptionEntries(target, state.items).find(isManualCaptionEntry)?.words ?? [];
-    const placed = placeManualCueTiming(targetWords, move.startMs, move.endMs - move.startMs);
-    if (!placed) return;
+    const placed = placeManualCueTiming(targetWords, start, duration) ?? { start, end };
     const targetPatch = appendManualCueToFirstLane(target, state.items, move.text, placed.start, placed.end);
     if (!targetPatch) return;
     commands.batch([

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
+import { setImmediate as delayImmediate } from 'node:timers/promises';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import {
   pendingEditorCallsForTest,
@@ -265,19 +266,56 @@ try {
   });
   assert.equal(staleSession.isError, true);
   assert.equal(callOutcome(staleSession), 'stale', 'every tool call revalidates editor instance and base revision');
-  // After a stale error the transport is closed so subsequent requests fail
-  // with a session-not-found error instead of returning another stale result.
+  // A stale binding is a tool-level error, not a transport failure. Wait past
+  // the old deferred-close path so this cannot pass by racing the eviction.
+  await delayImmediate();
+  const retainedStaleSession = mcpSessionsForTest().find((session) => session.id === boundA.sessionId);
+  assert(retainedStaleSession, 'a stale tool result must not close or evict its MCP transport');
+  assert.equal(retainedStaleSession.staleReason, staleSession.structuredContent?.message);
+  assert.ok((await boundA.client.listTools()).tools.some((tool) => tool.name === dynamicTool.name));
   registerEditor(projectA, editorA, revisionA, editorTools);
-  await assert.rejects(
-    boundA.client.callTool({ name: 'openchatcut_status', arguments: {} }),
-    (error: unknown) => error instanceof Error && /session not found or expired/i.test(error.message),
-    'a stale transport is closed and its session is evicted',
-  );
+  for (const name of ['openchatcut_status', dynamicTool.name, 'get_edit_session']) {
+    const repeatedStale = await boundA.client.callTool({ name, arguments: {} });
+    assert.equal(repeatedStale.isError, true);
+    assert.equal(callOutcome(repeatedStale), 'stale', 'stale requests return structured errors instead of disconnecting');
+    assert.equal(repeatedStale.structuredContent?.message, retainedStaleSession.staleReason);
+  }
+  assert.equal(pendingEditorCallsForTest(boundA.sessionId).length, 0, 'restoring a revision cannot revive a stale binding');
+
+  const recoveredClient = await connectClient(mcpUrl, 'openchatcut-mcp-after-stale');
+  clients.push(recoveredClient);
+  assert.notEqual((await recoveredClient.client.callTool({
+    name: 'target_project', arguments: { projectId: projectA },
+  })).isError, true, 'a new MCP connection can bind after a stale session');
+  const recoveredCall = recoveredClient.client.callTool({ name: dynamicTool.name, arguments: {} });
+  const recoveredEditorCall = await nextEditorCall(projectA, editorA, revisionA, AbortSignal.timeout(1_000));
+  assert(recoveredEditorCall);
+  settleEditorCall(recoveredEditorCall.id, 'applied', { ok: true });
+  assert.notEqual((await recoveredCall).isError, true);
+
+  const concurrentCalls = [0, 1].map(() => recoveredClient.client.callTool({
+    name: dynamicTool.name, arguments: {},
+  }));
+  for (const _ of concurrentCalls) {
+    assert(await nextEditorCall(projectA, editorA, revisionA, AbortSignal.timeout(1_000)));
+  }
+  registerEditor(projectA, editorA, 'stale-pending-revision', editorTools);
+  for (const result of await Promise.all(concurrentCalls)) {
+    assert.equal(result.isError, true);
+    assert.equal(callOutcome(result), 'stale', 'every in-flight call receives its stale result before any transport teardown');
+  }
+  await delayImmediate();
+  assert.ok(mcpSessionsForTest().find((session) => session.id === recoveredClient.sessionId)?.staleReason);
+  assert.equal(pendingEditorCallsForTest(recoveredClient.sessionId).length, 0);
+  registerEditor(projectA, editorA, revisionA, editorTools);
+
+  assert.equal((await rawSessionRequest(mcpUrl, boundA.sessionId, 'DELETE')).status, 200);
   assert.equal(
     mcpSessionsForTest().some((session) => session.id === boundA.sessionId),
     false,
-    'stale transport session is removed from the sessions map',
+    'explicit DELETE still closes and evicts a stale MCP transport',
   );
+  assert.equal((await rawSessionRequest(mcpUrl, boundA.sessionId, 'POST')).status, 404);
 
   const switchClient = await connectClient(mcpUrl, 'openchatcut-mcp-switch');
   clients.push(switchClient);

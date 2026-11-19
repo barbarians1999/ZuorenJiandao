@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { App, BrowserWindow } from 'electron';
 
@@ -6,6 +6,7 @@ const GPU_CRASH_MARKER = 'gpu-crash-recovery.json';
 const RELOAD_DELAY_MS = 100;
 const RECOVERY_WINDOW_MS = 30_000;
 const MAX_RECOVERIES_PER_WINDOW = 2;
+const MAX_CRASH_MARKER_AGE_MS = 600_000;
 
 type RecoveryApp = Pick<App, 'disableHardwareAcceleration' | 'getPath' | 'on' | 'off'>;
 type ChildProcessGone = { type: string; reason: string; exitCode: number };
@@ -48,6 +49,22 @@ export function applyWindowsGpuCrashFallback(
   platform: NodeJS.Platform = process.platform,
 ): boolean {
   if (platform !== 'win32' || !existsSync(markerPath(app))) return false;
+  try {
+    const raw = readFileSync(markerPath(app), 'utf8');
+    const parsed = JSON.parse(raw) as { at?: string };
+    if (parsed?.at) {
+      const ageMs = Date.now() - new Date(parsed.at).getTime();
+      // A crash recorded more than 10 minutes ago is stale; do not disable hardware acceleration on subsequent launches
+      if (Number.isFinite(ageMs) && ageMs > MAX_CRASH_MARKER_AGE_MS) {
+        unlinkSync(markerPath(app));
+        console.warn('[desktop] clearing stale GPU crash marker older than 10m; retaining hardware acceleration');
+        return false;
+      }
+    }
+  } catch {
+    try { unlinkSync(markerPath(app)); } catch {}
+    return false;
+  }
   app.disableHardwareAcceleration();
   try { unlinkSync(markerPath(app)); } catch { /* retry fallback on the next launch */ }
   console.warn('[desktop] previous GPU crash detected; using software rendering for this session');

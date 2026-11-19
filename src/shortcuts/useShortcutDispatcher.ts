@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
-import { matchShortcut, normalizeKey, isTypingTarget } from './match';
-import { effectiveCatalog } from './keymap';
+import { isShortcutImeComposing, matchShortcut, normalizeKey, shouldIgnoreShortcutRepeat, isTypingTarget } from './match';
+import { effectiveMatchingCatalog } from './keymap';
 import { invokeAction } from './actionRegistry';
 import { shortcutAllowedForSurface, shortcutSurfaceFromTarget } from './shortcutScope';
 
@@ -21,6 +21,9 @@ export function useShortcutDispatcher(
     const held = new Set<string>();
 
     const onKeyDown = (e: KeyboardEvent) => {
+      const typing = isTypingTarget(e.target);
+      const isBracketKey = e.code === 'BracketLeft' || e.code === 'BracketRight' || e.key === '【' || e.key === '】';
+      if (isShortcutImeComposing(e) && (typing || !isBracketKey)) return;
       const nk = normalizeKey(e.key);
       if (!['shift', 'control', 'alt', 'meta'].includes(nk)) held.add(nk);
       if (e.defaultPrevented) return;
@@ -28,9 +31,10 @@ export function useShortcutDispatcher(
       // Shift+Backspace is ripple-delete — special case: still match delete with shift
       const selection = window.getSelection();
       const hasTextSelection = selection?.isCollapsed === false;
-      const id = matchShortcut(e, effectiveCatalog(), { held, hasTextSelection });
+      const id = matchShortcut(e, effectiveMatchingCatalog(), { held, hasTextSelection });
       if (!id) return;
       if (!shortcutAllowedForSurface(id, shortcutSurfaceFromTarget(e.target))) return;
+      if (shouldIgnoreShortcutRepeat(id, e)) return;
 
       // Tab in non-typing: ask-ai; don't steal tab in inputs
       if (id === 'ask-ai' && isTypingTarget(e.target)) return;

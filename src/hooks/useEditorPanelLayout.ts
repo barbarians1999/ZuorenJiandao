@@ -1,115 +1,74 @@
+import { useRef } from 'react';
 import { usePersistedState } from './usePersistedState';
 
-const HEADER_HEIGHT = 41;
-const COLLAPSED_CHAT_WIDTH = 46;
+const HEADER_HEIGHT = 52;
 const BASELINE_WIDTH = 1463;
 const BASELINE_CONTENT_HEIGHT = 761;
-
-const DEFAULT_CHAT_RATIO = 356 / BASELINE_WIDTH;
 const DEFAULT_LIBRARY_RATIO = 406 / BASELINE_WIDTH;
 const DEFAULT_TIMELINE_RATIO = 350 / BASELINE_CONTENT_HEIGHT;
-const MIN_CHAT_RATIO = 320 / BASELINE_WIDTH;
-const MIN_LIBRARY_RATIO = 176 / BASELINE_WIDTH;
-const MIN_PREVIEW_RATIO = 280 / BASELINE_WIDTH;
+const MIN_LIBRARY_RATIO = 260 / BASELINE_WIDTH;
+const MIN_PREVIEW_RATIO = 360 / BASELINE_WIDTH;
 const MIN_TIMELINE_RATIO = 260 / BASELINE_CONTENT_HEIGHT;
 const MIN_UPPER_RATIO = 300 / BASELINE_CONTENT_HEIGHT;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
-
 function finiteRatio(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
-
 function roundRatio(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
-
 function viewportWidth(): number {
   return typeof window === 'undefined' ? BASELINE_WIDTH : Math.max(1, window.innerWidth);
 }
-
 function contentHeight(): number {
-  if (typeof window === 'undefined') return BASELINE_CONTENT_HEIGHT;
-  return Math.max(1, window.innerHeight - HEADER_HEIGHT);
+  return typeof window === 'undefined' ? BASELINE_CONTENT_HEIGHT : Math.max(1, window.innerHeight - HEADER_HEIGHT);
 }
-
-function normalizeRatios(chat: number, library: number, timeline: number) {
-  const chatRatio = clamp(
-    finiteRatio(chat, DEFAULT_CHAT_RATIO),
-    MIN_CHAT_RATIO,
-    1 - MIN_LIBRARY_RATIO - MIN_PREVIEW_RATIO,
-  );
-  return {
-    chatRatio,
-    libraryRatio: clamp(
-      finiteRatio(library, DEFAULT_LIBRARY_RATIO),
-      MIN_LIBRARY_RATIO,
-      1 - chatRatio - MIN_PREVIEW_RATIO,
-    ),
-    timelineRatio: clamp(
-      finiteRatio(timeline, DEFAULT_TIMELINE_RATIO),
-      MIN_TIMELINE_RATIO,
-      1 - MIN_UPPER_RATIO,
-    ),
-  };
-}
-
 export interface EditorPanelLayout {
   gridTemplateColumns: string;
   gridTemplateRows: string;
-  resizeChat: (delta: number) => void;
+  librarySize: { value: number; min: number; max: number };
+  timelineSize: { value: number; min: number; max: number };
   resizeLibrary: (delta: number) => void;
   resizeTimeline: (delta: number) => void;
+  beginLibraryResize: () => void;
+  cancelLibraryResize: () => void;
+  resetLibrarySize: () => void;
+  beginTimelineResize: () => void;
+  cancelTimelineResize: () => void;
+  resetTimelineSize: () => void;
 }
 
-/**
- * Keeps user-resized editor panels as viewport-relative ratios. CSS vw/fr tracks
- * then react to both window resizing and browser zoom without a JS resize loop.
- */
-export function useEditorPanelLayout(chatCollapsed: boolean): EditorPanelLayout {
-  const [storedChatRatio, setChatRatio] = usePersistedState(
-    'openchatcut.chatRatio.ui-v2',
-    DEFAULT_CHAT_RATIO,
-  );
-  const [storedLibraryRatio, setLibraryRatio] = usePersistedState(
-    'openchatcut.libraryRatio.ui-v2',
-    DEFAULT_LIBRARY_RATIO,
-  );
-  const [storedTimelineRatio, setTimelineRatio] = usePersistedState(
-    'openchatcut.timelineRatio.ui-v2',
-    DEFAULT_TIMELINE_RATIO,
-  );
-
-  const { chatRatio, libraryRatio, timelineRatio } = normalizeRatios(
-    storedChatRatio,
-    storedLibraryRatio,
-    storedTimelineRatio,
-  );
-
-  const chatTrack = chatCollapsed ? `${COLLAPSED_CHAT_WIDTH}px` : `${chatRatio * 100}vw`;
-  const gridTemplateColumns = `${chatTrack} 0 ${libraryRatio * 100}vw 0 minmax(0, 1fr)`;
-  const gridTemplateRows = `${HEADER_HEIGHT}px minmax(0, ${1 - timelineRatio}fr) 0 minmax(0, ${timelineRatio}fr)`;
-
-  const resizeChat = (delta: number) => setChatRatio((current) => roundRatio(clamp(
-    finiteRatio(current, DEFAULT_CHAT_RATIO) + delta / viewportWidth(),
-    MIN_CHAT_RATIO,
-    1 - libraryRatio - MIN_PREVIEW_RATIO,
+/** Media library + preview above a full-width timeline; no embedded chat column. */
+export function useEditorPanelLayout(): EditorPanelLayout {
+  const [storedLibraryRatio, setLibraryRatio] = usePersistedState('openchatcut.libraryRatio.ui-v3', DEFAULT_LIBRARY_RATIO);
+  const [storedTimelineRatio, setTimelineRatio] = usePersistedState('openchatcut.timelineRatio.ui-v2', DEFAULT_TIMELINE_RATIO);
+  const libraryRatio = clamp(finiteRatio(storedLibraryRatio, DEFAULT_LIBRARY_RATIO), MIN_LIBRARY_RATIO, 1 - MIN_PREVIEW_RATIO);
+  const timelineRatio = clamp(finiteRatio(storedTimelineRatio, DEFAULT_TIMELINE_RATIO), MIN_TIMELINE_RATIO, 1 - MIN_UPPER_RATIO);
+  const libraryRatioAtDragStart = useRef(libraryRatio);
+  const timelineRatioAtDragStart = useRef(timelineRatio);
+  const gridTemplateColumns = `minmax(0, ${libraryRatio * 100}vw) 5px minmax(0, 1fr)`;
+  const gridTemplateRows = `${HEADER_HEIGHT}px minmax(0, 1fr) 5px minmax(0, calc((100vh - ${HEADER_HEIGHT}px) * ${timelineRatio}))`;
+  const resizeLibrary = (delta: number) => setLibraryRatio((current) => roundRatio(clamp(
+    finiteRatio(current, DEFAULT_LIBRARY_RATIO) + delta / viewportWidth(), MIN_LIBRARY_RATIO, 1 - MIN_PREVIEW_RATIO,
   )));
-  const resizeLibrary = (delta: number) => setLibraryRatio((current) => {
-    const chatShare = chatCollapsed ? COLLAPSED_CHAT_WIDTH / viewportWidth() : chatRatio;
-    return roundRatio(clamp(
-      finiteRatio(current, DEFAULT_LIBRARY_RATIO) + delta / viewportWidth(),
-      MIN_LIBRARY_RATIO,
-      1 - chatShare - MIN_PREVIEW_RATIO,
-    ));
-  });
   const resizeTimeline = (delta: number) => setTimelineRatio((current) => roundRatio(clamp(
-    finiteRatio(current, DEFAULT_TIMELINE_RATIO) - delta / contentHeight(),
-    MIN_TIMELINE_RATIO,
-    1 - MIN_UPPER_RATIO,
+    finiteRatio(current, DEFAULT_TIMELINE_RATIO) - delta / contentHeight(), MIN_TIMELINE_RATIO, 1 - MIN_UPPER_RATIO,
   )));
-
-  return { gridTemplateColumns, gridTemplateRows, resizeChat, resizeLibrary, resizeTimeline };
+  return {
+    gridTemplateColumns,
+    gridTemplateRows,
+    librarySize: { value: libraryRatio * 100, min: MIN_LIBRARY_RATIO * 100, max: (1 - MIN_PREVIEW_RATIO) * 100 },
+    timelineSize: { value: timelineRatio * 100, min: MIN_TIMELINE_RATIO * 100, max: (1 - MIN_UPPER_RATIO) * 100 },
+    resizeLibrary,
+    resizeTimeline,
+    beginLibraryResize: () => { libraryRatioAtDragStart.current = libraryRatio; },
+    cancelLibraryResize: () => setLibraryRatio(libraryRatioAtDragStart.current),
+    resetLibrarySize: () => setLibraryRatio(DEFAULT_LIBRARY_RATIO),
+    beginTimelineResize: () => { timelineRatioAtDragStart.current = timelineRatio; },
+    cancelTimelineResize: () => setTimelineRatio(timelineRatioAtDragStart.current),
+    resetTimelineSize: () => setTimelineRatio(DEFAULT_TIMELINE_RATIO),
+  };
 }

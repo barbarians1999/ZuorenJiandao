@@ -1,7 +1,7 @@
 import type { Plugin } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, rename, stat, unlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { extname, join } from 'node:path';
 import { isSafeUploadName, resolveUploadFile, serveDiskFile, uploadDir, uploadReadDirs } from '../media-dir.ts';
@@ -9,12 +9,13 @@ import { derivativeQueue, type DerivativeWork } from '../derivative-queue.ts';
 import { handlePreviewProxy, handlePreviewProxyFile } from '../preview-proxy.ts';
 import { capturePreviewGenerationEpoch, invalidatePreviewGenerations, isPreviewGenerationCurrent } from '../preview-cache-epoch.ts';
 import { editorCredentialAuthorized } from '../editor-auth.ts';
-import { PEAKS_PER_SECOND, probe, computePeaks, buildFilmstrip, buildFrame } from './media-preview-transforms.ts';
+import { PEAKS_PER_SECOND, probe, computePeaks, buildFilmstrip, buildFrame, filmstripSpec, resolveActualPeaksPerSecond } from './media-preview-transforms.ts';
 
 const PREVIEW_TRANSFORM_VERSION = 'preview-v3';
 const DEFAULT_PREVIEW_MAX_BYTES = 512 * 1024 * 1024;
 const PREVIEW_GC_INTERVAL_MS = 5 * 60_000;
 const activePreviewPaths = new Set<string>();
+const recentPreviewPaths = new Map<string, number>();
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
@@ -60,12 +61,14 @@ export function selectPreviewEvictions(
   entries: PreviewCacheEntry[],
   maxBytes: number,
   protectedPaths: ReadonlySet<string> = new Set(),
+  now = Date.now(),
 ): string[] {
   let total = entries.reduce((sum, entry) => sum + entry.bytes, 0);
   const removed: string[] = [];
   for (const entry of [...entries].sort((a, b) => a.lastAccessedAt - b.lastAccessedAt)) {
     if (total <= maxBytes) break;
-    if (protectedPaths.has(entry.path)) continue;
+    // Allow the ready response to hand a new/just-used derivative to its reader.
+    if (protectedPaths.has(entry.path) || now - entry.lastAccessedAt < PREVIEW_GC_INTERVAL_MS) continue;
     removed.push(entry.path);
     total -= entry.bytes;
   }
@@ -77,8 +80,8 @@ function previewMaxBytes(): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_PREVIEW_MAX_BYTES;
 }
 
-function isPreviewDerivative(name: string): boolean {
-  return /\.(?:peaks\.json|strip\.jpg|frame-\d+\.jpg|poster\.jpg|proxy\.mp4|proxy-status\.json)$/.test(name);
+export function isPreviewDerivative(name: string): boolean {
+  return /\.(?:peaks(?:-v\d+)?\.json|strip(?:-v\d+)?\.jpg|frame-\d+\.jpg|poster\.jpg|proxy(?:-720-v\d+)?\.mp4|proxy(?:-720-v\d+)?-status\.json)$/.test(name);
 }
 
 async function previewEntries(): Promise<PreviewCacheEntry[]> {
@@ -89,7 +92,7 @@ async function previewEntries(): Promise<PreviewCacheEntry[]> {
     const rows = await Promise.all(names.filter(isPreviewDerivative).map(async (name) => {
       const path = join(dir, name);
       const info = await stat(path).catch(() => null);
-      return info?.isFile() ? { path, bytes: info.size, lastAccessedAt: info.mtimeMs } : null;
+      return info?.isFile() ? { path, bytes: info.size, lastAccessedAt: Math.max(info.atimeMs, info.mtimeMs) } : null;
     }));
     entries.push(...rows.filter((entry): entry is PreviewCacheEntry => entry !== null));
   }
@@ -97,9 +100,16 @@ async function previewEntries(): Promise<PreviewCacheEntry[]> {
 }
 
 async function prunePreviewCache(protectedPaths: ReadonlySet<string> = new Set()): Promise<void> {
-  const protectedAll = new Set([...protectedPaths, ...activePreviewPaths]);
+  for (const [path, usedAt] of recentPreviewPaths) {
+    if (Date.now() - usedAt >= PREVIEW_GC_INTERVAL_MS) recentPreviewPaths.delete(path);
+  }
+  const protectedAll = new Set([...protectedPaths, ...activePreviewPaths, ...recentPreviewPaths.keys()]);
   const victims = selectPreviewEvictions(await previewEntries(), previewMaxBytes(), protectedAll);
-  await Promise.all(victims.map((path) => unlink(path).catch(() => {})));
+  await Promise.all(victims.map(async (path) => {
+    const info = await stat(path).catch(() => null);
+    if (info && !protectedPaths.has(path) && !activePreviewPaths.has(path) && !recentPreviewPaths.has(path)
+      && Date.now() - Math.max(info.atimeMs, info.mtimeMs) >= PREVIEW_GC_INTERVAL_MS) await unlink(path).catch(() => {});
+  }));
 }
 
 async function atomicPreviewBuild(path: string, build: (tmp: string) => Promise<void>): Promise<void> {
@@ -139,9 +149,8 @@ export async function deleteMediaPreviewDerivatives(name: string): Promise<numbe
 }
 
 async function readCachedPreview(path: string): Promise<Buffer> {
+  recentPreviewPaths.set(path, Date.now());
   const data = await readFile(path);
-  const now = new Date();
-  await utimes(path, now, now).catch(() => {});
   await prunePreviewCache();
   return data;
 }
@@ -157,24 +166,26 @@ async function resolveReq(req: IncomingMessage, res: ServerResponse) {
   return { name, file, source: { size: source.size, mtimeMs: source.mtimeMs } };
 }
 
-async function runDerivative<T>(
+export async function runDerivative<T>(
   _req: IncomingMessage,
   res: ServerResponse,
   key: string,
   work: DerivativeWork<T>,
   protectedPath = key,
+  retainUntilComplete = false,
 ): Promise<T> {
   const lease = derivativeQueue.acquire(key, async (signal) => {
     activePreviewPaths.add(protectedPath);
     try {
       return await work(signal);
     } finally {
+      recentPreviewPaths.set(protectedPath, Date.now());
       activePreviewPaths.delete(protectedPath);
       void prunePreviewCache();
     }
   });
   const release = () => lease.release();
-  res.once('close', release);
+  if (!retainUntilComplete) res.once('close', release);
   try {
     return await lease.promise;
   } finally {
@@ -196,13 +207,13 @@ function handleDerivativeError(
 }
 
 async function serveCachedFile(req: IncomingMessage, res: ServerResponse, cache: string): Promise<void> {
-  const now = new Date();
-  await utimes(cache, now, now).catch(() => {});
+  recentPreviewPaths.set(cache, Date.now());
   activePreviewPaths.add(cache);
   try {
     await prunePreviewCache();
     await serveDiskFile(req, res, cache);
   } finally {
+    recentPreviewPaths.set(cache, Date.now());
     activePreviewPaths.delete(cache);
     void prunePreviewCache();
   }
@@ -212,16 +223,18 @@ async function handleWaveform(req: IncomingMessage, res: ServerResponse, logErro
   try {
     const hit = await resolveReq(req, res);
     if (!hit) return;
-    const cache = previewCachePath(hit.name, hit.source, 'peaks', 'json');
+    // Bump waveform derivative so old long-file caches with wrong peaksPerSecond=100 never get reused.
+    const cache = previewCachePath(hit.name, hit.source, 'peaks-v2', 'json');
     if (!existsSync(cache)) {
       await runDerivative(req, res, cache, async (signal) => {
         if (existsSync(cache)) return;
         const probeResult = await probe(hit.file, signal);
+        const peaks = probeResult.hasAudio ? await computePeaks(hit.file, probeResult.durationMs, signal) : [];
         const body = !probeResult.hasAudio
           ? { peaks: [], peaksPerSecond: PEAKS_PER_SECOND, durationMs: probeResult.durationMs }
           : {
-              peaks: await computePeaks(hit.file, probeResult.durationMs, signal),
-              peaksPerSecond: PEAKS_PER_SECOND,
+              peaks,
+              peaksPerSecond: resolveActualPeaksPerSecond(peaks.length, probeResult.durationMs),
               durationMs: probeResult.durationMs,
             };
         await atomicPreviewBuild(cache, (tmp) => writeFile(tmp, JSON.stringify(body)));
@@ -241,18 +254,28 @@ async function handleFilmstrip(req: IncomingMessage, res: ServerResponse, logErr
   try {
     const hit = await resolveReq(req, res);
     if (!hit) return;
-    const cache = previewCachePath(hit.name, hit.source, 'strip', 'jpg');
+    // Bump only the filmstrip derivative: old posters and waveform caches stay warm.
+    const cache = previewCachePath(hit.name, hit.source, 'strip-v2', 'jpg');
+    const previewInfo = await runDerivative(req, res, `${cache}.spec`, async (signal) => {
+      const result = await probe(hit.file, signal);
+      if (!result.width || !result.height) throw new Error('not a video');
+      return { probeResult: result, spec: filmstripSpec(result) };
+    }, `${cache}.spec`);
     if (!existsSync(cache)) {
       await runDerivative(req, res, cache, async (signal) => {
         if (existsSync(cache)) return;
-        const probeResult = await probe(hit.file, signal);
-        if (!probeResult.width || !probeResult.height) throw new Error('not a video');
-        await atomicPreviewBuild(cache, (tmp) => buildFilmstrip(hit.file, probeResult, tmp, signal));
+        await atomicPreviewBuild(cache, (tmp) => buildFilmstrip(
+          hit.file, previewInfo.probeResult, tmp, signal, previewInfo.spec,
+        ));
       });
     }
     if (res.destroyed) return;
     res.statusCode = 200;
     res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('X-Filmstrip-Frame-Count', String(previewInfo.spec.frameCount));
+    res.setHeader('X-Filmstrip-Cell-Width', String(previewInfo.spec.cellWidth));
+    res.setHeader('X-Filmstrip-Cell-Height', String(previewInfo.spec.cellHeight));
+    res.setHeader('X-Filmstrip-Duration-Ms', String(previewInfo.spec.durationMs));
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     res.end(await readCachedPreview(cache));
   } catch (error) {

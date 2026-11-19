@@ -2,13 +2,13 @@ import type { TimelineItem, TimelineState, TrackId } from './types';
 import { selectedIdsOf } from './types';
 import { fitItemToDuration } from './clipFit';
 import { splitItemKeyframes } from './keyframes';
+import { rebasePictureAnimationAfterTiming, splitPictureAnimationProps } from './clipAnimation';
 import { sourceWindowForTimelineRange } from './sourceLimit';
 import { unlinkItems } from './linkGroups';
 import { reconcileTimelineCaptionReferences, remapSplitTimelineCaptionReferences } from '../captions/reconcileSources';
 import { reconcileTransitions } from './transitionReconcile';
 import { hasOperationalTranscript } from '../transcript/types';
 import { splitClipTranscript } from '../transcript/edit';
-import type { Action } from './reducerActions';
 import { retimePatchForItem, type OverwriteLaneAction } from './reducerTimelineHelpers';
 
 export function splitTimelineItem(
@@ -30,6 +30,7 @@ export function splitTimelineItem(
   const keyframeParts = item.keyframes ? splitItemKeyframes(item.keyframes, cut) : null;
   const left: TimelineItem = {
     ...item,
+    props: splitPictureAnimationProps(item, 0),
     durationInFrames: cut,
     fadeOutFrames: undefined,
     ...(transcriptParts ? {
@@ -43,6 +44,7 @@ export function splitTimelineItem(
   };
   const right: TimelineItem = {
     ...item,
+    props: splitPictureAnimationProps(item, cut),
     id: newId,
     startFrame: atFrame,
     durationInFrames: item.durationInFrames - cut,
@@ -163,7 +165,7 @@ export function applyOverwriteLaneAction(
         || (patch.startFrame === target.startFrame
           && patch.durationInFrames === target.durationInFrames
           && patch.srcInFrame === target.srcInFrame)) return null;
-      const retimed = fitItemToDuration({ ...target, ...patch });
+      const retimed = fitItemToDuration(rebasePictureAnimationAfterTiming(target, { ...target, ...patch }));
       const unlinked = unlinkItems({
         ...state,
         items: state.items.map((item) => item.id === target.id ? retimed : item),
@@ -191,9 +193,3 @@ export function applyOverwriteLaneAction(
     }
   }
 }
-
-export const OVERLAP_GUARDED_ACTIONS: ReadonlySet<Action['type']> = new Set([
-  'add', 'relinkTimelineItem', 'move', 'retime', 'setSpeed', 'remove',
-  'track.tighten', 'toggleWord', 'deleteWords', 'cleanScript', 'setGapCap',
-  'setTranscriptPlayOrder', 'reorderTrackItems', 'clearEdits', 'setFullState',
-]);

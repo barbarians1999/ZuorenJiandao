@@ -10,6 +10,7 @@ export type SelectedPreviewFallbackReason =
   | 'shader-error'
   | 'unsupported-media'
   | 'unsupported-transition'
+  | 'privacy-transition'
   | 'webgl-unavailable';
 
 export interface SelectedPreviewStatus {
@@ -48,7 +49,10 @@ export function selectTransitionPreviewAdapter(input: {
   hasShader: boolean;
 }): TransitionPreviewAdapterPlan {
   const glDeclared = GLSL_TRANSITION_TYPES.has(input.type);
-  if (glDeclared && input.texturable && input.hasShader && (input.mode === 'render' || input.selected)) {
+  if (glDeclared && input.texturable && input.hasShader) {
+    if (input.mode === 'player' && !input.selected) {
+      return { adapter: 'css-transition', fidelity: 'approximate', fallbackAdapter: 'css-transition' };
+    }
     return { adapter: 'gl-transition', fidelity: 'exact', fallbackAdapter: 'css-transition' };
   }
   if (!glDeclared) {
@@ -60,8 +64,9 @@ export function selectTransitionPreviewAdapter(input: {
   if (!input.texturable) {
     return { adapter: 'css-transition', fidelity: 'approximate', fallbackAdapter: 'css-transition', fallbackReason: 'unsupported-media' };
   }
-  // Non-selected Player transitions retain the existing low-cost CSS path. The
-  // selected transition is the explicit fidelity boundary and uses real GL.
+  // CSS remains the fallback for an unavailable shader or unsupported media.
+  // Render and selected Player use the same exact adapter; unselected Player
+  // deliberately uses an explicitly labelled lightweight approximation.
   return { adapter: 'css-transition', fidelity: 'approximate', fallbackAdapter: 'css-transition' };
 }
 

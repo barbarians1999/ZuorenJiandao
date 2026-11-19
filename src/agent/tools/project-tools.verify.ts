@@ -35,6 +35,9 @@ const empty = emptyProjectDoc({ width: 1280, height: 720, fps: 24 });
 assert.strictEqual(empty.version, CURRENT_PROJECT_VERSION);
 assert.strictEqual(empty.timelines[0]!.width, 1280);
 assert.strictEqual(empty.timelines[0]!.fps, 24);
+assert.equal(empty.timelines[0]!.interaction?.magnet, false);
+assert.equal(empty.timelines[0]!.interaction?.linkage, false);
+assert.equal(empty.timelines[0]!.interaction?.snapping, true);
 
 resetProjectStoreMemory();
 

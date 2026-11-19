@@ -11,7 +11,7 @@ export function shouldClearCaptionSelectionFromPointer(context: {
   insideTimelineHead: boolean;
   additive: boolean;
 }): boolean {
-  return context.insideTimelineBlank && !context.insideTimelineHead && !context.additive;
+  return context.insideTimelineBlank && !context.insideTimelineClip && !context.insideTimelineHead && !context.additive;
 }
 
 export function updateCaptionSelections(

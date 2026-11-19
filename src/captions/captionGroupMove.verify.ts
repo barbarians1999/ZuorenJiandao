@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import type { TimelineState } from '../editor/types';
+import type { TimelineItem, TimelineState } from '../editor/types';
 import { reduce } from '../editor/reduce';
 import { appendManualCue, newManualCaptions } from './manualCaptions';
 import { buildCues } from './captionCues';
@@ -12,6 +12,7 @@ const {
   clampTimelineSelectionDelta,
   moveTimelineSelectionByDelta,
   resolveCaptionDragSelection,
+  displayCueMoveProblem,
   selectionMovePreviewDeltaForCaption,
   selectionMovePreviewDeltaForItem,
 } = await import(modulePath).catch(() => {
@@ -70,16 +71,16 @@ assert.deepEqual(moved.captions?.sourceEntries?.[0]?.words?.map((word: { text: s
 assert.equal(
   clampTimelineSelectionDelta(state, [], selections, 120),
   90,
-  'manual caption groups must stop at the nearest unselected cue',
+  'manual cue group stops at the next unselected cue before overlapping it',
 );
 assert.equal(
   clampTimelineSelectionDelta(state, ['clip-a'], [selections[1]!], -120),
   -30,
-  'mixed selections must stop a manual cue at the nearest unselected cue on the left',
+  'mixed selections stop at the unselected manual cue before overlapping it',
 );
-const collisionClamped = moveTimelineSelectionByDelta(state, [], selections, 120);
+const freeMoved = moveTimelineSelectionByDelta(state, [], selections, 150);
 assert.deepEqual(
-  collisionClamped.captions?.sourceEntries?.[0]?.words?.map(
+  freeMoved.captions?.sourceEntries?.[0]?.words?.map(
     (word: { text: string; start: number; end: number }) => [word.text, word.start, word.end],
   ),
   [
@@ -87,7 +88,55 @@ assert.deepEqual(
     ['Second', 6_000, 7_000],
     ['Outside', 7_000, 8_000],
   ],
-  'group movement must preserve one shared delta without overlapping an unselected cue',
+  'group movement clamps at the unselected cue boundary without overlap',
+);
+
+let denseCaptions = newManualCaptions();
+const denseLaneId = denseCaptions.sourceEntries![0]!.id;
+denseCaptions = { ...denseCaptions, ...appendManualCue(denseCaptions, denseLaneId, 'Cue 1', 0, 1_000) };
+denseCaptions = { ...denseCaptions, ...appendManualCue(denseCaptions, denseLaneId, 'Cue 2', 1_000, 2_000) };
+denseCaptions = { ...denseCaptions, ...appendManualCue(denseCaptions, denseLaneId, 'Cue 3', 2_000, 3_000) };
+denseCaptions = { ...denseCaptions, ...appendManualCue(denseCaptions, denseLaneId, 'Cue 4', 3_000, 4_000) };
+const denseIds = denseCaptions.sourceEntries![0]!.words!.map((word) => word.id!);
+const denseSelection = [
+  { trackId: 'C1', kind: 'manual' as const, laneId: denseLaneId, cueId: denseIds[1]! },
+  { trackId: 'C1', kind: 'manual' as const, laneId: denseLaneId, cueId: denseIds[2]! },
+];
+const denseState: TimelineState = {
+  fps: 30,
+  width: 1080,
+  height: 1920,
+  items: [],
+  selectedId: null,
+  trackOrder: ['C1'],
+  tracks: { C1: { kind: 'caption', captions: denseCaptions } },
+  captions: denseCaptions,
+};
+const denseMovedEarlier = moveTimelineSelectionByDelta(denseState, [], denseSelection, -15);
+assert.deepEqual(
+  denseMovedEarlier.captions?.sourceEntries?.[0]?.words?.map(
+    (word: { text: string; start: number; end: number }) => [word.text, word.start, word.end],
+  ),
+  [
+    ['Cue 1', 0, 1_000],
+    ['Cue 2', 1_000, 2_000],
+    ['Cue 3', 2_000, 3_000],
+    ['Cue 4', 3_000, 4_000],
+  ],
+  'local multi-select cannot overlap the preceding unselected cue',
+);
+const denseMovedLater = moveTimelineSelectionByDelta(denseState, [], denseSelection, 15);
+assert.deepEqual(
+  denseMovedLater.captions?.sourceEntries?.[0]?.words?.map(
+    (word: { text: string; start: number; end: number }) => [word.text, word.start, word.end],
+  ),
+  [
+    ['Cue 1', 0, 1_000],
+    ['Cue 2', 1_000, 2_000],
+    ['Cue 3', 2_000, 3_000],
+    ['Cue 4', 3_000, 4_000],
+  ],
+  'local multi-select cannot overlap the following unselected cue',
 );
 
 const linkedState: TimelineState = {
@@ -255,6 +304,45 @@ assert.deepEqual(
     .map((entry: CaptionSourceEntry) => [entry.id, entry.words?.[0]?.start]),
   [['manual-a', 600], ['manual-b', 2_500]],
   'manual refs across lanes must be resolved and moved once per canonical cue',
+);
+
+const sourceRef = buildCues(linkedSourceCaptions, linkedSourceState.items, 30)
+  .find((cue) => !cue.manual)!.wordRefs[0]!;
+const displayEditCaptions: CaptionsData = {
+  ...linkedSourceCaptions,
+  sourceEntries: linkedSourceCaptions.sourceEntries!.map((entry) => entry.id === 'automatic-linked' ? {
+    ...entry,
+    displayCueEdits: [{ id: 'display-edit', coveredWordRefs: [sourceRef], parts: [{
+      id: 'display-part', text: 'Edited linked cue', sourceSpans: [{
+        wordRef: sourceRef, startMs: 0, endMs: 400, sourceText: 'Linked automatic',
+      }],
+    }] }],
+  } : entry),
+};
+const displayEditState: TimelineState = {
+  ...linkedSourceState,
+  captions: displayEditCaptions,
+  tracks: { ...linkedSourceState.tracks, C1: { kind: 'caption', captions: displayEditCaptions } },
+};
+const displayPage = buildCues(displayEditCaptions, displayEditState.items, 30)
+  .find((cue) => cue.displayCueEditId === 'display-edit')!;
+const displaySelection = { trackId: 'C1', kind: 'single' as const, pageId: displayPage.id };
+assert.equal(displayCueMoveProblem(displayEditState, [displaySelection]), null);
+const movedDisplay = moveTimelineSelectionByDelta(displayEditState, [], [displaySelection], 15);
+assert.equal(
+  movedDisplay.captions?.sourceEntries?.find((entry: CaptionSourceEntry) => entry.id === 'automatic-linked')
+    ?.displayCueEdits?.[0]?.parts[0]?.sourceSpans[0]?.timingOffsetMs,
+  500,
+  'moving an edited cue changes its source-span display offset without synthetic word indices',
+);
+assert.deepEqual(movedDisplay.captions?.wordOverrides, {}, 'edited cue moves do not create synthetic word overrides');
+const movedDisplayWithSource = moveTimelineSelectionByDelta(displayEditState, ['clip-linked'], [displaySelection], 15);
+assert.equal(movedDisplayWithSource.items.find((item: TimelineItem) => item.id === 'clip-linked')?.startFrame, 25);
+assert.equal(
+  movedDisplayWithSource.captions?.sourceEntries?.find((entry: CaptionSourceEntry) => entry.id === 'automatic-linked')
+    ?.displayCueEdits?.[0]?.parts[0]?.sourceSpans[0]?.timingOffsetMs,
+  undefined,
+  'moving the source clip and its edited cue does not double-shift the cue',
 );
 
 const frameBoundaryCaptions: CaptionsData = {

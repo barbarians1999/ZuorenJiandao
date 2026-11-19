@@ -1,19 +1,18 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { PlayerRef } from '@remotion/player';
-import { enqueueVisualAnalysis } from '../agent/progress/visual-analysis-jobs';
 import { useT } from '../i18n/locale';
-import { pendingAutosaveAfterObservation, recoverFailedAutosave } from '../persist/autosaveRecovery';
-import { acknowledgeIngestedGenerationResults, resumeOpenGenerationJobs } from '../persist/jobRegistryStore';
+import { acknowledgeSavedCaptionDrafts } from '../captions/captionDraftRecovery';
 import {
   flushProjectSaves,
   hasPendingProjectSaves,
   hasProjectSaveFailure,
   saveProject,
 } from '../persist/projectStore';
-import type { ProjectSaveResult } from '../persist/projectStoreCoordinators';
 import { showAppToast } from '../ui/appToast';
 import type { EditorCommands } from './store';
 import type { ProjectDoc, TimelineState } from './types';
+import { ProjectAutosaveQueue, type ProjectSaveStatus } from './projectAutosaveQueue';
+export type { ProjectSaveStatus } from './projectAutosaveQueue';
 
 type MutableRef<T> = { current: T };
 
@@ -28,88 +27,67 @@ interface EditorProjectPersistenceOptions {
   onHome: () => void;
 }
 
-interface PendingSave {
-  projectId: string;
-  doc: ProjectDoc;
+interface EditorSaveControls {
+  saveStatus: ProjectSaveStatus;
+  saveError?: string;
+  retrySave: () => Promise<boolean>;
 }
 
-function usePendingSaveQueue(): {
-  unsavedRef: MutableRef<PendingSave | null>;
-  enqueuePendingSave: () => Promise<ProjectSaveResult> | null;
-} {
+const projectSaveStore = { saveProject, flushProjectSaves, hasPendingProjectSaves, hasProjectSaveFailure };
+export type ProjectSaveStore = typeof projectSaveStore;
+
+export function useEditorAutosave(projectId: string, doc: ProjectDoc, store: ProjectSaveStore = projectSaveStore): EditorSaveControls & { flushBeforeLeave: () => Promise<boolean> } {
   const t = useT();
-  const unsavedRef = useRef<PendingSave | null>(null);
-  const latestSaveAttemptRef = useRef(0);
+  const queue = useMemo(() => new ProjectAutosaveQueue(projectId, store.saveProject,
+    (savedDoc) => acknowledgeSavedCaptionDrafts(projectId, savedDoc),
+    (loadedDoc) => acknowledgeSavedCaptionDrafts(projectId, loadedDoc)), [projectId, store]);
+  const feedback = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
   const saveFailureShownRef = useRef(false);
-  const observeSave = useCallback((result: ProjectSaveResult): void => {
-    if (result.status === 'failed') {
-      if (!saveFailureShownRef.current) {
-        showAppToast(t('工程保存失败。请重试；在保存成功前不会关闭或切换工程。'), { error: true });
-        saveFailureShownRef.current = true;
-      }
-      return;
-    }
-    saveFailureShownRef.current = false;
-  }, [t]);
-  const enqueuePendingSave = useCallback((): Promise<ProjectSaveResult> | null => {
-    const pending = unsavedRef.current;
-    if (!pending) return null;
-    unsavedRef.current = null;
-    const attempt = ++latestSaveAttemptRef.current;
-    const saving = saveProject(pending.projectId, pending.doc);
-    void saving.then((result) => {
-      if (result.status === 'failed') {
-        unsavedRef.current = recoverFailedAutosave({
-          currentUnsaved: unsavedRef.current,
-          failedSnapshot: pending,
-          failedAttempt: attempt,
-          latestEnqueuedAttempt: latestSaveAttemptRef.current,
-        });
-      } else if (result.status === 'saved') {
-        void acknowledgeIngestedGenerationResults(pending.projectId, pending.doc.assets ?? []);
-      }
-      observeSave(result);
-    });
-    return saving;
-  }, [observeSave]);
-  return { unsavedRef, enqueuePendingSave };
-}
-
-function useEditorAutosave(projectId: string, doc: ProjectDoc): () => Promise<boolean> {
-  const t = useT();
-  const { unsavedRef, enqueuePendingSave } = usePendingSaveQueue();
-  const previousDocumentRef = useRef<PendingSave | null>(null);
+  const retryInFlightRef = useMemo(() => ({ current: null as Promise<boolean> | null }), [queue]);
   useEffect(() => {
-    const next = { projectId, doc };
-    const pending = pendingAutosaveAfterObservation(previousDocumentRef.current, next);
-    previousDocumentRef.current = next;
-    unsavedRef.current = pending;
-    if (pending === null) return undefined;
-    const timer = setTimeout(() => { enqueuePendingSave(); }, 500);
+    if (!queue.observe(doc)) return undefined;
+    const timer = setTimeout(() => { void queue.enqueue(); }, 500);
     return () => clearTimeout(timer);
-  }, [doc, enqueuePendingSave, projectId, unsavedRef]);
+  }, [doc, queue]);
+  useEffect(() => {
+    if (feedback.status === 'error' && !saveFailureShownRef.current) {
+      showAppToast(t('工程保存失败，请点击顶部“重试保存”。内容仍保留在当前窗口，保存成功前请勿关闭。'), { error: true });
+      saveFailureShownRef.current = true;
+    } else if (feedback.status === 'saved') saveFailureShownRef.current = false;
+  }, [feedback.status, t]);
+  const retrySave = useCallback((): Promise<boolean> => {
+    if (retryInFlightRef.current) return retryInFlightRef.current;
+    const saving = (async () => {
+      const pending = queue.enqueue();
+      if (pending) await pending;
+      const result = await store.flushProjectSaves(projectId);
+      // An edit made during the write is still awaiting its own autosave.
+      return result.ok && !queue.hasPending();
+    })();
+    retryInFlightRef.current = saving;
+    void saving.finally(() => { if (retryInFlightRef.current === saving) retryInFlightRef.current = null; });
+    return saving;
+  }, [queue, projectId, store, retryInFlightRef]);
   const flushBeforeLeave = useCallback(async (): Promise<boolean> => {
-    enqueuePendingSave();
-    const result = await flushProjectSaves(projectId);
-    if (!result.ok) {
-      showAppToast(t('工程仍未保存，已阻止离开。请继续编辑以重试保存。'), { error: true });
+    if (!await retrySave()) {
+      showAppToast(t('工程仍未保存，已阻止离开。请点击顶部“重试保存”。'), { error: true });
       return false;
     }
     return true;
-  }, [enqueuePendingSave, projectId, t]);
-  useBrowserSaveGuards(projectId, enqueuePendingSave);
-  return flushBeforeLeave;
+  }, [retrySave, t]);
+  useBrowserSaveGuards(projectId, queue, store);
+  return { flushBeforeLeave, saveStatus: feedback.status, saveError: feedback.error, retrySave };
 }
 
-function useBrowserSaveGuards(projectId: string, enqueuePendingSave: () => unknown): void {
+function useBrowserSaveGuards(projectId: string, queue: ProjectAutosaveQueue, store: ProjectSaveStore): void {
   useEffect(() => {
     const flushWithoutWaiting = (): void => {
-      enqueuePendingSave();
-      void flushProjectSaves(projectId);
+      void queue.enqueue();
+      void store.flushProjectSaves(projectId);
     };
     const blockUnfinishedSave = (event: BeforeUnloadEvent): void => {
-      enqueuePendingSave();
-      if (!hasPendingProjectSaves(projectId) && !hasProjectSaveFailure(projectId)) return;
+      void queue.enqueue();
+      if (queue.getSnapshot().status === 'saved' && !store.hasPendingProjectSaves(projectId) && !store.hasProjectSaveFailure(projectId)) return;
       event.preventDefault();
       event.returnValue = '';
     };
@@ -120,64 +98,23 @@ function useBrowserSaveGuards(projectId: string, enqueuePendingSave: () => unkno
       window.removeEventListener('pagehide', flushWithoutWaiting);
       flushWithoutWaiting();
     };
-  }, [enqueuePendingSave, projectId]);
-}
-
-function useGenerationJobResume(
-  projectId: string,
-  commands: Pick<EditorCommands, 'addAsset'>,
-  stateRef: MutableRef<TimelineState>,
-  docRef: MutableRef<ProjectDoc>,
-): void {
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      await acknowledgeIngestedGenerationResults(projectId, docRef.current.assets ?? []).catch(() => undefined);
-      if (!alive) return;
-      await resumeOpenGenerationJobs(projectId, {
-        getState: () => stateRef.current,
-        onAsset: (asset) => {
-          if (!alive) return;
-          if ((docRef.current.assets ?? []).some((candidate) => candidate.id === asset.id || candidate.src === asset.src)) return;
-          commands.addAsset(asset);
-          if (asset.kind !== 'audio') enqueueVisualAnalysis(asset);
-        },
-        timeoutSeconds: 180,
-      });
-    })();
-    return () => { alive = false; };
-  }, [projectId, commands, stateRef, docRef]);
-}
-
-function useActiveTimelineSeek(activeTimelineId: string, playerRef: MutableRef<PlayerRef | null>): void {
-  const firstTimelineRef = useRef(true);
-  useEffect(() => {
-    if (firstTimelineRef.current) {
-      firstTimelineRef.current = false;
-      return;
-    }
-    playerRef.current?.seekTo(0);
-  }, [activeTimelineId, playerRef]);
+  }, [queue, projectId, store]);
 }
 
 export function useEditorProjectPersistence({
   projectId,
   doc,
-  commands,
-  stateRef,
-  docRef,
-  playerRef,
   flushBeforeLeaveRef,
   onHome,
-}: EditorProjectPersistenceOptions): { handleHome: () => Promise<void> } {
-  const flushBeforeLeave = useEditorAutosave(projectId, doc);
+}: EditorProjectPersistenceOptions): EditorSaveControls & { handleHome: () => Promise<void> } {
+  const { flushBeforeLeave, ...saveControls } = useEditorAutosave(projectId, doc);
   flushBeforeLeaveRef.current = flushBeforeLeave;
-  useGenerationJobResume(projectId, commands, stateRef, docRef);
-  useActiveTimelineSeek(doc.activeTimelineId, playerRef);
+  // usePlayheadPaint owns per-timeline resume. A second seek here used to
+  // overwrite the restored position with zero after every subdraft switch.
 
   const handleHome = useCallback(async (): Promise<void> => {
     if (await flushBeforeLeave()) onHome();
   }, [flushBeforeLeave, onHome]);
 
-  return { handleHome };
+  return { handleHome, ...saveControls };
 }

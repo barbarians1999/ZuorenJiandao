@@ -1,4 +1,4 @@
-import { availableParallelism, totalmem } from 'node:os';
+import { availableParallelism, freemem, totalmem } from 'node:os';
 
 const MAX_RENDER_CONCURRENCY = 24;
 const GIB = 1024 ** 3;
@@ -28,6 +28,7 @@ function configuredConcurrency(value, cores) {
 export function resolveRenderConcurrency({
   cores = availableParallelism(),
   memoryBytes = totalmem(),
+  freeMemoryBytes = freemem(),
   override = process.env.OPENCHATCUT_RENDER_CONCURRENCY,
 } = {}) {
   const count = cpuCount(cores);
@@ -37,8 +38,44 @@ export function resolveRenderConcurrency({
   const cpuTarget = Math.round(count * 0.8);
   // Reserve half of physical RAM for Electron, the OS and other applications;
   // budget the remainder at ~1.25 GiB per headless render tab.
-  const memoryTarget = Math.max(1, Math.floor((memoryBytes / GIB * 0.5) / 1.25));
+  // Installed RAM is not the RAM available to this export. Keep the existing
+  // total-memory cap, but also leave 2 GiB of currently free memory for the OS
+  // and foreground apps. Explicit diagnostic overrides remain explicit.
+  const availableBudget = Number.isFinite(freeMemoryBytes) && freeMemoryBytes >= 0
+    ? Math.max(0, freeMemoryBytes - 2 * GIB) : 0;
+  const memoryTarget = Math.max(1, Math.floor(Math.min(memoryBytes * 0.5, availableBudget) / (1.25 * GIB)));
   return Math.max(1, Math.min(MAX_RENDER_CONCURRENCY, cpuTarget, memoryTarget));
+}
+
+/** Bound native/browser caches before the renderer starts. This is a budget,
+ * not a promise that total process memory cannot exceed the cache sizes. */
+export function resolveRenderMemorySettings({ freeMemoryBytes = freemem(), cores = availableParallelism() } = {}) {
+  const roomy = Number.isFinite(freeMemoryBytes) && freeMemoryBytes >= 6 * GIB;
+  return {
+    offthreadVideoCacheSizeInBytes: (roomy ? 256 : 64) * 1024 ** 2,
+    // Remotion requires >=240 MiB; never select an invalid smaller cache.
+    mediaCacheSizeInBytes: 256 * 1024 ** 2,
+    offthreadVideoThreads: roomy ? resolveOffthreadVideoThreads({ cores }) : 1,
+  };
+}
+
+/** FFmpeg has a separate thread pool from render pages and OffthreadVideo.
+ * Bound its software codec/filter workers without changing quality settings. */
+export function renderFfmpegOverride({ cores = availableParallelism(), freeMemoryBytes = freemem(), hardwareOverride } = {}) {
+  const threads = Math.min(cpuCount(cores), Number.isFinite(freeMemoryBytes) && freeMemoryBytes >= 6 * GIB ? 4 : 2);
+  return (job) => {
+    const args = hardwareOverride ? hardwareOverride(job) : [...job.args];
+    const codec = args.findIndex((arg) => arg === '-c:v');
+    // Video-copy/final mux and hardware encoding retain their own codec rules.
+    if (codec < 0 || args[codec + 1] !== 'libx264') return args;
+    const bounded = ['-filter_threads', '1', '-filter_complex_threads', '1'];
+    for (let index = 0; index < args.length; index++) {
+      if (args[index] === '-i') bounded.push('-threads', String(threads));
+      bounded.push(args[index]);
+      if (index === codec + 1) bounded.push('-threads:v', String(threads));
+    }
+    return bounded;
+  };
 }
 
 /** OffthreadVideo is memory-heavy; scale it more conservatively than pages. */
@@ -165,16 +202,30 @@ export async function withEncoderProfileFallback({
   softwareProfile = SOFTWARE_H264_PROFILE,
   cleanup = async () => {},
   onFallback = () => {},
+  signal,
 }) {
+  signal?.throwIfAborted();
   try {
     return { result: await render(hardwareOptions), encoder: hardwareProfile };
   } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof Error && error.name === 'AbortError') throw error;
     if (!hardwareProfile.hardware || !isHardwareEncoderFailure(error)) throw error;
     const encoderFallbackReason = `${hardwareProfile.id}: ${hardwareEncoderFailureClass(error)}`;
     await cleanup();
+    signal?.throwIfAborted();
     onFallback(error);
-    const result = await render(softwareOptions);
-    return { result, encoder: softwareProfile, encoderFallbackReason };
+    signal?.throwIfAborted();
+    try {
+      const result = await render(softwareOptions);
+      return { result, encoder: softwareProfile, encoderFallbackReason };
+    } catch (fallbackError) {
+      signal?.throwIfAborted();
+      if (fallbackError instanceof Error && fallbackError.name === 'AbortError') throw fallbackError;
+      throw new AggregateError([error, fallbackError],
+        `Hardware encoding failed: ${error instanceof Error ? error.message : String(error)}; software fallback failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`,
+        { cause: fallbackError });
+    }
   }
 }
 

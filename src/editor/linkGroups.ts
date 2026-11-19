@@ -2,10 +2,12 @@ import type { TimelineItem, TimelineLinkGroup, TimelineLinkMode, TimelineState, 
 import { reconcileTimelineCaptionReferences } from '../captions/reconcileSources.js';
 import { sourceFramesToTimelineFrames, timelineFramesToSourceFrames } from './sourceLimit.js';
 import { clampMoveDeltaToTrackGaps } from './trackCollision';
+import { rebasePictureAnimationAfterTiming } from './clipAnimation';
 
 const unique = (ids: readonly string[]): string[] => [...new Set(ids)];
 const LINKED_MODES: ReadonlySet<TimelineLinkMode> = new Set(['linked']);
-const MOVE_LOCK_MODES: ReadonlySet<TimelineLinkMode> = new Set(['linked', 'sync-lock']);
+const GROUP_MODES: ReadonlySet<TimelineLinkMode> = new Set(['group']);
+const MOVE_LOCK_MODES: ReadonlySet<TimelineLinkMode> = new Set(['linked', 'sync-lock', 'group']);
 
 function memberIds(
   state: Pick<TimelineState, 'linkGroups'>,
@@ -30,6 +32,29 @@ function memberIds(
 
 export function linkedItemIds(state: Pick<TimelineState, 'linkGroups'>, seeds: readonly string[]): string[] {
   return memberIds(state, seeds, LINKED_MODES);
+}
+
+/** Ordinary groups select/move together without coupling trims or A/V deletion. */
+export function groupedItemIds(state: Pick<TimelineState, 'linkGroups'>, seeds: readonly string[]): string[] {
+  return memberIds(state, seeds, GROUP_MODES);
+}
+
+export function groupTimelineItems(state: TimelineState, seeds: readonly string[], id: string): TimelineState {
+  const ids = groupedItemIds(state, seeds).filter((id) => state.items.some((item) => item.id === id));
+  if (ids.length < 2 || state.items.some((item) => ids.includes(item.id) && state.tracks?.[item.track]?.locked)) return state;
+  // Re-grouping the same membership is a no-op, not another undo step.
+  if (state.linkGroups?.some((group) => group.mode === 'group'
+    && group.itemIds.length === ids.length && group.itemIds.every((member) => ids.includes(member)))) return state;
+  return setLinkGroup(state, { id, itemIds: ids, anchorItemId: seeds[0], mode: 'group' });
+}
+
+export function ungroupTimelineItems(state: TimelineState, seeds: readonly string[]): TimelineState {
+  const members = new Set(groupedItemIds(state, seeds));
+  const groups = state.linkGroups;
+  if (!groups?.some((group) => group.mode === 'group' && group.itemIds.some((id) => members.has(id)))) return state;
+  if (state.items.some((item) => members.has(item.id) && state.tracks?.[item.track]?.locked)) return state;
+  const next = groups.filter((group) => group.mode !== 'group' || !group.itemIds.some((id) => members.has(id)));
+  return { ...state, linkGroups: next.length ? next : undefined };
 }
 
 export function moveLockedItemIds(state: Pick<TimelineState, 'linkGroups'>, seeds: readonly string[]): string[] {
@@ -94,7 +119,7 @@ function locked(state: TimelineState, ids: ReadonlySet<string>, destinationTrack
 }
 
 
-/** Move a direct edit and every linked/sync-locked member by one shared, non-overlapping delta. */
+/** Move a direct edit and all linked, sync-locked and grouped members by one shared delta. */
 export function moveItemWithGroups(
   state: TimelineState,
   id: string,
@@ -140,7 +165,8 @@ export function retimeItemWithGroups(
   const ids = new Set(linkedItemIds(state, [id]));
   if (locked(state, ids)) return state;
   if (ids.size === 1) {
-    return { ...state, items: state.items.map((item) => item.id === id ? { ...item, ...targetPatch } : item) };
+    return { ...state, items: state.items.map((item) => item.id === id
+      ? rebasePictureAnimationAfterTiming(item, { ...item, ...targetPatch }) : item) };
   }
 
   const startDelta = targetPatch.startFrame - target.startFrame;
@@ -148,7 +174,7 @@ export function retimeItemWithGroups(
   const endDelta = targetPatch.startFrame + targetPatch.durationInFrames - oldEnd;
   const sourceDelta = (targetPatch.srcInFrame ?? 0) - (target.srcInFrame ?? 0);
   const sourceTimelineDelta = sourceFramesToTimelineFrames(target, sourceDelta);
-  const replacements = new Map<string, TimelineItem>([[id, { ...target, ...targetPatch }]]);
+  const replacements = new Map<string, TimelineItem>([[id, rebasePictureAnimationAfterTiming(target, { ...target, ...targetPatch })]]);
 
   for (const item of state.items) {
     if (!ids.has(item.id) || item.id === id) continue;
@@ -156,12 +182,12 @@ export function retimeItemWithGroups(
     const nextDuration = item.durationInFrames + endDelta - startDelta;
     const nextSrcIn = (item.srcInFrame ?? 0) + timelineFramesToSourceFrames(item, sourceTimelineDelta);
     if (nextStart < 0 || nextDuration < 1 || nextSrcIn < 0) return null;
-    replacements.set(item.id, {
+    replacements.set(item.id, rebasePictureAnimationAfterTiming(item, {
       ...item,
       startFrame: nextStart,
       durationInFrames: nextDuration,
       srcInFrame: nextSrcIn,
-    });
+    }));
   }
   return { ...state, items: state.items.map((item) => replacements.get(item.id) ?? item) };
 }

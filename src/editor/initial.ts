@@ -3,6 +3,7 @@ import socialShortsJson from '../../assets/templates/social-shorts-templates.jso
 import kouboScenesJson from '../../assets/templates/koubo-scenes-templates.json';
 import type { Tpl } from '../types';
 import type { TimelineState } from './types';
+import { CHAPTER_TEMPLATES } from '../library/chapterTemplates';
 
 // The template library + the first-run seed project. Shared by the loader shell
 // (fallback when nothing is persisted) and the editor (agent context / library).
@@ -13,6 +14,7 @@ export const TEMPLATES = [
   ...(templatesJson as Tpl[]),
   ...(socialShortsJson as Tpl[]),
   ...(kouboScenesJson as Tpl[]),
+  ...CHAPTER_TEMPLATES,
 ];
 
 const pick = (name: string): Tpl => TEMPLATES.find((t) => t.name.includes(name)) ?? TEMPLATES[0];
@@ -33,4 +35,5 @@ export const INITIAL: TimelineState = {
     seedItem('seed_2', SEED_B, SEED_A.durationInFrames),
   ],
   selectedId: null,
+  interaction: { magnet: false, linkage: false, snapping: true },
 };

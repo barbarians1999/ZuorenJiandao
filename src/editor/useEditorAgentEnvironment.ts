@@ -5,7 +5,6 @@ import { AUDIO_ASSETS } from '../audio/library';
 import { pluginTemplates, usePluginPacks } from '../library/pluginResources';
 import { useOfflineMedia } from '../media/useOfflineMedia';
 import { loadCreativeMode, saveCreativeMode } from '../persist/projectStore';
-import { loadChatAutoApply } from '../persist/sessionPrefs';
 import type { SelectedPreviewStatus } from '../gl/previewAdapter';
 import { showAppToast } from '../ui/appToast';
 import { TEMPLATES } from './initial';
@@ -125,7 +124,7 @@ function useAgentContext(options: AgentContextOptions): AgentContext {
     getCreativeMode: () => creativeModeRef.current,
     getUndoTarget,
     getRedoTarget,
-    getApprovalMode: () => (loadChatAutoApply(projectId) ? 'auto' : 'manual'),
+    getApprovalMode: () => 'auto',
     setCreativeMode: changeCreativeMode,
     get templates() { return allTemplatesRef.current; },
     audio: AUDIO_ASSETS,
@@ -153,6 +152,15 @@ export function useEditorAgentEnvironment(options: EditorAgentEnvironmentOptions
   const docRef = useLiveRef(doc);
   const flushBeforeLeaveRef = useRef<() => Promise<boolean>>(async () => true);
   const playerRef = useRef<PlayerRef | null>(null);
+  useEffect(() => {
+    if (!import.meta.env.DEV || !new URLSearchParams(window.location.search).has('long-video-benchmark')) return;
+    let disposed = false;
+    let detach: (() => void) | undefined;
+    void import('../../scripts/long-video-app-benchmark').then(({ attachEditorBenchmark }) => {
+      if (!disposed) detach = attachEditorBenchmark({ stateRef, docRef, commands, playerRef, projectId, flushBeforeLeaveRef });
+    });
+    return () => { disposed = true; detach?.(); };
+  }, [stateRef, docRef, commands, playerRef, projectId]);
   const offlineMedia = useOfflineMedia(doc);
   const creative = useCreativeMode(projectId);
   const previewStatuses = useSelectedPreviewStatuses(selectedItemId, selectedTransitionId);

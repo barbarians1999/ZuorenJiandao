@@ -2,13 +2,14 @@
 // Blade/pen/reference picking dispatched by editMode), audio waveform, effect marker, pen transparency keyframe
 // Overlay, library asset drag and drop (fx/lut/zoom/transition drop clip, sound/template drop track), transition seam mark.
 // The pointer machine (drag/penDrag, etc.) is provided by useTimelinePointer and is passed in through the pointer prop.
-import { type Dispatch, type RefObject, type SetStateAction, useMemo } from 'react';
+import { memo, type Dispatch, type RefObject, type SetStateAction, useMemo } from 'react';
 import { theme, themeAlpha } from '../../theme';
 import { Icon } from '../icons';
 import {
-  TRANSITION_LABELS, isItemSelected, timelineTrackIds, trackKind,
-  type TimelineItem, type TimelineState, type TrackId, type TransitionItem, type TransitionType,
+  TRANSITION_LABELS, isEffectTrack, isItemSelected, isTextTrack, timelineTrackIds, trackKind,
+  type TimelineItem, type TimelineState, type TrackId, type TransitionType,
 } from '../../editor/types';
+import { mainTrackId } from '../../editor/magneticTimeline';
 import { upsertKeyframe } from '../../editor/keyframes';
 import { getKeyframePropertyDefinition } from '../../editor/keyframeRegistry';
 import { rateStretchGeometry } from '../../editor/rateStretch';
@@ -16,89 +17,33 @@ import { sourceWindowForTimelineRange } from '../../editor/sourceLimit';
 import { planSlip } from '../../editor/slip';
 import type { EditorCommands } from '../../editor/store';
 import { hasLibraryDrag, parseLibraryDrag, type LibraryDragPayload } from '../../library/drag';
-import { ALL_FX, FX_EFFECTS, LUT_EFFECTS } from '../../gl/fx/effects';
-import { ZOOM_SHAPE_LABELS } from '../../editor/types';
-import { useT } from '../../i18n/locale';
+import { tData, useT } from '../../i18n/locale';
 import { hasOperationalTranscript } from '../../transcript/types';
 import {
-  CLIP_COLOR, fmt, intersectFrameRange, visibleTimelineItems, waveformPath,
+  CLIP_COLOR, clipEdgeHandleLayout, fmt, intersectFrameRange, visibleTimelineItems, waveformPath,
   type EditMode, type TimelineFrameWindow, type TimelineIndexes,
 } from './timelineUtil';
 import { ClipMediaLayers } from './ClipMediaLayers';
-import { isPreviewable } from '../../media/clipPreview';
-import { canDropMediaAsset, hasCompatibleMediaDrag, parseMediaAssetDrag } from '../../media/drag';
+import { ClipEffectBadges } from './ClipEffectBadges';
+import { hasRealWavePreviewSource } from '../../media/clipPreview';
+import { canDropMediaAsset, hasCompatibleMediaDrag, parseMediaAssetDrop } from '../../media/drag';
+import { mediaPlacementVolume } from '../../media/placementPurpose';
+import { parseEditorDrag, mediaAssetIds, mediaSourceRangeFor } from '../../editor/editorDrag';
+import { placeMediaAssets } from '../../editor/mediaAssetPlacement';
+import { canItemMoveToTrack } from '../../editor/multiSelect';
+import { groupedItemIds } from '../../editor/linkGroups';
 import type { useTimelinePointer } from './useTimelinePointer';
-import { topClipOverlapSpans } from './trackOverlap';
+import { topClipOverlapSpans, type TimelineOverlapSpan } from './trackOverlap';
 import {
   selectionMovePreviewDeltaForItem,
   type TimelineSelectionMovePreview,
 } from '../../captions/captionGroupMove';
 import { droppedFiles, hasExternalFiles } from '../../media/externalFileDrop';
+import { timelineAttachmentFeedback } from './timelineAttachmentFeedback';
+import { planRollingTrim } from '../../editor/rollingTrim';
+import { showAppToast } from '../../ui/appToast';
+import '../editorFeedback.css';
 
-/** corner chips so applied fx / lut / zoom / denoise / transition are visible on the clip */
-function ClipEffectBadges({
-  item,
-  inTransition,
-}: {
-  item: TimelineItem;
-  inTransition: TransitionItem | null;
-}) {
-  const t = useT();
-  const chips: { key: string; label: string; title: string; className: string }[] = [];
-  const effects = item.effects ?? [];
-  const fxNames = effects
-    .filter((e) => e.assetId in FX_EFFECTS)
-    .map((e) => t(FX_EFFECTS[e.assetId]?.name ?? e.assetId));
-  const lutNames = effects
-    .filter((e) => e.assetId in LUT_EFFECTS)
-    .map((e) => t(LUT_EFFECTS[e.assetId]?.name ?? e.assetId));
-  // custom / uncategorized shaders
-  const otherFx = effects.filter((e) => !(e.assetId in FX_EFFECTS) && !(e.assetId in LUT_EFFECTS));
-
-  if (fxNames.length || otherFx.length) {
-    const n = fxNames.length + otherFx.length;
-    chips.push({
-      key: 'fx',
-      label: n > 1 ? t('特效×{n}', { n }) : (fxNames[0] ?? t(ALL_FX[otherFx[0]?.assetId]?.name ?? '特效')),
-      title: [...fxNames, ...otherFx.map((e) => t(ALL_FX[e.assetId]?.name ?? e.assetId))].join(' · '),
-      className: 'fx',
-    });
-  }
-  if (lutNames.length) {
-    chips.push({
-      key: 'lut',
-      label: lutNames.length > 1 ? `LUT×${lutNames.length}` : lutNames[0],
-      title: lutNames.join(' · '),
-      className: 'lut',
-    });
-  }
-  if (item.zoom?.shape || item.zoom?.envelope || (item.zoom?.reframeCurve?.keyframes.length ?? 0) > 0) {
-    const shape = item.zoom?.shape;
-    // The plugin envelope curve has no shape, use the built-in label (plugin data, not entered into the dictionary)
-    const name = shape ? t(ZOOM_SHAPE_LABELS[shape] ?? shape) : item.zoom?.label;
-    chips.push({
-      key: 'zoom',
-      label: name ?? t('缩放'),
-      title: name ? t('缩放 · {name}', { name }) : t('关键帧缩放'),
-      className: 'zoom',
-    });
-  }
-  if (item.denoisedSrc) {
-    chips.push({ key: 'iso', label: t('人声'), title: t('已应用人声隔离'), className: 'iso' });
-  }
-  if (inTransition) {
-    const trName = t(TRANSITION_LABELS[inTransition.type] ?? inTransition.type);
-    chips.push({ key: 'tr', label: trName, title: t('入场转场 · {name}', { name: trName }), className: 'tr' });
-  }
-  if (!chips.length) return null;
-  return (
-    <div className="cc-clip-badges" aria-hidden>
-      {chips.map((c) => (
-        <span key={c.key} className={`cc-clip-badge ${c.className}`} title={c.title}>{c.label}</span>
-      ))}
-    </div>
-  );
-}
 
 interface TrackLaneProps {
   trackId: TrackId;
@@ -130,21 +75,96 @@ interface TrackLaneProps {
   onDropExternalFiles?: (files: File[], trackId: TrackId, startFrame: number) => void;
 }
 
-export function TrackLane({
+const EMPTY_OVERLAP_SPANS: TimelineOverlapSpan[] = [];
+
+function topClipOverlapSpansInPrefix(
+  startFrame: number,
+  durationInFrames: number,
+  items: readonly TimelineItem[],
+  limit: number,
+): TimelineOverlapSpan[] {
+  const endFrame = startFrame + Math.max(1, durationInFrames);
+  const covered: TimelineItem[] = [];
+  for (let index = 0; index < limit; index += 1) {
+    const prior = items[index]!;
+    if (prior.startFrame < endFrame && prior.startFrame + Math.max(1, prior.durationInFrames) > startFrame) {
+      covered.push(prior);
+    }
+  }
+  return covered.length > 0 ? topClipOverlapSpans(startFrame, durationInFrames, covered) : EMPTY_OVERLAP_SPANS;
+}
+
+export const TrackLane = memo(function TrackLane({
   trackId, state, commands, pointer, editMode, pickMode, locked, hidden, muted, px, rowHeight,
   visibleWindow, pinnedItemIds, selectionMovePreview, indexes, libDropTarget, setLibDropTarget,
   applyLibraryToClip, applyLibraryToTrack, rippleOnDrop, overwriteOnDrop,
   frameFromClientX, onContextMenu, onTransitionContextMenu, onTrackContextMenu, scrollRef, onDropExternalFiles,
 }: TrackLaneProps) {
   const t = useT();
-  const { drag, penDrag, setPenDrag, startDrag, startPick, startMarquee } = pointer;
+  const { drag, penDrag, setPenDrag, startDrag, startRollDrag, startPick, startMarquee } = pointer;
+  const attachmentFeedback = useMemo(() => timelineAttachmentFeedback(state), [state]);
+  const plannedItems = useMemo(() => new Map(drag?.plannedState?.items.map((item) => [item.id, item]) ?? []), [drag?.plannedState]);
   const trackIds = timelineTrackIds(state);
   const items = indexes.itemsByTrack.get(trackId) ?? [];
   const previewPinnedItemIds = useMemo(() => {
-    if (!selectionMovePreview?.itemIds.length) return pinnedItemIds;
-    return new Set([...pinnedItemIds, ...selectionMovePreview.itemIds]);
-  }, [pinnedItemIds, selectionMovePreview]);
-  const itemIndexById = new Map(items.map((item, index) => [item.id, index]));
+    if (!selectionMovePreview?.itemIds.length && !plannedItems.size) return pinnedItemIds;
+    return new Set([...pinnedItemIds, ...(selectionMovePreview?.itemIds ?? []),
+      ...state.items.filter((item) => {
+        const planned = plannedItems.get(item.id);
+        return planned && (planned.startFrame !== item.startFrame || planned.durationInFrames !== item.durationInFrames
+          || planned.track !== item.track || planned.srcInFrame !== item.srcInFrame);
+      }).map((item) => item.id)]);
+  }, [pinnedItemIds, selectionMovePreview, plannedItems, state.items]);
+  const itemGeometryById = useMemo(() => {
+    const indexById = new Map<string, number>();
+    const staticOverlapById = new Map<string, TimelineOverlapSpan[]>();
+    let maxEndBefore = Number.NEGATIVE_INFINITY;
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index]!;
+      indexById.set(item.id, index);
+      const start = item.startFrame;
+      const end = start + Math.max(1, item.durationInFrames);
+      staticOverlapById.set(
+        item.id,
+        start < maxEndBefore
+          ? topClipOverlapSpansInPrefix(start, item.durationInFrames, items, index)
+          : EMPTY_OVERLAP_SPANS,
+      );
+      if (end > maxEndBefore) maxEndBefore = end;
+    }
+    return { indexById, staticOverlapById };
+  }, [items]);
+  const adjacentItems = useMemo(() => {
+    const previousById = new Map<string, TimelineItem>();
+    const nextById = new Map<string, TimelineItem>();
+    const ordered = [...items].sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id));
+    for (let index = 0; index + 1 < ordered.length; index += 1) {
+      const left = ordered[index]!;
+      const right = ordered[index + 1]!;
+      if (left.startFrame + left.durationInFrames !== right.startFrame) continue;
+      nextById.set(left.id, right);
+      previousById.set(right.id, left);
+    }
+    return { previousById, nextById };
+  }, [items]);
+  const rollTrimState = useMemo<TimelineState>(() => ({
+    ...state,
+    fps: state.fps,
+    items: state.items,
+    tracks: state.tracks,
+    assets: state.assets,
+    linkGroups: state.linkGroups,
+    multicamGroups: state.multicamGroups,
+    transitions: state.transitions,
+  }), [state.assets, state.fps, state.items, state.linkGroups, state.multicamGroups, state.tracks, state.transitions]);
+  const rollPlansByLeft = useMemo(() => {
+    const plans = new Map<string, { right: TimelineItem; plan: ReturnType<typeof planRollingTrim> }>();
+    if (pickMode || editMode !== 'selection') return plans;
+    for (const [leftId, right] of adjacentItems.nextById) {
+      plans.set(leftId, { right, plan: planRollingTrim(rollTrimState, leftId, right.id, 0) });
+    }
+    return plans;
+  }, [adjacentItems, editMode, pickMode, rollTrimState]);
   const renderedItems = useMemo(() => visibleTimelineItems(
     indexes.itemWindowsByTrack.get(trackId),
     visibleWindow,
@@ -163,9 +183,12 @@ export function TrackLane({
       || !!intersectFrameRange(transitionStart, transition.durationInFrames, visibleWindow);
   }), [indexes, previewPinnedItemIds, transitions, visibleWindow]);
   const laneKind = trackKind(state, trackId);
+  const laneIsEffect = isEffectTrack(state, trackId, mainTrackId(state));
+  const laneIsText = isTextTrack(state, trackId, mainTrackId(state));
+  const dragItem = drag?.mode === 'move' ? state.items.find((candidate) => candidate.id === drag.id) : undefined;
   const dragOffsetY = drag?.mode === 'move'
-    && trackKind(state, drag.targetTrack) === trackKind(state, drag.baseTrack)
-    && !state.tracks?.[drag.targetTrack]?.locked
+    && !!dragItem
+    && canItemMoveToTrack(state, dragItem, drag.targetTrack)
     ? (trackIds.indexOf(drag.targetTrack) - trackIds.indexOf(drag.baseTrack)) * rowHeight
     : 0;
   return (
@@ -193,9 +216,9 @@ export function TrackLane({
         onTrackContextMenu({ trackId, x: e.clientX, y: e.clientY, frame: frameFromClientX(e.clientX) });
       }}
       onDragOver={(e) => {
-        if (locked || (!hasLibraryDrag(e)
-          && !hasCompatibleMediaDrag(e, laneKind)
-          && !hasExternalFiles(e.dataTransfer))) return;
+        if ((locked && !hasLibraryDrag(e)) || (!hasLibraryDrag(e)
+          && !hasCompatibleMediaDrag(e, laneKind, laneIsText, laneIsEffect)
+          && (laneIsText || laneIsEffect || !hasExternalFiles(e.dataTransfer)))) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
         setLibDropTarget(`track:${trackId}`);
@@ -211,25 +234,47 @@ export function TrackLane({
           onDropExternalFiles(files, trackId, frameFromClientX(e.clientX));
           return;
         }
-        const mediaAssetId = parseMediaAssetDrag(e);
-        if (mediaAssetId) {
+        const mediaDrop = parseMediaAssetDrop(e);
+        if (mediaDrop) {
           setLibDropTarget(null);
           e.preventDefault();
           e.stopPropagation();
-          const asset = (state.assets ?? []).find((item) => item.id === mediaAssetId);
-          if (!locked && asset && canDropMediaAsset(asset, laneKind)) {
-            commands.addMediaItem(asset, {
-              track: trackId,
+          const payload = parseEditorDrag(e);
+          if (!locked) {
+            const assetIds = payload?.source === 'media' ? mediaAssetIds(payload) : [mediaDrop.assetId];
+            const invalid = assetIds.some((id) => {
+              const asset = state.assets?.find((candidate) => candidate.id === id);
+              return !asset || !canDropMediaAsset(asset, laneKind, laneIsText, laneIsEffect);
+            });
+            if (invalid) {
+              window.alert(t(laneIsText ? '文字轨道只能放文字片段，不能放置视频、图片或音频素材。' : '所选素材包含不适合这条轨道的类型，请拖到对应的视频或音频轨道。'));
+              return;
+            }
+            commands.beginHistoryGesture();
+            try { placeMediaAssets({
+              assetIds,
+              assets: (state.assets ?? []).filter((asset) => canDropMediaAsset(asset, laneKind, laneIsText, laneIsEffect)),
               startFrame: frameFromClientX(e.clientX),
+              sourceRangeFor: (asset) => payload?.source === 'media'
+                ? mediaSourceRangeFor(payload, asset.id) : mediaDrop.sourceRange,
+              add: (asset, startFrame, range) => commands.addMediaItem(asset, {
+              track: trackId,
+              startFrame,
+              ...range,
               ripple: rippleOnDrop,
               overwrite: overwriteOnDrop,
-            });
+              volume: mediaPlacementVolume(asset.kind, mediaDrop.purpose),
+              }),
+              select: commands.selectItems,
+            }); } catch (error) {
+              window.alert(error instanceof Error ? error.message : t('素材选段无法加入这条轨道，请检查选段范围。'));
+            } finally { commands.endHistoryGesture(); }
           }
           return;
         }
         const payload = parseLibraryDrag(e);
         setLibDropTarget(null);
-        if (!payload || locked) return;
+        if (!payload || (locked && payload.kind !== 'sound')) return;
         e.preventDefault();
         e.stopPropagation();
         // Prefer clip under cursor if any (fx/lut/zoom/transition)
@@ -243,6 +288,7 @@ export function TrackLane({
       }}
     >
       {renderedItems.map((it) => {
+        const planned = plannedItems.get(it.id);
         const selected = isItemSelected(state, it.id);
         const captionInitiatedDelta = selectionMovePreviewDeltaForItem(it.id, selectionMovePreview);
         const captionInitiatedMove = selectionMovePreview?.itemIds.includes(it.id) ?? false;
@@ -257,15 +303,15 @@ export function TrackLane({
         const moveDelta = captionInitiatedMove
           ? captionInitiatedDelta
           : dragging && drag && (drag.mode === 'move' || drag.mode === 'trim-left') ? drag.deltaF : 0;
-        const start = stretch?.startFrame ?? (it.startFrame + moveDelta);
+        const start = planned?.startFrame ?? stretch?.startFrame ?? (it.startFrame + moveDelta);
         const durTrim = drag?.id === it.id && drag.mode === 'trim-left' ? -drag.deltaF
           : drag?.id === it.id && drag.mode === 'trim-right' ? drag.deltaF : 0;
-        const dur = stretch?.durationInFrames ?? Math.max(1, it.durationInFrames + durTrim);
+        const dur = planned?.durationInFrames ?? stretch?.durationInFrames ?? Math.max(1, it.durationInFrames + durTrim);
         const mediaIntersection = intersectFrameRange(start, dur, visibleWindow);
         const liveSlip = drag?.id === it.id && drag.mode === 'slip'
           ? planSlip(state, it.id, drag.deltaF)
           : null;
-        const renderSrcIn = liveSlip?.ok
+        const renderSrcIn = planned ? planned.srcInFrame ?? 0 : liveSlip?.ok
           ? liveSlip.srcInFrame
           : drag?.id === it.id && drag.mode === 'trim-left' && !stretch
             ? sourceWindowForTimelineRange(
@@ -280,20 +326,45 @@ export function TrackLane({
         const audioMuted = muted && (it.kind === 'audio' || it.kind === 'video');
         const showHandles = !pickMode && editMode !== 'blade' && editMode !== 'pen' && editMode !== 'slip'
           && (editMode !== 'rate-stretch' || canRateStretch);
+        const rollEntry = rollPlansByLeft.get(it.id);
+        const rollRight = rollEntry?.right;
+        const rollLeft = !pickMode && editMode === 'selection' ? adjacentItems.previousById.get(it.id) : undefined;
+        const rollPlan = rollEntry?.plan ?? null;
+        const rollBlocked = !!rollPlan?.error || !!(rollPlan?.limitMessage && rollPlan.deltaF === 0);
+        const rawClipWidthPx = dur * px;
+        const clipWidthPx = Math.max(2, rawClipWidthPx);
+        const compactClip = clipWidthPx < 28;
+        const narrowClip = clipWidthPx < 16;
+        const handleLayout = clipEdgeHandleLayout(rawClipWidthPx, editMode, !!rollLeft, !!(rollRight && rollPlan), rollRight ? rollRight.durationInFrames * px : 0);
         const isLibOver = libDropTarget === it.id;
-        const itemIndex = itemIndexById.get(it.id) ?? 0;
-        const overlapSpans = topClipOverlapSpans(start, dur, items.slice(0, itemIndex));
-        let clipTitle = it.name;
-        if (editMode === 'slip' && !canSlip) clipTitle = t('此类型没有可滑移的源区间');
-        else if (audioMuted) clipTitle = `${it.name} · ${t('轨道已静音')}`;
+        const itemIndex = itemGeometryById.indexById.get(it.id) ?? 0;
+        const overlapSpans = start === it.startFrame && dur === it.durationInFrames
+          ? (itemGeometryById.staticOverlapById.get(it.id) ?? EMPTY_OVERLAP_SPANS)
+          : topClipOverlapSpansInPrefix(start, dur, items, itemIndex);
+        const attachment = attachmentFeedback.get(it.id);
+        const attachmentHint = attachment
+          ? `${t('依附主片段')}：${attachment.owner.name} · ${t(!attachment.active ? '联动已关闭或此类型未启用，当前不会跟随'
+            : attachment.locked ? '关联轨道已锁定，请先解锁后再移动主片段' : '跟随主片段移动或删除；可右键解除依附')}`
+          : undefined;
+        const displayName = it.kind === 'audio' && it.src?.startsWith('/sound-effects/') ? tData(it.name) : it.name;
+        let clipTitle = attachmentHint ? `${displayName} · ${attachmentHint}` : displayName;
+        if (editMode === 'slip' && !canSlip) clipTitle = `${displayName} · ${t('此类型没有可滑移的源区间')}`;
+        else if (audioMuted) clipTitle += ` · ${t('轨道已静音')}`;
+        if (locked) clipTitle += ` · ${t('轨道已锁定，请先解锁')}`;
         return (
           <div
             key={it.id}
-            className={`cc-timeline-clip${selected ? ' is-selected' : ''}${isLibOver ? ' is-library-over' : ''}${audioMuted ? ' is-audio-muted' : ''}`}
+            className={`cc-timeline-clip${selected ? ' is-selected' : ''}${isLibOver ? ' is-library-over' : ''}${audioMuted ? ' is-audio-muted' : ''}${attachment?.highlighted ? ' is-linked-follower' : ''}${attachment?.locked ? ' is-link-blocked' : ''}`}
             data-timeline-clip
+            data-compact-clip={compactClip ? 'true' : undefined}
+            data-narrow-clip={narrowClip ? 'true' : undefined}
+            data-main-clip-id={attachment?.owner.id}
+            data-linkage-active={attachment ? attachment.active : undefined}
             title={clipTitle}
             data-clip-kind={it.kind}
+            onDoubleClick={() => { if (it.kind === 'sequence' && it.timelineId) commands.switchTimeline(it.timelineId); }}
             onPointerDown={(e) => {
+              if (e.button !== 0) return;
               if (pickMode) { // selection mode: click → item ref, drag → timerange (no editing)
                 commands.selectItem(it.id);
                 startPick(e, 'clip', it);
@@ -333,11 +404,11 @@ export function TrackLane({
               e.preventDefault();
               // Keep multi-select when right-clicking an already-selected clip
               // The context menu does not collapse the current selection set.
-              if (!isItemSelected(state, it.id)) commands.selectItem(it.id);
+              if (!isItemSelected(state, it.id)) commands.selectItems(groupedItemIds(state, [it.id]));
               onContextMenu({ id: it.id, x: e.clientX, y: e.clientY });
             }}
             onDragOver={(e) => {
-              if (!hasLibraryDrag(e) || locked) return;
+              if (!hasLibraryDrag(e)) return;
               e.preventDefault();
               e.stopPropagation();
               e.dataTransfer.dropEffect = 'copy';
@@ -350,30 +421,33 @@ export function TrackLane({
             onDrop={(e) => {
               const payload = parseLibraryDrag(e);
               setLibDropTarget(null);
-              if (!payload || locked) return;
+              if (!payload || (locked && payload.kind !== 'sound')) return;
               e.preventDefault();
               e.stopPropagation();
               if (!applyLibraryToClip(payload, it)) {
-                // sound/template may land on clip → use clip start on same track
-                applyLibraryToTrack(payload, it.track, it.startFrame);
+                // Audio follows the mouse's editorial moment, even over a clip.
+                applyLibraryToTrack(payload, it.track,
+                  payload.kind === 'sound' ? frameFromClientX(e.clientX) : it.startFrame);
               }
             }}
             style={{
-              position: 'absolute', left: Math.max(0, start) * px, top: 4, height: rowHeight - 8, width: dur * px,
-              background: CLIP_COLOR[it.kind] ?? theme.clipMg,
-              // The video thumbnail frame bar is drawn by ClipMediaLayers (CSS background cannot load mp4); the image still uses itself as the background
-              backgroundImage: it.kind === 'image' && it.src ? `linear-gradient(90deg, transparent 0%, rgba(0,0,0,.4) 78%), url(${it.src})` : undefined,
-              backgroundSize: 'auto 100%', backgroundRepeat: 'no-repeat',
-              borderRadius: 3, color: '#fff', fontSize: 11,
-              display: 'flex', alignItems: 'flex-end', padding: '0 8px 5px', gap: 6, overflow: 'hidden', whiteSpace: 'nowrap',
-              transform: dragging && dragOffsetY ? `translate3d(0, ${dragOffsetY}px, 0)` : undefined,
+              position: 'absolute', left: Math.max(0, start) * px, top: 4, height: rowHeight - 8, width: clipWidthPx,
+              borderRadius: narrowClip ? 2 : compactClip ? 4 : undefined, overflow: 'visible',
+              transform: planned ? (planned.track !== it.track ? `translate3d(0, ${(trackIds.indexOf(planned.track) - trackIds.indexOf(it.track)) * rowHeight}px, 0)` : undefined)
+                : dragging && dragOffsetY ? `translate3d(0, ${dragOffsetY}px, 0)` : undefined,
               zIndex: dragging ? 10 : undefined,
               cursor: pickMode ? 'copy' : locked ? 'not-allowed' : editMode === 'slip' ? canSlip ? 'ew-resize' : 'not-allowed' : editMode === 'blade' || editMode === 'pen' ? 'crosshair' : 'grab', userSelect: 'none', touchAction: 'none',
             }}
           >
+            <div className="cc-clip-surface" style={{
+              background: CLIP_COLOR[it.kind] ?? theme.clipMg,
+              // The video thumbnail frame bar is drawn by ClipMediaLayers (CSS background cannot load mp4); the image still uses itself as the background.
+              backgroundImage: it.kind === 'image' && it.src ? `linear-gradient(90deg, transparent 0%, rgba(0,0,0,.4) 78%), url(${it.src})` : undefined,
+              backgroundSize: 'auto 100%', backgroundRepeat: 'no-repeat',
+            }}>
             {(it.kind === 'audio' || it.kind === 'video') && (
               <ClipMediaLayers
-                item={it} px={px} fps={state.fps} height={rowHeight - 8}
+                item={it} px={px} fps={state.fps} height={rowHeight - 10}
                 clipStartFrame={start} durationInFrames={dur}
                 srcInFrame={renderSrcIn} playbackRate={renderPlaybackRate}
                 visibleWindow={visibleWindow}
@@ -395,7 +469,12 @@ export function TrackLane({
                 <Icon name="volumeOff" size={11} />
               </span>
             )}
-            {it.kind === 'audio' && !isPreviewable(it.src) && mediaIntersection && (() => {
+            {attachment && <span className={`cc-clip-attachment${attachment.highlighted ? ' is-active' : ''}${attachment.locked ? ' is-blocked' : ''}`}
+              title={attachmentHint} aria-label={attachmentHint}>
+              <Icon name={attachment.locked ? 'lock' : 'paperclip'} size={11} />
+              {dur * px >= 180 && <span>{t(attachment.highlighted ? attachment.locked ? '联动受锁定' : '将联动' : attachment.active ? '依附' : '依附暂停')}</span>}
+            </span>}
+            {it.kind === 'audio' && !hasRealWavePreviewSource(it.src, it.kind) && mediaIntersection && (() => {
               const left = (mediaIntersection.startFrame - start) * px + 3;
               const width = Math.max(1, (mediaIntersection.endFrame - mediaIntersection.startFrame) * px - 6);
               return (
@@ -416,8 +495,8 @@ export function TrackLane({
                 ? upsertKeyframe(raw.filter((k) => k.frame !== penDrag.fromFrame), penDrag.frame, penDrag.value, penDrag.easing)
                 : raw;
               if (!kfs.length) return null;
-              const h = rowHeight - 8;
-              const w = Math.max(1, dur * px);
+              const h = rowHeight - 10;
+              const w = Math.max(1, dur * px - 2);
               const yOf = (v: number) => 3 + (1 - Math.max(0, Math.min(1, (v - lo) / (hi - lo)))) * (h - 6);
               const pts = kfs.map((k) => `${(k.frame * px).toFixed(1)},${yOf(k.value).toFixed(1)}`).join(' ');
               const band = `0,${yOf(kfs[0].value).toFixed(1)} ${pts} ${w.toFixed(1)},${yOf(kfs[kfs.length - 1].value).toFixed(1)}`;
@@ -446,7 +525,7 @@ export function TrackLane({
                         if (!locked) commands.removeItemKeyframe(it.id, prop, k.frame);
                       }}
                       style={{ position: 'absolute', left: k.frame * px - 4, top: yOf(k.value) - 4, width: 8, height: 8,
-                        background: '#ffd866', border: '0.5px solid rgba(0,0,0,0.85)', transform: 'rotate(45deg)',
+                        background: '#ffd866', border: '0.5px solid rgba(0,0,0,0.85)', transform: 'rotate(45deg)', pointerEvents: 'auto',
                         cursor: 'grab', zIndex: 3, touchAction: 'none' }}
                     />
                   ))}
@@ -454,11 +533,40 @@ export function TrackLane({
               );
             })()}
             {/* trim handles (hidden in blade / pen / selection-pick modes) */}
-            {showHandles && <div onPointerDown={(e) => startDrag(e, it.id, 'trim-left', it.startFrame, it.durationInFrames, it.track, it.srcInFrame ?? 0)}
-              style={{ position: 'absolute', left: 0, top: 0, width: 8, height: '100%', cursor: 'ew-resize', background: editMode === 'trim' || editMode === 'rate-stretch' ? themeAlpha.accent(0.5) : selected ? themeAlpha.shadow(0.25) : 'transparent' }} />}
-            <span className={`cc-clip-label${it.kind === 'audio' ? ' audio' : ''}`}>{it.name}</span>
-            {showHandles && <div onPointerDown={(e) => startDrag(e, it.id, 'trim-right', it.startFrame, it.durationInFrames, it.track, it.srcInFrame ?? 0)}
-              style={{ position: 'absolute', right: 0, top: 0, width: 8, height: '100%', cursor: 'ew-resize', background: editMode === 'trim' || editMode === 'rate-stretch' ? themeAlpha.accent(0.5) : selected ? themeAlpha.shadow(0.25) : 'transparent' }} />}
+            <span className={`cc-clip-label${it.kind === 'audio' ? ' audio' : ''}`}>{displayName}</span>
+            </div>
+            {rollRight && rollPlan && handleLayout.showRollRight && <button type="button" data-roll-handle
+              className="cc-roll-grip" aria-label={t('滚动裁剪左右片段')}
+              aria-disabled={rollBlocked} aria-keyshortcuts="ArrowLeft ArrowRight"
+              title={rollPlan.error ?? rollPlan.limitMessage ?? t('拖动接缝同时调整左右片段边界；箭头键逐帧调整')}
+              style={{ position: 'absolute', right: -4, top: 0, bottom: 0 }}
+              onPointerDown={(event) => { if (event.button !== 0) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const livePlan = planRollingTrim(commands.getState?.() ?? state, it.id, rollRight.id, 0);
+                const reason = livePlan.error ?? (livePlan.limitMessage && livePlan.deltaF === 0 ? livePlan.limitMessage : undefined);
+                if (reason) { showAppToast(reason, { error: !!livePlan.error }); return; }
+                startRollDrag(event, it.id, rollRight.id);
+              }}
+              onKeyDown={(event) => {
+                const delta = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+                if (!delta && event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (!delta) { showAppToast(t('拖动握柄连续调整；使用左右方向键逐帧滚动裁剪。')); return; }
+                const liveState = commands.getState?.() ?? state;
+                const next = planRollingTrim(liveState, it.id, rollRight.id, delta);
+                if (next.error) showAppToast(next.error, { error: true });
+                else {
+                  if (next.state !== liveState) commands.applyRollingTrim(it.id, rollRight.id, delta);
+                  if (next.limitMessage) showAppToast(next.limitMessage);
+                }
+              }}
+            />}
+            {showHandles && handleLayout.trimWidth > 0 && <div onPointerDown={(e) => { if (e.button !== 0) return; startDrag(e, it.id, 'trim-left', it.startFrame, it.durationInFrames, it.track, it.srcInFrame ?? 0); }}
+              style={{ position: 'absolute', left: handleLayout.leftOffset, top: 0, width: handleLayout.trimWidth, height: '100%', cursor: 'ew-resize', background: editMode === 'trim' || editMode === 'rate-stretch' ? themeAlpha.accent(0.35) : 'transparent' }} />}
+            {showHandles && handleLayout.trimWidth > 0 && <div onPointerDown={(e) => { if (e.button !== 0) return; startDrag(e, it.id, 'trim-right', it.startFrame, it.durationInFrames, it.track, it.srcInFrame ?? 0); }}
+              style={{ position: 'absolute', right: handleLayout.rightOffset, top: 0, width: handleLayout.trimWidth, height: '100%', cursor: 'ew-resize', background: editMode === 'trim' || editMode === 'rate-stretch' ? themeAlpha.accent(0.35) : 'transparent' }} />}
           </div>
         );
       })}
@@ -485,4 +593,4 @@ export function TrackLane({
       })}
     </div>
   );
-}
+});

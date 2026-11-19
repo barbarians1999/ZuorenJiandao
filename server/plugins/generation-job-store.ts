@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { mkdirSync, realpathSync } from 'node:fs';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, resolve } from 'node:path';
 import { runtimeProfile } from '../runtime-profile.ts';
+import { renameWithRetry } from './project-store-durable.ts';
 import {
   initializeSqliteProjectStore,
   registerStorageMigrationBarrier,
   sqliteReadEntry,
   sqliteStoreEnabled,
+  storePath as sqliteProjectStorePath,
   sqliteWriteEntry,
 } from '../storage/sqlite-store.ts';
 import { GENERATION_JOBS_KV_KEY } from '../storage/sqlite-migration.ts';
@@ -36,7 +40,133 @@ const STORE_PATH = runtimeProfile().generationJobStore;
 let persistenceHydrated = false;
 let persistenceQueue: Promise<void> = Promise.resolve();
 let persistenceMigrationGate: Promise<void> | null = null;
+const GENERATION_JOB_LEASE_REGISTRY = Symbol.for('openchatcut.generation-job-store-leases');
+type GenerationLeaseRegistryHost = { [key: symbol]: Map<string, DatabaseSync[]> | undefined };
+const registryHost = globalThis as unknown as GenerationLeaseRegistryHost;
+const generationLeaseRegistry = registryHost[GENERATION_JOB_LEASE_REGISTRY]
+  ?? (registryHost[GENERATION_JOB_LEASE_REGISTRY] = new Map<string, DatabaseSync[]>());
+let generationJobsLeaseKey: string | null = null;
+
+function canonicalStorePath(path: string): string {
+  const absolute = resolve(path);
+  try {
+    return realpathSync.native(absolute);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new Error(`Cannot resolve generation-job store path ${absolute}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+    try {
+      const parent = dirname(absolute);
+      mkdirSync(parent, { recursive: true, mode: 0o700 });
+      return resolve(realpathSync.native(parent), basename(absolute));
+    } catch (parentError) {
+      throw new Error(`Cannot resolve generation-job store path ${absolute}: ${parentError instanceof Error ? parentError.message : String(parentError)}`, { cause: parentError });
+    }
+  }
+}
+
+function generationStoreLockTargets(): Array<{ identity: string; target: string; lockPath: string }> {
+  const jsonStore = canonicalStorePath(STORE_PATH);
+  const sqliteStore = canonicalStorePath(sqliteProjectStorePath());
+  const candidates = [
+    { target: jsonStore, lockPath: `${STORE_PATH}.lease.sqlite3` },
+    { target: sqliteStore, lockPath: `${sqliteStore}.generation-job-lease.sqlite3` },
+  ];
+  const byIdentity = new Map<string, { identity: string; target: string; lockPath: string }>();
+  for (const candidate of candidates) {
+    const canonicalLock = canonicalStorePath(candidate.lockPath);
+    const identity = process.platform === 'win32' ? canonicalLock.toLowerCase() : canonicalLock;
+    if (!byIdentity.has(identity)) byIdentity.set(identity, { ...candidate, identity });
+  }
+  return [...byIdentity.values()].sort((a, b) => a.identity.localeCompare(b.identity));
+}
+
+function lockKey(targets = generationStoreLockTargets()): string {
+  return targets.map(({ identity }) => identity).join('\n');
+}
+
+function isSqliteBusyOrLocked(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const detail = error as { code?: unknown; errcode?: unknown; errno?: unknown; message?: unknown };
+  const code = String(detail.code ?? '').toUpperCase();
+  const sqliteCode = Number(detail.errcode ?? detail.errno);
+  const primaryCode = Number.isInteger(sqliteCode) ? sqliteCode & 0xff : -1;
+  return code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED'
+    || primaryCode === 5 || primaryCode === 6
+    || /^(?:database|table) is (?:locked|busy)$/i.test(String(detail.message ?? '').trim());
+}
+
+function closeLeaseDatabases(databases: readonly DatabaseSync[]): void {
+  for (const database of [...databases].reverse()) {
+    try { database.exec('ROLLBACK;'); } catch { /* no transaction remains */ }
+    try { database.close(); } catch { /* closing all partial locks is best effort */ }
+  }
+}
+
+export class GenerationJobStoreLockConflictError extends Error {
+  readonly code = 'GENERATION_JOB_STORE_LOCK_CONFLICT';
+
+  constructor(target: string, cause: unknown) {
+    super(`Another desktop or development server is using generation jobs for ${target}. Close it before starting another instance.`, { cause });
+    this.name = 'GenerationJobStoreLockConflictError';
+  }
+}
+
+/** Lock both identities because JSON and SQLite deployments share generation snapshots through either path. */
+export function acquireGenerationJobStoreLease(): void {
+  if (generationJobsLeaseKey && generationLeaseRegistry.has(generationJobsLeaseKey)) return;
+  const targets = generationStoreLockTargets();
+  const key = lockKey(targets);
+  if (generationLeaseRegistry.has(key)) {
+    generationJobsLeaseKey = key;
+    return;
+  }
+  const acquired: DatabaseSync[] = [];
+  let current: { target: string; lockPath: string } | undefined;
+  try {
+    for (const next of targets) {
+      current = next;
+      mkdirSync(dirname(next.lockPath), { recursive: true, mode: 0o700 });
+      const database = new DatabaseSync(next.lockPath);
+      try {
+        database.exec('PRAGMA busy_timeout = 250;');
+        database.exec(`CREATE TABLE IF NOT EXISTS generation_job_lease (
+          id INTEGER PRIMARY KEY CHECK (id = 1), process_id INTEGER NOT NULL, acquired_at INTEGER NOT NULL
+        );`);
+        database.exec('BEGIN IMMEDIATE;');
+        database.prepare(`INSERT INTO generation_job_lease (id, process_id, acquired_at) VALUES (1, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET process_id = excluded.process_id, acquired_at = excluded.acquired_at`)
+          .run(process.pid, Date.now());
+        acquired.push(database);
+      } catch (error) {
+        closeLeaseDatabases([database]);
+        throw error;
+      }
+    }
+    generationLeaseRegistry.set(key, acquired);
+    generationJobsLeaseKey = key;
+  } catch (error) {
+    closeLeaseDatabases(acquired);
+    const reason = error instanceof Error ? error.message : String(error);
+    if (isSqliteBusyOrLocked(error)) {
+      throw new GenerationJobStoreLockConflictError(current?.target ?? STORE_PATH, error);
+    }
+    throw new Error(`Could not acquire generation-job lock for ${current?.target ?? STORE_PATH} (${current?.lockPath ?? 'lock path unavailable'}): ${reason}`, { cause: error });
+  }
+}
+
+/** Verifiers release the lease before removing their temporary storage root. */
+export function releaseGenerationJobStoreLease(): void {
+  const key = generationJobsLeaseKey ?? lockKey();
+  generationJobsLeaseKey = null;
+  const leases = generationLeaseRegistry.get(key);
+  if (!leases) return;
+  generationLeaseRegistry.delete(key);
+  closeLeaseDatabases(leases);
+}
+
 registerStorageMigrationBarrier(async () => {
+  acquireGenerationJobStoreLease();
   // Before hydration, only drain existing writes: writing the empty in-memory
   // map would destroy the configured legacy ledger before it is imported.
   // Once hydrated, persist the current in-memory snapshot as the migration
@@ -86,6 +216,7 @@ function persistedRows(): GenerationJobSnapshot[] {
 }
 
 export function persistJobs(): Promise<void> {
+  acquireGenerationJobStoreLease();
   const write = persistenceQueue.catch(() => undefined).then(async () => {
     const migrationGate = persistenceMigrationGate;
     if (migrationGate) await migrationGate;
@@ -96,8 +227,13 @@ export function persistJobs(): Promise<void> {
     }
     await mkdir(dirname(STORE_PATH), { recursive: true });
     const temporary = `${STORE_PATH}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporary, JSON.stringify({ version: 1, jobs: persistedRows() }), 'utf8');
-    await rename(temporary, STORE_PATH);
+    try {
+      await writeFile(temporary, JSON.stringify({ version: 1, jobs: persistedRows() }), 'utf8');
+      await renameWithRetry(temporary, STORE_PATH);
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
   });
   persistenceQueue = write.then(() => undefined, () => undefined);
   return write;
@@ -152,6 +288,7 @@ function normalizePersistedJob(value: unknown): GenerationJob | null {
 }
 
 export async function loadPersistedJobs(): Promise<void> {
+  acquireGenerationJobStoreLease();
   await initializeSqliteProjectStore();
   let parsed: { version?: unknown; jobs?: unknown } | null = null;
   if (sqliteStoreEnabled()) {

@@ -1,8 +1,10 @@
 import type { TimelineItem } from '../editor/types';
+import type { TranscriptWord } from '../transcript/types';
 import { buildCaptionPages } from './captionPages';
-import type { CaptionsData, CaptionWordOverride } from './types';
+import type { CaptionSourceEntry, CaptionsData, CaptionSourceSpan, CaptionWordOverride } from './types';
 import { joinCaptionWords } from './types';
 import { setCaptionWordOverride } from './wordOverrides';
+import type { CaptionStyleOverride } from './styles';
 
 export interface CueRow {
   id: string;
@@ -15,6 +17,15 @@ export interface CueRow {
   srcIdxs: number[];
   /** Stable identities aligned with srcIdxs. */
   wordRefs: string[];
+  entry?: CaptionSourceEntry;
+  /** Raw manual-lane cue index, used to edit/delete without a display override. */
+  manualIndex: number | null;
+  pageWords: TranscriptWord[];
+  sourceSpans: CaptionSourceSpan[];
+  displayCueEditId?: string;
+  displayCuePartId?: string;
+  displayCueSegmentId?: string;
+  fontOverride?: Pick<CaptionStyleOverride, 'fontFamily' | 'fontAssetId'>;
 }
 
 export function fmtCueMs(ms: number): string {
@@ -25,16 +36,33 @@ export function fmtCueMs(ms: number): string {
 
 /** Renders a paged recalculation of SingleStreamCaptions, but retains the override keys for each visible word.*/
 export function buildCues(captions: CaptionsData, items: TimelineItem[], fps: number): CueRow[] {
-  return buildCaptionPages(captions, items, fps).map((identity) => ({
-    id: identity.id,
-    laneId: identity.laneId,
-    manual: identity.manual,
-    start: identity.page.start,
-    end: identity.page.end,
-    text: joinCaptionWords(identity.page.words),
-    srcIdxs: identity.srcIdxs,
-    wordRefs: identity.wordRefs,
-  }));
+  return buildCaptionPages(captions, items, fps).map((identity) => {
+    const pageWord = identity.page.words[0];
+    const manualIndex = identity.manual && identity.entry?.words
+      ? identity.entry.words.findIndex((word) => pageWord && (
+        pageWord.id ? word.id === pageWord.id
+          : word.start === pageWord.start && word.end === pageWord.end && word.text === pageWord.text
+      ))
+      : -1;
+    return {
+      id: identity.id,
+      laneId: identity.laneId,
+      manual: identity.manual,
+      start: identity.page.start,
+      end: identity.page.end,
+      text: joinCaptionWords(identity.page.words),
+      srcIdxs: identity.srcIdxs,
+      wordRefs: identity.wordRefs,
+      entry: identity.entry,
+      manualIndex: manualIndex >= 0 ? manualIndex : null,
+      pageWords: identity.page.words,
+      sourceSpans: identity.sourceSpans ?? [],
+      displayCueEditId: identity.displayCueEditId,
+      displayCuePartId: identity.displayCuePartId,
+      displayCueSegmentId: identity.displayCueSegmentId,
+      fontOverride: identity.fontOverride,
+    };
+  });
 }
 
 /** Translate the text changes in sentence k into wordOverrides patches.*/
@@ -45,7 +73,23 @@ export function cueTextPatch(
   text: string,
 ): Partial<CaptionsData> | null {
   const cue = rows[index];
-  if (!cue || cue.srcIdxs.length === 0) return null;
+  if (!cue) return null;
+  if (cue.displayCueEditId && cue.displayCuePartId) {
+    const entry = captions.sourceEntries?.find(candidate => candidate.id === cue.laneId);
+    const edit = entry?.displayCueEdits?.find(candidate => candidate.id === cue.displayCueEditId);
+    if (!edit?.parts.some(part => part.id === cue.displayCuePartId)) return null;
+    const trimmed = text.trim();
+    return { sourceEntries: captions.sourceEntries!.map(candidate => candidate.id !== entry!.id ? candidate : {
+      ...candidate,
+      displayCueEdits: candidate.displayCueEdits!.map(record => record.id !== edit.id ? record : {
+        ...record,
+        // Keep the record's covered refs even when its final part is removed.
+        parts: trimmed ? record.parts.map(part => part.id === cue.displayCuePartId ? { ...part, text: trimmed } : part)
+          : record.parts.filter(part => part.id !== cue.displayCuePartId),
+      }),
+    }) };
+  }
+  if (cue.srcIdxs.length === 0) return null;
   const allIndices = rows.flatMap((row) => row.srcIdxs);
   let next: Record<number, CaptionWordOverride> = { ...(captions.wordOverrides ?? {}) };
   const put = (source: number, wordRef: string, patch: CaptionWordOverride) => {

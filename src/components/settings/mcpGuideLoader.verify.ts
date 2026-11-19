@@ -54,7 +54,7 @@ assert.ok(
 );
 
 // The thunk is only worth protecting if the call sites actually defer through it.
-for (const site of ['src/components/TopBar.tsx', 'src/components/dashboard/dashboardDialogs.tsx']) {
+for (const site of ['src/components/TopBar.tsx', 'src/components/dashboard/dashboardDialogs.tsx', 'src/components/settings/SettingsDialog.tsx']) {
   const text = readFileSync(join(root, site), 'utf8');
   assert.match(text, /lazy\(\s*\(\)\s*=>\s*loadMcpGuideDialog\(\)/, `${site} must defer the dialog with lazy()`);
 }

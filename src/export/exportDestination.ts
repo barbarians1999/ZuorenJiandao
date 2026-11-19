@@ -15,7 +15,7 @@ import {
 import { restoredBrowserDestination, saveBrowserDirectory } from './exportDestinationStorage';
 export {
   DEFAULT_EXPORT_DESTINATION, ExportDestinationError, exportHistoryDestinationId,
-  exportDestinationFilename, exportDestinationErrorMessage, exportDestinationTargetPath,
+  exportDestinationFilename, exportDestinationErrorMessage, exportDestinationTargetPath, exportDestinationTaskKey,
   type BrowserExportDirectoryHandle, type BrowserExportFileHandle, type ExportDestination,
 } from './exportDestinationModel';
 

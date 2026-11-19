@@ -9,6 +9,7 @@ import {
   assertNonEmptyExportBytes,
   cancelActiveExportJob,
   cleanupStaleExportFiles,
+  createRenderProgress,
   exportJobFilename,
   forgetExportJobController,
   finalH264EncoderOutcome,
@@ -34,6 +35,26 @@ assert.deepEqual(
   exportOutputSize({ width: 1920, height: 1080 }, exportScale({ width: 1920, height: 1080 }, '480p')),
   { width: 854, height: 480 },
 );
+
+const renderProgressStates: Array<{ phase?: string; progress?: number; processedFrames?: number; totalFrames?: number }> = [];
+const reportRenderProgress = createRenderProgress((progress) => {
+  renderProgressStates.push(progress);
+  return Promise.resolve();
+}, 81_143, 90);
+reportRenderProgress(78_708 / 81_143);
+assert.deepEqual(renderProgressStates.at(-1), {
+  phase: 'rendering', progress: 8 + (78_708 / 81_143) * 90, processedFrames: 78_708, totalFrames: 81_143,
+});
+reportRenderProgress.setPhase('finalizing');
+assert.deepEqual(renderProgressStates.at(-1), {
+  phase: 'finalizing', progress: 96, processedFrames: 81_143, totalFrames: 81_143,
+}, 'finalizing reports that every chunk frame is encoded');
+reportRenderProgress(0.5);
+assert.deepEqual(renderProgressStates.at(-1), {
+  phase: 'finalizing', progress: 97, processedFrames: 81_143, totalFrames: 81_143,
+}, 'numeric join/mux progress does not switch back to rendering or retain an incomplete frame count');
+reportRenderProgress.setPhase('rendering');
+assert.equal(renderProgressStates.at(-1)?.processedFrames, 0, 'a hardware fallback retry resets encoded-frame progress');
 
 assert.deepEqual(
   retimeVideoEncodingArgs('vp8', 'libx264', 12_000_000),

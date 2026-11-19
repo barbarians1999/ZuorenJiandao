@@ -128,4 +128,7 @@ const builtinLooks = builtinIds.map((template) => {
 assert.equal(new Set(builtinLooks.map((look) => JSON.stringify(look))).size, builtinIds.length,
   'built-in preset ids persist and resolve to observably distinct render/layout fields');
 
+const widened = containerStyle(preset, 'plain', 1_920, 1_080, { anchor: 'bottom-center', widthRatio: 0.94 });
+assert.equal(widened.padding, '0 3%');
+
 console.log('renderStyles.verify: caption render style controls remain aligned');

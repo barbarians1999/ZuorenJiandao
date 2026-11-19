@@ -9,6 +9,7 @@ export function shouldSubmitComposerOnKeyDown(
   key: string,
   shiftKey: boolean,
   canSend: boolean,
+  isComposing = false,
 ): boolean {
-  return key === 'Enter' && !shiftKey && canSend;
+  return !isComposing && key === 'Enter' && !shiftKey && canSend;
 }

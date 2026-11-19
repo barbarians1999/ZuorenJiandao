@@ -176,7 +176,7 @@ function EnableView({ state, onEnable, onInstall, t }: ViewProps & {
     {packAbsent && (
       <div className="cc-semantic-pack-missing">
         <p>{state.pack === 'error'
-          ? t('模型包下载失败，请到 设置 → 本地模型 重试。')
+          ? t('模型包下载失败，请到 设置 → 本地工具 重试。')
           : t('首次使用需要下载可选模型包（约 178MB）。模型在本机运行，素材不会上传。')}</p>
         <button type="button" className="primary" onClick={onInstall}>
           <Icon name="download" size={13} />{t('下载并启用')}
@@ -189,7 +189,11 @@ function EnableView({ state, onEnable, onInstall, t }: ViewProps & {
       </div>
     )}
     {!packAbsent && !packDownloading && <>
-      {state.error && <span className="cc-semantic-error">{t('语义搜索暂不可用，请重试。')}</span>}
+      {state.error && (
+        <span className="cc-semantic-error" title={state.error}>
+          {t('语义搜索暂不可用：{reason}', { reason: t(state.error) })}
+        </span>
+      )}
       <button type="button" className="primary" onClick={onEnable}><Icon name="sparkles" size={13} />{t('启用本地模型')}</button>
     </>}
   </div>;

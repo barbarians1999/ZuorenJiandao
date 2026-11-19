@@ -8,6 +8,7 @@ import { projectReduce } from './reduce';
 import type { AnyAction, ProjectDispatch } from './reduce';
 import { isHistoryControlAction } from './reduce';
 import type { MediaAsset, ProjectDoc } from './types';
+import { BACKGROUND_MUSIC_INITIAL_VOLUME } from '../media/placementPurpose';
 
 const isProjectAction = (action: Parameters<ProjectDispatch>[0]): action is AnyAction => (
   !isHistoryControlAction(action)
@@ -56,8 +57,16 @@ const audioAsset: MediaAsset = {
   assert.ok(actions.some((a) => a.type === 'add'), 'the batch adds the clip');
   const timeline = doc().timelines[0]!;
   assert.equal(timeline.items.length, 1, 'the clip landed');
+  assert.equal(timeline.items[0]?.volume, 1, 'generic audio keeps the existing full-volume default');
   assert.equal(Object.values(timeline.tracks ?? {}).some((t) => t?.kind === 'audio'), true,
     'the audio track was created');
+}
+
+// ── 背景音乐意图:只覆盖该次放置的初始音量 ────────────────────────────────
+{
+  const { commands, doc } = harness(videoOnlyDoc());
+  commands.addMediaItem(audioAsset, { volume: BACKGROUND_MUSIC_INITIAL_VOLUME });
+  assert.equal(doc().timelines[0]!.items[0]?.volume, BACKGROUND_MUSIC_INITIAL_VOLUME);
 }
 
 // ── 目标轨已存在:仍是单条 add,不产生多余 batch ─────────────────────────────

@@ -30,12 +30,15 @@ const built = buildPastedTranscriptTrack({
   label: '文字稿字幕',
 });
 assert.deepEqual(built.sourceItemIds, ['voice-1', 'voice-2']);
-assert.equal(built.captions.sourceEntries?.[0]?.words?.map(({ text }) => text).join(''), '第一句口播。第二句口播。');
+assert.equal(built.captions.sourceEntries?.[0]?.words?.map(({ text }) => text).join(''), '第一句口播第二句口播');
 assert.equal(built.captions.template, 'plain');
 assert.equal(built.captions.styleOverride?.fontFamily, 'Noto Sans SC');
-assert.equal(built.captions.styleOverride?.color, '#111111');
-assert.equal(built.captions.styleOverride?.strokeColor, '#ffffff');
+assert.equal(built.captions.styleOverride?.color, '#ffffff');
+assert.equal(built.captions.styleOverride?.strokeColor, '#000000');
 assert.equal(built.captions.styleOverride?.wholeLine, true);
+assert.equal(built.captions.motionPreset ?? 'none', 'none');
+assert.deepEqual(built.captions.sourceEntries?.[0]?.words?.map((word) => word.id), ['lane-test:cue:0', 'lane-test:cue:1'], 'review navigation uses existing persistent cue identities');
+assert.equal('reviewCueIndices' in built.captions, false, 'transient review hints do not change the project format');
 assert.throws(() => buildPastedTranscriptTrack({ ...built, script: '没有来源', items, fps: 30, track: 'A3', laneId: 'none', label: 'none' }), /没有可用的转写/);
 
 console.log('pastedTranscriptTrack.verify: full speech track creates an independent styled caption lane');

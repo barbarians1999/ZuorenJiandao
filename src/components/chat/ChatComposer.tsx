@@ -346,6 +346,8 @@ export function ChatComposer(props: ChatComposerProps) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(event) => {
+          const composing = event.nativeEvent.isComposing || event.keyCode === 229;
+          if (composing) return;
           if (event.key === 'Enter' && !event.shiftKey) event.preventDefault();
           if (slashOpen && slashMatchQuery !== null) {
             if (event.key === 'ArrowDown' && slashMatches.length) {
@@ -399,7 +401,7 @@ export function ChatComposer(props: ChatComposerProps) {
               return;
             }
           }
-          if (shouldSubmitComposerOnKeyDown(event.key, event.shiftKey, canSend)) onSubmit();
+          if (shouldSubmitComposerOnKeyDown(event.key, event.shiftKey, canSend, composing)) onSubmit();
         }}
         onPaste={(e) => {
           const files = Array.from(e.clipboardData?.files ?? []);

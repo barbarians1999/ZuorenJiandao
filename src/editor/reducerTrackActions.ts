@@ -3,6 +3,8 @@ import { captionTrackEntries, captionsOnTrack, DEFAULT_WATERMARK, defaultTrackId
 import { reconcileTimelineCaptionReferences } from '../captions/reconcileSources.js';
 import type { Action } from './reducerActions';
 import { placeTrack, withTrackCaptions } from './reducerTimelineHelpers';
+import { attachToMainClip, mainTrackId, planMagneticInsert } from './magneticTimeline';
+import { planCompactTracks } from './trackConsolidate';
 
 export function applyTrackAction(
   s: TimelineState,
@@ -80,7 +82,8 @@ export function applyTrackAction(
       const it = s.items.find((x) => x.id === a.id);
       if (!it || !a.newId || s.items.some((item) => item.id === a.newId)
         || s.tracks?.[it.track]?.locked) return s;
-      const copy: TimelineItem = { ...it, id: a.newId, props: { ...it.props }, startFrame: trackEnd(s, it.track) };
+      const copy: TimelineItem = attachToMainClip(s, { ...it, id: a.newId, mainClipId: undefined, props: { ...it.props }, startFrame: trackEnd(s, it.track) });
+      if (s.interaction?.magnet && copy.track === mainTrackId(s)) return planMagneticInsert(s, [copy], copy.startFrame).state;
       return { ...s, items: [...s.items, copy], selectedId: copy.id, selectedIds: [copy.id] };
     }
     case 'clear':
@@ -115,7 +118,7 @@ export function applyTrackAction(
       return {
         ...s,
         trackOrder: placeTrack(s, a.track.id, a.track.kind, a.order),
-        tracks: { ...s.tracks, [a.track.id]: { kind: a.track.kind, name: a.track.name, ...(a.track.kind === 'caption' ? { captions: null } : {}), ...audioConfig } },
+        tracks: { ...s.tracks, [a.track.id]: { kind: a.track.kind, ...(a.track.kind === 'video' && a.track.visualRole ? { visualRole: a.track.visualRole } : {}), name: a.track.name, ...(a.track.kind === 'caption' ? { captions: null } : {}), ...audioConfig } },
       };
     }
     case 'track.update': {
@@ -132,13 +135,20 @@ export function applyTrackAction(
       if (role === null) delete next.role;
       else if (role !== undefined) next.role = role;
       if (audioRouting) {
-        if (audioRouting.duckDepthDb === null) delete next.audioRouting;
-        else next.audioRouting = { ...next.audioRouting, ...audioRouting } as TrackFlags['audioRouting'];
+        const currentRouting = next.audioRouting ?? {};
+        const nextRouting = { ...currentRouting } as NonNullable<TrackFlags['audioRouting']>;
+        if (audioRouting.duckDepthDb === null) delete nextRouting.duckDepthDb;
+        else if (audioRouting.duckDepthDb !== undefined) nextRouting.duckDepthDb = audioRouting.duckDepthDb;
+        if (audioRouting.gainDb === null) delete nextRouting.gainDb;
+        else if (audioRouting.gainDb !== undefined) nextRouting.gainDb = audioRouting.gainDb;
+        if (Object.keys(nextRouting).length === 0) delete next.audioRouting;
+        else next.audioRouting = nextRouting;
       }
-      if (next.role !== 'follower') delete next.audioRouting;
+      if (next.role !== 'follower' && next.audioRouting) delete next.audioRouting.duckDepthDb;
       if (isCaption) {
         delete next.hidden;
         delete next.muted;
+        delete next.soloed;
         delete next.role;
         delete next.audioRouting;
       }
@@ -182,6 +192,8 @@ export function applyTrackAction(
       }
       return { ...s, items: s.items.map((item) => starts.has(item.id) ? { ...item, startFrame: starts.get(item.id)! } : item) };
     }
+    case 'track.compact':
+      return planCompactTracks(s).state;
     case 'setCaptions':
       return withTrackCaptions(s, a.captions, a.track);
     case 'updateCaptions': {

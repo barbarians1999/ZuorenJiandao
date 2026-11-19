@@ -44,6 +44,8 @@ export interface PersistedServerExportJob {
   codec: 'h264' | 'vp8' | 'prores' | 'mp3';
   base: string;
   fps: number;
+  startFrame?: number;
+  endFrameExclusive?: number;
   state: TimelineState;
   destination: ServerExportRecoveryDestination;
   autoQaEnabled: boolean;
@@ -129,6 +131,10 @@ export function validRecord(value: unknown): value is PersistedServerExportJob {
     && (record.codec === 'h264' || record.codec === 'vp8' || record.codec === 'prores' || record.codec === 'mp3')
     && typeof record.base === 'string'
     && typeof record.fps === 'number' && record.fps > 0
+    && (record.startFrame === undefined || (Number.isInteger(record.startFrame) && record.startFrame >= 0))
+    && (record.endFrameExclusive === undefined || (Number.isInteger(record.endFrameExclusive) && record.endFrameExclusive > 0))
+    && ((record.startFrame === undefined) === (record.endFrameExclusive === undefined))
+    && (record.startFrame === undefined || record.endFrameExclusive! > record.startFrame)
     && !!record.state && typeof record.state === 'object'
     && validDestination(record.destination)
     && typeof record.autoQaEnabled === 'boolean'

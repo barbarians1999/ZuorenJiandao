@@ -52,6 +52,7 @@ export function SliderRow({
   label, val, min, max, step, fmt, inputScale, mixed = false, onChange, onReset, resetDisabled, disabled, disabledReason,
 }: SliderRowProps) {
   const t = useT();
+  const modKey = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl';
   const gesture = useHistoryGesture();
   const progress = Math.min(100, Math.max(0, ((val - min) / (max - min)) * 100));
   return (
@@ -79,7 +80,7 @@ export function SliderRow({
           onGestureEnd={gesture.onKeyUp}
           onGestureStart={gesture.onKeyDown}
           step={step}
-          title={t('点击输入精确值；左右拖动调整；Shift ×10；⌘ ×0.1')}
+          title={t('点击输入精确值；左右拖动调整；Shift ×10；⌘ ×0.1').replace('⌘', modKey)}
           value={val}
         />
         {onReset && (
@@ -100,7 +101,7 @@ export function SliderRow({
 }
 
 /** per-property keyframe API handed down by InspectorPanel (playhead in item-local frames) */
-interface KfApi {
+export interface KfApi {
   localFrame: number;
   /**
    * Whether the playhead actually falls within this clip. localFrame is sandwiched into [0, dur), so the playhead is in the clip
@@ -121,7 +122,7 @@ const EASING_OPTIONS: { value: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut'; la
 // end-of-row keyframe rail (PRD §4.5; UI imitates reframe keyframe mode, custom layout):
 // ◆ punches/updates at the playhead (filled when one sits there), ‹ › jump
 // between keyframes, × deletes the one under the playhead, plus segment easing.
-function KfCell({ kfs, localFrame, inRange, punchValue, onSet, onRemove, onSeekLocal }: {
+export function KfCell({ kfs, localFrame, inRange, punchValue, onSet, onRemove, onSeekLocal }: {
   kfs: Keyframe[] | undefined;
   localFrame: number;
   inRange: boolean;
@@ -189,7 +190,7 @@ const CROP_ROWS: ReadonlyArray<{ edge: FlexCropEdge; label: string }> = [
 // keyframe rails and an opacity curve row. A keyframed prop shows the
 // value sampled at the playhead; dragging it then punches a keyframe there.
 export function TransformControl({
-  item, canvasWidth, canvasHeight, mixed, mixedCrop, onChange, onCropChange, onReset, kf,
+  item, canvasWidth, canvasHeight, mixed, mixedCrop, onChange, onCropChange, onReset, kf, allowCrop = true,
 }: {
   item: TimelineItem;
   canvasWidth: number;
@@ -200,13 +201,15 @@ export function TransformControl({
   onCropChange: (edge: FlexCropEdge, value: number) => void;
   onReset: (props: readonly KeyframeProp[]) => void;
   kf: KfApi;
+  allowCrop?: boolean;
 }) {
   const t = useT();
   const crop = normalizedFlexCrop(item.transform?.crop);
   const rows = KEYFRAME_PROPS
     .map(getKeyframePropertyDefinition)
     // Volume is not part of the transform stack — VolumeControl has its own keyframe track
-    .filter((definition) => definition.id !== 'volume' && definition.supports(item));
+    // Mask channels have their own geometry section and must not be duplicated here.
+    .filter((definition) => !definition.id.startsWith('mask') && definition.id !== 'volume' && definition.supports(item));
   return (
     <div className="cc-insp-stack">
       {rows.map((r) => {
@@ -235,7 +238,7 @@ export function TransformControl({
           </div>
         );
       })}
-      {CROP_ROWS.map((row) => {
+      {allowCrop && CROP_ROWS.map((row) => {
         const axis = flexCropAxisSize(row.edge, canvasWidth, canvasHeight);
         const valuePx = flexCropFractionToPx(crop[row.edge], axis);
         const maxPx = flexCropFractionToPx(flexCropEdgeMax(item.transform?.crop, row.edge), axis);
@@ -303,14 +306,13 @@ export function VolumeControl({
           type="button"
           className="cc-insp-btn"
           disabled={busy || !item.src}
-          title={t('分析并归一到 -14 LUFS')}
-          style={{ marginTop: 6, width: '100%', fontSize: 11 }}
+          style={{ marginTop: 6, width: '100%', fontSize: 14 }}
           onClick={() => {
             setBusy(true);
             void Promise.resolve(onNormalize()).finally(() => setBusy(false));
           }}
         >
-          {busy ? t('分析中…') : t('响度归一 (-14 LUFS)')}
+          {busy ? t('正在分析…') : t('统一响度')}
         </button>
       )}
     </div>

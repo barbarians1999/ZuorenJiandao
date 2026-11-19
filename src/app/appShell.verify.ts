@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { loadInitialProjects, syncAgentBackends, type ProjectStartupSource } from './appShell';
-import { getActiveAgentModelChoice } from '../agent/model-selection';
+import { emptyProjectDoc, loadInitialProjects, syncAgentBackends, type ProjectStartupSource } from './appShell';
+import { INITIAL } from '../editor/initial';
 import type { ProjectMeta } from '../persist/projectStoreCoordinators';
 import { syncDesktopNativeInferenceEnabled } from '../transcript/desktop-inference-preference';
 
 const demo = { id: 'demo', name: '示例工程', updatedAt: 1 };
+const newProject = emptyProjectDoc().timelines[0]!;
+assert.equal(newProject.interaction?.magnet, false);
+assert.equal(newProject.interaction?.linkage, false);
+assert.equal(newProject.interaction?.snapping, true);
+assert.equal(INITIAL.interaction?.magnet, false);
+assert.equal(INITIAL.interaction?.linkage, false);
+assert.equal(INITIAL.interaction?.snapping, true);
 
 function source(options: {
   projects?: ProjectMeta[];
@@ -113,9 +120,8 @@ try {
       startupTimeout = setTimeout(() => reject(new Error('API startup waited for Copilot')), 500);
     }),
   ]);
-  assert.equal(requestedPaths.includes('/api/copilot/status'), true);
-  assert.equal(getActiveAgentModelChoice()?.backend, 'api',
-    'configured API models are usable while a Copilot status request remains unresolved');
+  assert.equal(requestedPaths.includes('/api/copilot/status'), false);
+  assert(requestedPaths.every((path) => path === '/api/keys'), 'Startup reads local editor settings only');
 } finally {
   clearTimeout(startupTimeout);
   pendingCopilot.resolve(Response.json({ installed: false }));

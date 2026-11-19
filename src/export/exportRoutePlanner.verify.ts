@@ -33,6 +33,14 @@ try {
   assert.equal(chooseSupportedRoute(unsupported, hardware).route, 'server');
   assert.equal(chooseSupportedRoute(efficient, software).route, 'browser');
   assert.equal(chooseSupportedRoute(compatible, hardware).route, 'server');
+  const direct = { ...software, renderRoute: 'direct-cut' as const };
+  const fast = chooseSupportedRoute(efficient, software, direct);
+  assert.equal(fast.route, 'server', 'verified native path is not hidden by browser encoder capability');
+  assert.equal(fast.engine.renderRoute, 'direct-cut');
+  assert.equal(chooseSupportedRoute(efficient, software, { ...direct, renderRoute: 'hybrid' }).engine.renderRoute, 'hybrid');
+  recordExportPerformance(direct, { width: 1920, height: 1080, frames: 30, elapsedMs: 300 });
+  assert(JSON.parse(values.get('cc.exportPerformance.v1')!).hasOwnProperty('server:libx264:direct-cut'));
+  assert(!JSON.parse(values.get('cc.exportPerformance.v1')!).hasOwnProperty('server:libx264'), 'native timings must not pollute compositor history');
 
   values.set('cc.exportPerformance.v1', JSON.stringify({
     'browser:webcodecs': { samples: 2, workPerMillisecond: 20 },

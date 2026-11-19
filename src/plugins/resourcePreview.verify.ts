@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+assert.doesNotMatch(readFileSync(new URL('../../server/plugins/index.ts', import.meta.url), 'utf8'),
+  /resourcePreviewPlugin/, 'unused SSR-only resource renderer must not be mounted in desktop services');
 
 import { asPluginZoom, pluginTemplates } from '../library/pluginResources';
 import type { InstalledPack } from './store';

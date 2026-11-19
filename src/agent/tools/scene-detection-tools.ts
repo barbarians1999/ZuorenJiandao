@@ -6,6 +6,9 @@ import {
   mapScenesToItem,
   sceneMarkerActions,
   sceneSplitActions,
+  planSceneSplits,
+  sceneRequestRange,
+  sceneAnalysisIdentity,
 } from '../../scene-detection/apply';
 
 type Args = Record<string, unknown>;
@@ -37,6 +40,9 @@ export async function execSceneDetectionTool(name: string, args: Args, ctx: Agen
   if (name !== 'detect_scenes') return { error: `unknown tool ${name}` };
   const target = sourceFor(ctx, args);
   if ('error' in target) return target;
+  const initialState = ctx.getState();
+  const timelineId = ctx.getDoc().activeTimelineId;
+  const identity = target.item ? sceneAnalysisIdentity(initialState, target.item) : null;
   const apply = (args.apply === 'markers' || args.apply === 'split' ? args.apply : 'report') as ApplyMode;
   if (apply !== 'report' && !target.item) return { error: `apply=${apply} requires itemId so source cuts can be mapped onto the timeline` };
   if (target.item && ctx.getState().tracks?.[target.item.track]?.locked && apply !== 'report') {
@@ -44,8 +50,11 @@ export async function execSceneDetectionTool(name: string, args: Args, ctx: Agen
   }
 
   const minSceneSeconds = Number(args.minSceneSeconds);
+  const sourceRange = target.item ? sceneRequestRange(target.item, initialState.fps) : null;
+  if (target.item && !sourceRange) return { error: 'scene detection requires a valid forward playback range' };
   const body = {
     src: target.src,
+    ...(sourceRange ?? {}),
     threshold: Number.isFinite(Number(args.threshold)) ? Number(args.threshold) : undefined,
     minSceneMs: Number.isFinite(minSceneSeconds) ? Math.round(minSceneSeconds * 1000) : undefined,
     maxScenes: Number.isFinite(Number(args.maxScenes)) ? Number(args.maxScenes) : undefined,
@@ -64,12 +73,20 @@ export async function execSceneDetectionTool(name: string, args: Args, ctx: Agen
   };
   if (!response.ok) return { error: result.error ?? `scene detection failed (${response.status})` };
   const scenes = result.scenes ?? [];
-  const mapped = target.item ? mapScenesToItem(scenes, target.item, ctx.getState().fps) : [];
+  const latest = ctx.getState();
+  const currentItem = target.item ? latest.items.find((item) => item.id === target.item!.id) : null;
+  if (target.item && (!currentItem || ctx.getDoc().activeTimelineId !== timelineId
+    || sceneAnalysisIdentity(latest, currentItem) !== identity)) {
+    return { error: 'timeline item or source range changed during scene analysis; run detection again' };
+  }
+  const mapped = currentItem ? mapScenesToItem(scenes, currentItem, latest.fps) : [];
 
-  if (target.item && apply !== 'report' && mapped.length) {
-    const actions = apply === 'markers'
-      ? sceneMarkerActions(target.item, mapped)
-      : sceneSplitActions(target.item, mapped);
+  if (currentItem && apply !== 'report' && mapped.length) {
+    if (latest.tracks?.[currentItem.track]?.locked) return { error: 'track was locked during scene analysis' };
+    const plan = apply === 'split' && currentItem.kind === 'video' ? planSceneSplits(latest, currentItem.id, mapped) : null;
+    if (plan && !plan.ok) return { error: plan.error };
+    const actions = apply === 'markers' ? sceneMarkerActions(currentItem, mapped)
+      : plan?.ok ? [{ type: 'setFullState' as const, state: plan.state }] : sceneSplitActions(currentItem, mapped);
     ctx.commands.batch(actions, apply === 'markers' ? 'Add scene markers' : 'Split clip at scene changes');
   }
 

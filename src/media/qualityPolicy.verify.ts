@@ -35,3 +35,15 @@ assert.equal(shouldPreferMasterPreview('balanced', 'original'), true);
 assert.equal(shouldPreferMasterPreview('master', 'proxy'), false);
 
 console.log('qualityPolicy.verify: ok');
+
+const storage = new Map<string, string>();
+Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+  getItem: (key: string) => storage.get(key) ?? null,
+  setItem: (key: string, value: string) => storage.set(key, value),
+} });
+const firstSession = await import(new URL('./qualityPolicy.ts?session=first', import.meta.url).href);
+assert.equal(firstSession.getPreviewSourceMode(), 'original');
+firstSession.setPreviewSourceMode('proxy');
+assert.equal(storage.get('cc.previewSource.v1'), 'proxy');
+const reopenedSession = await import(new URL('./qualityPolicy.ts?session=reopened', import.meta.url).href);
+assert.equal(reopenedSession.getPreviewSourceMode(), 'proxy', 'stored opt-in survives module/session restart');

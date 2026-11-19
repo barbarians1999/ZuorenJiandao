@@ -1,0 +1,35 @@
+.cc-font-picker { min-width:0; width:100%; }
+.cc-font-trigger { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; min-height:40px; padding:8px 11px; border:1px solid var(--cc-border); border-radius:5px; background:var(--cc-panel-alt); color:var(--cc-text); font:inherit; font-size:15px; cursor:pointer; }
+.cc-font-trigger > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cc-font-dialog { position:fixed; z-index:10000; display:flex; flex-direction:column; border:1px solid var(--cc-border); border-radius:8px; background:var(--cc-panel); color:var(--cc-text); box-shadow:0 12px 40px #0006; overflow:hidden; font-family:inherit; font-size:14px; line-height:1.5; }
+.cc-font-dialog header { display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid var(--cc-border); }
+.cc-font-dialog header strong { font-size:16px; }
+.cc-font-dialog button { color:var(--cc-text); background:transparent; border:1px solid var(--cc-border); border-radius:4px; font:inherit; min-height:36px; cursor:pointer; }
+.cc-font-dialog button:disabled { opacity:.5; cursor:wait; }
+.cc-font-dialog header button { min-width:36px; font-size:20px; }
+.cc-font-search { display:flex; gap:8px; padding:10px 12px 6px; }
+.cc-font-search input { min-width:0; flex:1; padding:8px 10px; border:1px solid var(--cc-border); border-radius:4px; background:var(--cc-bg); color:var(--cc-text); font:inherit; font-size:15px; min-height:38px; box-sizing:border-box; }
+.cc-font-search button { white-space:nowrap; padding:6px 9px; }
+.cc-font-dialog nav { display:flex; flex-wrap:wrap; gap:4px; padding:5px 12px 10px; border-bottom:1px solid var(--cc-border); }
+.cc-font-dialog nav button { padding:4px 8px; border-color:transparent; }
+.cc-font-dialog nav button[aria-pressed=true] { background:var(--cc-hover); border-color:var(--cc-accent); }
+.cc-font-list { min-height:160px; overflow:auto; flex:1; }
+.cc-font-row { display:flex; align-items:stretch; border-bottom:1px solid var(--cc-border); }
+.cc-font-row.selected { background:var(--cc-hover); box-shadow:inset 3px 0 var(--cc-accent); }
+.cc-font-dialog .cc-font-apply { flex:1; min-width:0; display:flex; flex-direction:column; text-align:left; padding:10px 12px; gap:4px; border:0; border-radius:0; }
+.cc-font-apply:hover { background:var(--cc-hover); }
+.cc-font-name { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:14px; }
+.cc-font-name small { color:var(--cc-text-muted); font-size:14px; }
+.cc-font-sample { display:block; min-height:30px; font-size:24px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cc-font-sample.failed { color:var(--cc-danger); font-size:14px; }
+.cc-font-dialog .cc-font-star { width:44px; flex-shrink:0; border:0; font-size:23px; }
+.cc-font-star[aria-pressed=true] { color:var(--cc-accent); }
+.cc-font-status,.cc-font-empty { margin:8px 12px; color:var(--cc-text-muted); font-size:14px; }
+.cc-font-error { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:8px 12px; color:var(--cc-danger); font-size:14px; }
+.cc-font-error button { padding:4px 8px; }
+.cc-font-refresh { padding:5px 12px; }
+.cc-font-refresh button { padding:4px 8px; }
+.cc-font-dialog footer { padding:8px 12px; border-top:1px solid var(--cc-border); color:var(--cc-text-muted); font-size:14px; }
+.cc-caption-font-scope { display:flex; gap:4px; padding:4px 0 8px; }
+.cc-caption-font-scope button { border:1px solid var(--cc-border); border-radius:4px; background:var(--cc-panel-alt); color:var(--cc-text); min-height:36px; padding:6px 10px; font-size:14px; cursor:pointer; }
+.cc-caption-font-scope button[aria-pressed=true] { border-color:var(--cc-accent); background:var(--cc-hover); }

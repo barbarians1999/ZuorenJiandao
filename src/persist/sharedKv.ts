@@ -436,6 +436,16 @@ function isAuthError(error: unknown): error is Error & { status: number } {
   return typeof status === 'number' && status >= 400 && status < 500;
 }
 
+/** Destructive cleanup needs a complete fresh inventory; offline fallbacks cannot prove non-use. */
+export async function kvEntriesForCleanup(): Promise<Record<string, unknown>> {
+  await ready();
+  const local = await localEntries();
+  if (!canSync()) return local;
+  const snapshot = await requestSnapshot();
+  // Keep both copies: unsynced edits and version history may still reference media.
+  return { ...Object.fromEntries(Object.entries(local).map(([key, value]) => [`local:${key}`, value])), ...snapshot.entries };
+}
+
 export async function kvKeys(): Promise<string[]> {
   await ready();
   if (remoteCache) {

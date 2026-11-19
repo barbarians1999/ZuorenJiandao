@@ -4,7 +4,6 @@ import { defaultTrackId, resolveTrackId, trackAlias, type TimelineItem, type Tra
 import { transcribePath, TranscriptionError } from '../../transcript/provider';
 import { hasOperationalTranscript, isTranscriptionProviderId } from '../../transcript/types';
 import { fillerIndices } from '../../transcript/edit';
-import { translateLines } from '../../captions/translate';
 import { createVariant, findVariantByLang, upsertVariant } from '../../transcript/variants';
 import { buildSilenceGapCaps, parseCleanOnly, parseSilenceRule, type SilenceRule } from '../../transcript/clean';
 import type { Action } from '../../editor/reduce';
@@ -234,7 +233,10 @@ async function manageTranscript(args: Args, ctx: AgentContext, track: TrackId, a
     }
     try {
       // Each variant word is keyed by source index i; timing always comes from resolveVariantText.
-      const texts = await translateLines(it.transcript.map((w) => w.text), lang);
+      const texts = args.texts;
+      if (!Array.isArray(texts) || texts.length !== it.transcript.length || !texts.every((text) => typeof text === 'string')) {
+        return { error: 'Supply texts with one translated string per source word. Translation is performed externally in Codex, not in the editor.' };
+      }
       const words = texts.map((text, i) => ({ i, text }));
       const variant = createVariant({ lang, kind: 'translation', words, id: existing?.id }); // reuse id → overwrite
       ctx.commands.setItemVariants(it.id, upsertVariant(it.variants, variant));

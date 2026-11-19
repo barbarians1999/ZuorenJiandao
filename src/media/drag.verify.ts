@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
-import { canDropMediaAsset, parseMediaAssetDragText } from './drag';
+import { canDropMediaAsset, parseMediaAssetDragText, parseMediaAssetDropText } from './drag';
 
 assert.equal(parseMediaAssetDragText('{"v":1,"assetId":"asset_1"}'), 'asset_1');
 assert.equal(parseMediaAssetDragText('{"v":2,"assetId":"asset_1"}'), null);
 assert.equal(parseMediaAssetDragText('{"v":1,"assetId":""}'), null);
 assert.equal(parseMediaAssetDragText('not-json'), null);
+assert.deepEqual(
+  parseMediaAssetDropText('{"v":1,"assetId":"asset_1","purpose":"bgm"}'),
+  { v: 1, assetId: 'asset_1', purpose: 'bgm' },
+);
+assert.equal(parseMediaAssetDropText('{"v":1,"assetId":"asset_1","purpose":"voice"}'), null);
 
 assert.equal(canDropMediaAsset({ kind: 'image' }, 'video'), true);
 assert.equal(canDropMediaAsset({ kind: 'gif' }, 'video'), true);

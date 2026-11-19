@@ -8,7 +8,7 @@
 import { execFileSync } from 'node:child_process';
 import { createWriteStream, existsSync } from 'node:fs';
 import { chmod, cp, mkdir, readFile, readdir, rename, rm } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,11 @@ const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const STAGING = join(ROOT, 'desktop-dist', 'chrome-headless-shell');
 const CACHE = join(ROOT, 'node_modules', '.remotion', 'chrome-headless-shell');
 const FALLBACK_CHROME_VERSION = '149.0.7790.0'; // renderer TESTED_VERSION fallback when the cached VERSION file is missing
+
+/** Cached Chromium diagnostic output is not a shipping runtime asset. */
+export function isChromeRuntimeAsset(source: string): boolean {
+  return basename(source) !== 'debug.log';
+}
 
 interface Target {
   /** Chrome for Testing platform name used in download URLs and directory names. */
@@ -99,12 +104,14 @@ async function main(): Promise<void> {
   const chromeDir = await ensureChrome(t);
   await rm(STAGING, { recursive: true, force: true });
   await mkdir(STAGING, { recursive: true });
-  await cp(chromeDir, join(STAGING, t.cft), { recursive: true });
+  await cp(chromeDir, join(STAGING, t.cft), { recursive: true, filter: isChromeRuntimeAsset });
   await ensureCompositor(t.compositor);
   console.log(`[prepare] ${key} ready — chrome staged at desktop-dist/chrome-headless-shell/${t.cft}`);
 }
 
-main().catch((err) => {
-  console.error('[prepare] failed:', err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error('[prepare] failed:', err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}

@@ -1,0 +1,131 @@
+import { canTrackAcceptItemKind, defaultTrackId, isEffectItemKind, isEffectTrack, isTextTrack, timelineTrackIds, trackKind, type TimelineState, type TrackFlags, type TrackVisualRole, type TimelineItem, type TimelineLinkGroup } from './types';
+import { attachToMainClip, mainTrackId, planDirectionalChange, planMagneticInsert, type MagneticPlan } from './magneticTimeline';
+
+export interface ClipPasteOptions {
+  sourceMainTrackId?: string | null;
+  groups?: readonly TimelineLinkGroup[];
+  /** Duplicate keeps original lanes instead of targeting the selected lane. */
+  keepSourceTracks?: boolean;
+}
+
+/** Copy placement and identity are planned together, then committed as one undo step. */
+export function planClipPasteResult(state: TimelineState, clips: readonly TimelineItem[], sourceTracks: Partial<Record<string, TrackFlags>> | undefined,
+  playhead: number, uid: (prefix: string) => string, options: ClipPasteOptions = {}): MagneticPlan {
+  if (!clips.length) return { state };
+  if (!Number.isFinite(playhead)) return { state, error: '粘贴位置无效，操作未执行。' };
+  const base = Math.min(...clips.map((clip) => clip.startFrame));
+  const frame = Math.max(0, Math.round(playhead));
+  const main = mainTrackId(state);
+  const tracks = { ...state.tracks };
+  const order = timelineTrackIds(state);
+  const mapping = new Map<string, string>();
+  const idMap = new Map(clips.map((clip) => [clip.id, uid('item')]));
+  const sourceIds = [...new Set(clips.map((clip) => clip.track))];
+  const primary = state.items.find((item) => item.id === state.selectedId);
+  const createLane = (sourceId: string, kind: 'video' | 'audio', visualRole?: TrackVisualRole) => {
+    const id = uid('track');
+    tracks[id] = { kind, ...(visualRole ? { visualRole } : {}), name: sourceTracks?.[sourceId]?.name };
+    if (kind === 'video') order.unshift(id);
+    else order.push(id);
+    return id;
+  };
+  for (const sourceId of sourceIds) {
+    const members = clips.filter((clip) => clip.track === sourceId);
+    const kind = members[0]!.kind === 'audio' ? 'audio' : 'video';
+    const isTextGroup = kind === 'video' && members.every((clip) => clip.kind === 'text');
+    const sourceWasEffect = sourceTracks?.[sourceId]?.visualRole === 'effect';
+    const isEffectGroup = kind === 'video' && !isTextGroup && sourceWasEffect && members.every((clip) => isEffectItemKind(clip.kind));
+    const roleForLane: TrackVisualRole | undefined = isTextGroup ? 'text' : isEffectGroup ? 'effect' : undefined;
+    const isValidTarget = (id: string) =>
+      trackKind(state, id) === kind && members.every((clip) => canTrackAcceptItemKind(state, clip.kind, id, main))
+      && (!isEffectGroup || isEffectTrack(state, id, main));
+    let target: string | null | undefined = options.keepSourceTracks && order.includes(sourceId) && isValidTarget(sourceId)
+      ? sourceId
+      : sourceIds.length === 1
+        ? primary && isValidTarget(primary.track)
+          ? primary.track
+          : kind === 'video'
+            ? (isTextGroup
+              ? order.find((id) => id !== main && isTextTrack(state, id, main)) ?? null
+              : isEffectGroup
+                ? order.find((id) => id !== main && isEffectTrack(state, id, main)) ?? null
+                : main)
+            : defaultTrackId(state, kind)
+        : options.sourceMainTrackId === sourceId && kind === 'video' && !isTextGroup && !isEffectGroup
+          ? main
+          : order.includes(sourceId) && isValidTarget(sourceId) ? sourceId : null;
+    // A copied title/attached overlay stays above the picture track even when
+    // the user has cleared selection or selected the main video before pasting.
+    if (target === main && members.every((clip) => clip.kind === 'text' || isEffectItemKind(clip.kind) || !!clip.mainClipId)) {
+      target = sourceId !== main && order.includes(sourceId) && isValidTarget(sourceId)
+        ? sourceId : order.find((id) => id !== main && isValidTarget(id));
+    }
+    if (target && tracks[target]?.locked && target === main && state.interaction?.magnet) {
+      return { state, error: '主轨已锁定，请先解锁后再粘贴。' };
+    }
+    if (!target || tracks[target]?.locked || !isValidTarget(target) || [...mapping.values()].includes(target)) target = createLane(sourceId, kind, roleForLane);
+    mapping.set(sourceId, target);
+  }
+  const copied = clips.map((clip): TimelineItem => ({
+    ...structuredClone(clip), id: idMap.get(clip.id)!, track: mapping.get(clip.track)!,
+    startFrame: frame + clip.startFrame - base,
+    // Never keep a source-draft id merely because a target draft reuses it.
+    mainClipId: clip.mainClipId ? idMap.get(clip.mainClipId) : undefined,
+  }));
+  let next: TimelineState = { ...state, tracks, trackOrder: order,
+    ...(main ? { interaction: { ...state.interaction, mainTrackId: main } } : {}),
+  };
+  const mainCopies = state.interaction?.magnet ? copied.filter((clip) => clip.track === main).sort((a, b) => a.startFrame - b.startFrame) : [];
+  if (mainCopies.length) {
+    const plan = planMagneticInsert(next, mainCopies, Math.min(...mainCopies.map((clip) => clip.startFrame)));
+    if (plan.error) return { state, error: plan.error };
+    next = plan.state;
+  }
+  const placedMain = new Map(next.items.filter((clip) => mainCopies.some((copy) => copy.id === clip.id)).map((clip) => [clip.id, clip]));
+  const mainOffset = mainCopies.length ? placedMain.get(mainCopies[0]!.id)!.startFrame - mainCopies[0]!.startFrame : 0;
+  const pending = copied.filter((clip) => !placedMain.has(clip.id)).map((clip) => {
+    const parent = clip.mainClipId ? placedMain.get(clip.mainClipId) : undefined;
+    const sourceParent = parent ? mainCopies.find((copy) => copy.id === parent.id)! : undefined;
+    return { ...clip, startFrame: clip.startFrame + (parent && sourceParent ? parent.startFrame - sourceParent.startFrame : mainOffset) };
+  });
+  // Test side-lane collisions AFTER main insertion has moved existing followers.
+  for (const sourceId of sourceIds) {
+    const members = pending.filter((clip) => clip.track === mapping.get(sourceId));
+    if (!members.length) continue;
+    if (members.some((clip) => next.items.some((other) => other.track === clip.track
+      && other.startFrame < clip.startFrame + clip.durationInFrames
+      && other.startFrame + other.durationInFrames > clip.startFrame))) {
+      const memberKind = members[0]!.kind === 'audio' ? 'audio' : 'video';
+      const memberIsText = memberKind === 'video' && members.every((clip) => clip.kind === 'text');
+      const memberIsEffect = memberKind === 'video' && !memberIsText && sourceTracks?.[sourceId]?.visualRole === 'effect' && members.every((clip) => isEffectItemKind(clip.kind));
+      const target = createLane(sourceId, memberKind, memberIsText ? 'text' : memberIsEffect ? 'effect' : undefined);
+      for (const clip of members) clip.track = target;
+    }
+  }
+  next = { ...next, tracks, trackOrder: order, items: [...next.items, ...pending] };
+  const copiedIds = new Set(copied.map((clip) => clip.id));
+  const validParents = new Set(next.items.filter((clip) => clip.track === mainTrackId(next)).map((clip) => clip.id));
+  next.items = next.items.map((clip) => {
+    if (!copiedIds.has(clip.id)) return clip;
+    // If the copied parent was placed on an overlay lane, the pair no longer
+    // has a main-track relationship. Do not silently bind its child to some
+    // unrelated existing main video underneath it.
+    if (clip.mainClipId && !validParents.has(clip.mainClipId)) return { ...clip, mainClipId: undefined };
+    return attachToMainClip(next, clip);
+  });
+  const copiedGroups = (options.groups ?? []).filter((group) => group.itemIds.every((id) => idMap.has(id))).map((group) => ({
+    ...group, id: uid('group'), itemIds: group.itemIds.map((id) => idMap.get(id)!), anchorItemId: idMap.get(group.anchorItemId)!,
+  }));
+  next = { ...next,
+    ...(copiedGroups.length ? { linkGroups: [...(next.linkGroups ?? []), ...copiedGroups] } : {}),
+    selectedIds: copied.map((clip) => clip.id), selectedId: copied.at(-1)!.id,
+  };
+  const result = planDirectionalChange(state, next);
+  return result.error ? { state, error: result.error } : result;
+}
+
+/** Compatibility wrapper for callers that only need the resulting state. */
+export function planClipPaste(state: TimelineState, clips: readonly TimelineItem[], sourceTracks: Partial<Record<string, TrackFlags>> | undefined,
+  playhead: number, uid: (prefix: string) => string, options?: ClipPasteOptions): TimelineState {
+  return planClipPasteResult(state, clips, sourceTracks, playhead, uid, options).state;
+}

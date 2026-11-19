@@ -90,7 +90,7 @@ export function VersionHistory({ projectId, currentDoc, onRestore, onClose }: Ve
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input autoFocus value={savingName} placeholder={t('版本名称')}
                 onChange={(e) => setSavingName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setSavingName(null); }}
+                onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter') { e.preventDefault(); handleSave(); } if (e.key === 'Escape') setSavingName(null); }}
                 style={textInput} />
               <button onClick={handleSave} style={primaryBtn}>{t('确定')}</button>
               <button onClick={() => setSavingName(null)} style={ghostBtn}>{t('取消')}</button>

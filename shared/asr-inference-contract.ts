@@ -1,3 +1,6 @@
+/** Existing progress IPC's file tag distinguishes inference from model downloads. */
+export const ASR_TRANSCRIPTION_PROGRESS = '__asr_transcription__';
+
 export const ASR_INFERENCE_CONTRACT = {
   id: 'whisper-q8-16khz-word-v1',
   sampleRate: 16_000,

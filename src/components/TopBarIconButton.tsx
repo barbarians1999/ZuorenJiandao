@@ -15,12 +15,12 @@ export function TopBarIconButton({ icon, label, onClick, disabled = false, badge
   return (
     <button
       type="button"
-      className="cc-tip cc-tip-r"
+      className="cc-topbar-icon-button cc-tip cc-tip-r"
       data-tip={label}
       aria-label={label}
       onClick={onClick}
       disabled={disabled}
-      style={{ position: 'relative', width: 28, height: 28, background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', padding: 0, borderRadius: 4, lineHeight: 0, display: 'grid', placeItems: 'center', color: theme.textDim, opacity: disabled ? 0.35 : 1 }}
+      style={{ position: 'relative', width: 36, height: 36, background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', padding: 0, borderRadius: 6, lineHeight: 0, display: 'grid', placeItems: 'center', color: theme.textDim, opacity: disabled ? 0.35 : 1 }}
       onMouseEnter={(event) => {
         if (!disabled) {
           event.currentTarget.style.color = theme.text;
@@ -32,7 +32,8 @@ export function TopBarIconButton({ icon, label, onClick, disabled = false, badge
         event.currentTarget.style.background = 'none';
       }}
     >
-      <Icon name={icon} size={17} />
+      <Icon name={icon} size={19} />
+      <span className="cc-tool-label">{label}</span>
       {badge}
     </button>
   );

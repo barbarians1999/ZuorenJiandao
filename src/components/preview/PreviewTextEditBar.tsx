@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { formatFontSizeScale, textPxToScale } from '../../editor/fontSizeScale';
 import type { TimelineItem } from '../../editor/types';
 import { Icon } from '../icons';
 import { useT } from '../../i18n/locale';
@@ -17,7 +18,6 @@ export interface PreviewTextEditBarProps {
   selection: PreviewCandidateGeometry;
   composition: { width: number; height: number };
   onPropChange: (id: string, key: string, value: unknown) => void;
-  onSeedChat?: (text: string) => void;
   /** Parent requests open the inline text editor (e.g. double-click). */
   autoEdit?: boolean;
   onAutoEditHandled?: () => void;
@@ -25,14 +25,13 @@ export interface PreviewTextEditBarProps {
 
 /**
  * Floating toolbar for a selected text / text-like MG clip.
- * Mirrors caption direct-edit affordances: AI · text · color · size · weight · align.
+ * Mirrors caption direct-edit affordances: text · color · size · weight · align.
  */
 export function PreviewTextEditBar({
   item,
   selection,
   composition,
   onPropChange,
-  onSeedChat,
   autoEdit,
   onAutoEditHandled,
 }: PreviewTextEditBarProps) {
@@ -79,20 +78,8 @@ export function PreviewTextEditBar({
       style={{ left, top, transform: 'translate(-50%, calc(-100% - 14px))' }}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      {onSeedChat && hasText && (
-        <button
-          type="button"
-          className="cc-capedit-btn ai"
-          title={t('让 AI 改写这段文字')}
-          onClick={() => onSeedChat(t('优化这段画面文字（保持版式）：「{text}」', { text: fields.text || t('（空）') }))}
-        >
-          <Icon name="sparkles" size={12} />{t('AI 编辑')}
-        </button>
-      )}
-
       {hasText && (
         <>
-          {onSeedChat && <span className="cc-capedit-divider" aria-hidden />}
           <button
             type="button"
             className={`cc-capedit-btn${editing ? ' on' : ''}`}
@@ -132,6 +119,9 @@ export function PreviewTextEditBar({
           >
             A−
           </button>
+          <span className="cc-capedit-size-pill" title={t('当前字号')}>
+            {formatFontSizeScale(textPxToScale(fields.fontSize))}
+          </span>
           <button
             type="button"
             className="cc-capedit-btn"
@@ -176,6 +166,7 @@ export function PreviewTextEditBar({
             rows={2}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 saveText();

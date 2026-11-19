@@ -201,4 +201,11 @@ const autoTarget = findCaptionPreviewTarget(autoOnly, [autoItem], 30, 500);
 assert.equal(autoTarget?.kind, 'single', 'auto multi-lane falls back to a clickable single cue target');
 assert.match(autoTarget?.cue.text ?? '', /海风/);
 
+const seamCaptions = {
+  ...captions,
+  ...appendManualCue(captions, laneId, '第二句字幕', 2_000, 3_000),
+};
+const seamTarget = findCaptionPreviewTarget(seamCaptions, [], 30, 2_000);
+assert.equal(seamTarget?.cue.text, '第二句字幕', 'seam playhead selects the following subtitle target');
+
 console.log('captionPreviewTarget.verify: ok');

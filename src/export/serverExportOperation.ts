@@ -6,6 +6,7 @@ import {
   ExportDestinationError,
   exportDestinationErrorMessage,
   exportDestinationFilename,
+  exportDestinationTaskKey,
   exportHistoryDestinationId,
   writeUrlToDestination,
   type ExportDestination,
@@ -27,13 +28,16 @@ import {
   markServerExportTargetCommitted,
   rebindServerExportJob,
   releaseServerExportDelivery,
+  retireServerExportJob,
   renewServerExportDelivery,
   type PersistedServerExportJob,
   type ServerExportDeliveryClaim,
 } from './serverExportRecovery';
 import {
   pollExport,
+  MissingServerExportJobError,
   renderCompleted,
+  isServerRenderError,
   retireAndDeleteExportJob,
   type ExportCodec,
   type ExportFormat,
@@ -167,6 +171,7 @@ async function exportMedia(
   const codec = format === 'audio' ? 'mp3' : context.options.codec;
   const startedAt = performance.now();
   const { renderId, completed } = await renderCompleted(context, format, codec, signal);
+  context.setServerRenderId?.(renderId);
   let targetCommitted = false;
   let claim: ServerExportDeliveryClaim | null = null;
   try {
@@ -184,6 +189,7 @@ async function exportMedia(
   } finally {
     if (claim) await releaseServerExportDelivery(renderId, claim).catch(() => undefined);
     if (targetCommitted) {
+      context.setServerRenderId?.(null);
       await retireAndDeleteExportJob(renderId).catch(() => false);
     }
   }
@@ -216,6 +222,8 @@ function recoveredContext(
     codec: record.codec === 'vp8' || record.codec === 'prores' ? record.codec : 'h264',
     resolution: '1080p',
     fps: record.fps,
+    ...(record.startFrame !== undefined ? { startFrame: record.startFrame } : {}),
+    ...(record.endFrameExclusive !== undefined ? { endFrameExclusive: record.endFrameExclusive } : {}),
     subtitleFormat: 'srt',
     subtitleCaptions: null,
     nleFormat: 'fcp_xml',
@@ -232,6 +240,8 @@ function recoveredContext(
     verifyCompletedExport: createExportVerifier({
       fps: record.fps,
       state: record.state,
+      ...(record.startFrame !== undefined && record.endFrameExclusive !== undefined
+        ? { frameRange: [record.startFrame, record.endFrameExclusive] as [number, number] } : {}),
       t,
       ...setters,
     }),
@@ -251,6 +261,7 @@ async function runRecoveredServerExport(
   setters.setClock(Date.now());
   setters.setBusy(t('正在恢复导出…'));
   setters.setRenderEngine(record.format === 'video' ? 'server' : 'idle');
+  setters.setServerRenderId?.(record.renderId);
   try {
     if (targetCommitted) {
       setters.markTargetCommitted();
@@ -301,6 +312,13 @@ async function runRecoveredServerExport(
     } : current);
   } catch (reason) {
     const cancelled = isAbortError(reason);
+    if (!cancelled && record.stage === 'polling'
+      && (reason instanceof MissingServerExportJobError || isServerRenderError(reason))) {
+      // A confirmed terminal render result cannot become resumable on project reopen.
+      if (await retireServerExportJob(record.renderId).catch(() => false)) {
+        setters.setServerRenderId?.(null);
+      }
+    }
     const existing = exportFailureFrom(reason);
     const message = exportDestinationErrorMessage(reason, t);
     const failure = existing ?? createExportFailure({
@@ -321,6 +339,7 @@ async function runRecoveredServerExport(
   } finally {
     if (claim) await releaseServerExportDelivery(record.renderId, claim).catch(() => undefined);
     if (targetCommitted) {
+      setters.setServerRenderId?.(null);
       await retireAndDeleteExportJob(record.renderId).catch(() => false);
     }
     setters.setBusy(null);
@@ -340,6 +359,8 @@ export async function resumePersistedServerExports({
       label: record.label,
       targetPath: record.targetPath,
       createdAt: record.createdAt,
+      ...(hasServerExportDestinationAuthority(record.destination)
+        ? { targetKey: exportDestinationTaskKey(record.destination, record.label) } : {}),
       execute: ({ signal, setters }) => runRecoveredServerExport(record, setters, signal, t),
     });
   }
@@ -372,6 +393,7 @@ export async function rebindAndResumePersistedServerExport({
   return exportJobs.start({
     label: rebound.label,
     targetPath,
+    targetKey: exportDestinationTaskKey(destination, rebound.label),
     execute: ({ signal, setters }) => runRecoveredServerExport(rebound, setters, signal, t, claim),
   });
 }

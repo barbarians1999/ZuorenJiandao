@@ -1,7 +1,6 @@
-// Default keyboard preset with 56 actions. The UI can show Chinese via labelZh.
+// Default keyboard preset. The UI can show Chinese via labelZh.
 
 export type ShortcutGroup =
-  | 'ai'
   | 'edit'
   | 'markers'
   | 'navigation'
@@ -25,10 +24,9 @@ export const SHORTCUT_GROUPS: { id: ShortcutGroup; label: string; labelZh: strin
   { id: 'navigation', label: 'Navigation', labelZh: '导航' },
   { id: 'markers', label: 'Markers', labelZh: '标记' },
   { id: 'view', label: 'View', labelZh: '视图' },
-  { id: 'ai', label: 'AI', labelZh: 'AI' },
 ];
 
-/** Canonical 56 actions — source of truth for help UI + matcher. */
+/** Canonical actions — source of truth for help UI + matcher. */
 export const SHORTCUT_CATALOG: ShortcutAction[] = [
   { id: 'play-pause', label: 'Play / Pause', labelZh: '播放/暂停', group: 'playback', keys: 'Space' },
   { id: 'seek-back', label: 'Previous frame', labelZh: '上一帧', group: 'playback', keys: '←' },
@@ -46,11 +44,16 @@ export const SHORTCUT_CATALOG: ShortcutAction[] = [
   { id: 'copy', label: 'Copy', labelZh: '复制', group: 'edit', keys: 'Mod + C' },
   { id: 'cut', label: 'Cut', labelZh: '剪切', group: 'edit', keys: 'Mod + X' },
   { id: 'paste', label: 'Paste', labelZh: '粘贴', group: 'edit', keys: 'Mod + V' },
+  { id: 'toggle-picture', label: 'Toggle picture', labelZh: '停用/启用画面', group: 'edit', keys: 'V' },
   { id: 'paste-effects', label: 'Paste Effects', labelZh: '粘贴效果', group: 'edit', keys: 'Mod + Alt + V / Mod + Shift + B' },
   { id: 'duplicate', label: 'Duplicate', labelZh: '复制片段', group: 'edit', keys: 'Mod + D' },
   { id: 'delete', label: 'Delete', labelZh: '删除', group: 'edit', keys: 'Backspace / Delete' },
-  { id: 'split', label: 'Split', labelZh: '切分', group: 'edit', keys: 'C / Enter' },
-  { id: 'interaction-mode-selection', label: 'Selection Mode', labelZh: '选择模式', group: 'edit', keys: 'V' },
+  { id: 'split', label: 'Split', labelZh: '切分', group: 'edit', keys: 'Mod + B / C / Enter' },
+  { id: 'interaction-mode-selection', label: 'Selection Mode', labelZh: '选择模式', group: 'edit', keys: 'A' },
+  { id: 'create-subdraft', label: 'Create compound clip', labelZh: '创建子草稿', group: 'edit', keys: 'Alt + G' },
+  { id: 'group', label: 'Group clips', labelZh: '组合片段', group: 'edit', keys: 'Mod + G' },
+  { id: 'ungroup', label: 'Ungroup clips', labelZh: '取消组合', group: 'edit', keys: 'Mod + Shift + G' },
+  { id: 'ripple-delete', label: 'Delete and close gap', labelZh: '删除并合缝', group: 'edit', keys: 'Shift + Delete / Shift + Backspace' },
   { id: 'interaction-mode-trim', label: 'Trim Edit Mode', labelZh: '修剪模式', group: 'edit', keys: 'N' },
   { id: 'interaction-mode-slip', label: 'Slip Edit Mode', labelZh: '滑移模式', group: 'edit', keys: 'U' },
   { id: 'interaction-mode-blade', label: 'Blade Edit Mode', labelZh: '刀片模式', group: 'edit', keys: 'B' },
@@ -61,7 +64,9 @@ export const SHORTCUT_CATALOG: ShortcutAction[] = [
   { id: 'trim-end', label: 'Trim end', labelZh: '裁到出点', group: 'edit', keys: 'W' },
   // disabled when typing so ⌘A still selects text in chat/inspector inputs
   { id: 'select-all', label: 'Select all', labelZh: '全选', group: 'edit', keys: 'Mod + A' },
-  { id: 'select-after', label: 'Select clips forward', labelZh: '向后选片段', group: 'edit', keys: 'Y' },
+  { id: 'select-before-playhead', label: 'Select clips before playhead', labelZh: '选中播放头前片段', group: 'edit', keys: '[' },
+  { id: 'select-after-playhead', label: 'Select clips after playhead', labelZh: '选中播放头后片段', group: 'edit', keys: ']' },
+  { id: 'select-after', label: 'Select next clip', labelZh: '选中下一个片段', group: 'edit', keys: 'Y' },
   { id: 'move-up', label: 'Move clip up', labelZh: '片段上移轨', group: 'edit', keys: 'Alt + ↑' },
   { id: 'move-down', label: 'Move clip down', labelZh: '片段下移轨', group: 'edit', keys: 'Alt + ↓' },
   { id: 'move-left-boundary', label: 'Move left to boundary', labelZh: '左贴边', group: 'edit', keys: 'Ctrl + E' },
@@ -91,7 +96,7 @@ export const SHORTCUT_CATALOG: ShortcutAction[] = [
   { id: 'fullscreen', label: 'Fullscreen preview', labelZh: '全屏', group: 'view', keys: '`' },
   { id: 'keyboard-shortcuts', label: 'Keyboard shortcuts', labelZh: '快捷键列表', group: 'view', keys: 'Mod + Alt + K', disabledWhenTyping: false },
 
-  { id: 'ask-ai', label: 'Add to AI chat', labelZh: '聚焦 AI 对话', group: 'ai', keys: 'Tab' },
+  { id: 'open-settings', label: 'Settings', labelZh: '设置', group: 'view', keys: 'Mod + ,' },
 ];
 
 export const SHORTCUT_BY_ID = Object.fromEntries(

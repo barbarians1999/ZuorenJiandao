@@ -41,7 +41,9 @@ assert.strictEqual(activeTimeline(subset).items.length, 1, 'subset apply commits
 const generatedAsset = { id: 'asset_generated', name: 'Generated', kind: 'image' as const, src: '/generated.png', durationInFrames: 90 };
 const partitioned = partitionProposalActions([{ type: 'addAsset', asset: generatedAsset }, acts[0]]);
 assert.deepStrictEqual(partitioned.persistent.map((action) => action.type), ['addAsset']);
-assert.deepStrictEqual(partitioned.proposed.map((action) => action.type), ['add']);
+assert.deepStrictEqual(partitioned.proposed, [acts[0]], 'placement and required track creation stay in the reviewable operation');
+assert.deepStrictEqual(replayActions(base, partitioned.proposed), subset,
+  'applying the reviewable operation preserves the exact placement result');
 const assetCommitted = replayActions(base, partitioned.persistent);
 assert.ok(assetCommitted.assets[0], 'generated asset committed');
 assert.strictEqual(assetCommitted.assets[0].id, generatedAsset.id);
@@ -130,7 +132,15 @@ assert.strictEqual(applied3.activeTimelineId, 'tl_a', 'switch replays');
 assert.strictEqual(applied3.timelines[0].items.length, 3, 'clip followed the switch to 序列 1');
 
 // tl.setDoc is the atomic one-step commit target
-assert.strictEqual(projectReduce(base, { type: 'tl.setDoc', doc: applied2 }), applied2, 'tl.setDoc commits the whole project');
+const committed = projectReduce(base, { type: 'tl.setDoc', doc: applied2 });
+assert.deepStrictEqual(
+  committed,
+  {
+    ...applied2,
+    timelines: applied2.timelines.map((timeline) => ({ ...timeline, selectedId: null, selectedIds: [] })),
+  },
+  'tl.setDoc commits the whole project while stripping transient selection',
+);
 
 // last-visible guard: the only visible timeline can't be hidden
 const guarded = projectReduce(base, { type: 'tl.setHidden', id: 'tl_a', hidden: true });

@@ -38,6 +38,7 @@ export interface ServerExportContext {
   setEngineReason: StateSetter<string | null>;
   setProgress: StateSetter<ExportProgress | null>;
   setRenderEngine: StateSetter<RenderEngine>;
+  setServerRenderId?: (renderId: string | null) => void;
   t: Translate;
   verifyCompletedExport: (completed: ExportJobResult, signal?: AbortSignal) => Promise<void>;
 }
@@ -66,6 +67,8 @@ function recoveryRecord(
     codec,
     base: context.options.base,
     fps: context.options.fps,
+    ...(context.options.startFrame !== undefined ? { startFrame: context.options.startFrame } : {}),
+    ...(context.options.endFrameExclusive !== undefined ? { endFrameExclusive: context.options.endFrameExclusive } : {}),
     state: context.options.state,
     destination: context.destination,
     autoQaEnabled: context.autoQaEnabled,
@@ -87,6 +90,13 @@ export function isServerRenderError(error: unknown): error is ServerRenderError 
   return error instanceof ServerRenderError;
 }
 
+export class MissingServerExportJobError extends Error {
+  constructor() {
+    super('server export job was not found');
+    this.name = 'MissingServerExportJobError';
+  }
+}
+
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
@@ -102,16 +112,17 @@ function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function submissionBody(
+export function submissionBody(
   context: ServerExportContext,
   format: ExportFormat,
   codec: ExportCodec,
   operationId: string,
 ) {
-  const { state, project, timelineId, base, resolution, fps, requestedVideoBitrate } = context.options;
+  const { state, project, timelineId, base, resolution, fps, requestedVideoBitrate, startFrame, endFrameExclusive } = context.options;
   const body: Record<string, unknown> = {
     state, format, codec, name: base, operationId,
     ...(project && timelineId ? { project, timelineId } : {}),
+    ...(startFrame !== undefined && endFrameExclusive !== undefined ? { startFrame, endFrameExclusive } : {}),
   };
   if (format !== 'video') return body;
   body.resolution = resolution;
@@ -157,6 +168,7 @@ async function readSnapshot(
   signal?: AbortSignal,
 ): Promise<ExportJobSnapshot> {
   const response = await fetch(`/export/job/${encodeURIComponent(renderId)}`, { signal });
+  if (response.status === 404) throw new MissingServerExportJobError();
   const snapshot: unknown = await response.json().catch(() => null);
   const validSnapshot = snapshot !== null && typeof snapshot === 'object'
     && 'status' in snapshot
@@ -184,11 +196,28 @@ function activePhase(snapshot: ExportJobSnapshot): ExportPhase {
 
 type ServerExportPollContext = Pick<ServerExportContext, 'setProgress' | 't'>;
 
+export function resolveServerPollPercent(
+  current: { phase: ExportPhase; percent: number; processedFrames?: number },
+  snapshot: Pick<ExportJobSnapshot, 'progress' | 'processedFrames' | 'totalFrames'>,
+  phase: ExportPhase,
+): number {
+  if (phase === 'rendering' && snapshot.totalFrames && snapshot.totalFrames > 0 && snapshot.processedFrames !== undefined) {
+    const framePercent = Math.min(99, Math.round((snapshot.processedFrames / snapshot.totalFrames) * 100));
+    return current.phase === 'rendering' && current.processedFrames !== undefined
+      ? Math.max(current.percent, framePercent)
+      : framePercent;
+  }
+  return Math.min(99, Math.max(current.percent, Math.round(snapshot.progress)));
+}
+
 function updateActiveProgress(context: ServerExportPollContext, snapshot: ExportJobSnapshot): void {
+  const phase = activePhase(snapshot);
   context.setProgress((current) => current ? {
     ...current,
-    phase: activePhase(snapshot),
-    percent: Math.min(99, Math.max(current.percent, Math.round(snapshot.progress))),
+    phase,
+    ...(phase === 'rendering' && current.renderingStartedAt === undefined
+      ? { renderingStartedAt: Date.now() } : {}),
+    percent: resolveServerPollPercent(current, snapshot, phase),
     processedFrames: snapshot.processedFrames,
     totalFrames: snapshot.totalFrames,
     detail: snapshot.phase === 'queued'
@@ -260,7 +289,11 @@ export async function renderCompleted(
     await markServerExportOutputReady(renderId);
     return { renderId, completed };
   } catch (error) {
-    if (submissionAccepted && !outputObserved) {
+    // A failed progress request does not prove the render stopped. Keep its
+    // recovery record so reopening export can reattach instead of discarding it.
+    const terminal = signal?.aborted || error instanceof ServerRenderError
+      || error instanceof MissingServerExportJobError;
+    if (submissionAccepted && !outputObserved && terminal) {
       await retireAndDeleteExportJob(renderId).catch(() => false);
     }
     throw error;

@@ -15,6 +15,7 @@ const current: Timeline = {
   width: 1920,
   height: 1080,
   selectedId: null,
+  selectedIds: [],
   trackOrder: ['track_current'],
   tracks: { track_current: { kind: 'video' } },
   items: [{

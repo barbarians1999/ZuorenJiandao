@@ -1,10 +1,10 @@
-// "Clean Assets" panel: scan after opening - first clear the orphan project documents (smoke/old test residue),
-// Then list the uploaded files that are not referenced by all projects, check and delete them in batches (disk + IDB cache).
+// "Clean Assets" panel: scan after opening and list uploaded files that are not referenced by any project,
+// allowing batch confirmation and deletion (disk + IDB cache).
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { theme, themeAlpha } from '../theme';
 import { useT } from '../i18n/locale';
 import { Icon } from '../components/icons';
-import { scanUnreferenced, deleteUploadFile, type UploadFileInfo } from '../persist/mediaCleanup';
+import { scanUnreferenced, collectAllUploadRefs, deleteUploadFile, type UploadFileInfo } from '../persist/mediaCleanup';
 
 interface MediaCleanupDialogProps {
   onClose: () => void;
@@ -33,8 +33,7 @@ export function MediaCleanupDialog({ onClose }: MediaCleanupDialogProps) {
     try {
       const scan = await scanUnreferenced();
       setFiles(scan.files);
-      setPicked(new Set(scan.files.map((f) => f.name)));
-      if (scan.orphanDocsPurged > 0) setNote(t('已顺手清掉 {n} 份孤儿工程文档(测试残留)', { n: scan.orphanDocsPurged }));
+      setPicked(new Set());
     } catch (err) {
       setFiles([]);
       setNote(t('扫描失败:{msg}', { msg: err instanceof Error ? err.message : String(err) }));
@@ -57,12 +56,20 @@ export function MediaCleanupDialog({ onClose }: MediaCleanupDialogProps) {
   };
 
   const removePicked = async () => {
-    if (!files || picked.size === 0) return;
+    if (busy || !files || picked.size === 0) return;
     setBusy(true);
+    let currentRefs: Set<string>;
+    try { currentRefs = await collectAllUploadRefs(); }
+    catch {
+      setNote(t('无法完整检查工程引用，未删除素材。请稍后重新扫描。'));
+      setBusy(false);
+      return;
+    }
     let ok = 0;
     let fail = 0;
     for (const f of files) {
       if (!picked.has(f.name)) continue;
+      if (currentRefs.has(`/media/uploads/${f.name}`)) { fail += 1; continue; }
       if (await deleteUploadFile(f.name).catch(() => false)) ok += 1;
       else fail += 1;
     }

@@ -1,4 +1,5 @@
 import type { ProjectDoc } from '../editor/types';
+import { stripTransientSelection } from '../editor/selectionState';
 
 export interface ProjectMeta {
   id: string;
@@ -48,10 +49,11 @@ type PersistProjectSnapshot = (
 ) => Promise<{ saved: boolean; indexUpdated: boolean }>;
 
 function immutableProjectSnapshot(doc: ProjectDoc): ProjectDoc {
+  const persisted = stripTransientSelection(doc);
   try {
-    return structuredClone(doc);
+    return structuredClone(persisted);
   } catch {
-    return JSON.parse(JSON.stringify(doc)) as ProjectDoc;
+    return JSON.parse(JSON.stringify(persisted)) as ProjectDoc;
   }
 }
 

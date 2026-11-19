@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type Dispatch, type RefObject, type SetStateAction } from 'react';
-import { getAgentModelSnapshot, subscribeAgentModels, type AgentModelSnapshot } from '../../agent/model-selection';
+import { useEffect, useRef, useState, type ChangeEvent, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { useT } from '../../i18n/locale';
 import { loadProject, loadProjectThumb, saveProjectThumb } from '../../persist/projectStore';
 import type { ProjectMeta } from '../../persist/projectStoreCoordinators';
+import type { ProjectQuickStart } from '../../app/projectQuickStart';
 
 export interface DashboardProps {
   projects: ProjectMeta[];
   onOpen: (id: string) => void;
-  onNew: () => void;
+  onNew: (quickStart?: ProjectQuickStart) => void | Promise<void>;
   onRename: (id: string, name: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => Promise<void>;
@@ -37,7 +37,6 @@ interface TransferModel {
 }
 
 export interface DashboardModel {
-  modelSnapshot: AgentModelSnapshot;
   query: string;
   normalizedQuery: string;
   visibleProjects: ProjectMeta[];
@@ -172,7 +171,6 @@ function useDashboardDialogs() {
 }
 
 export function useDashboardModel(props: DashboardProps): DashboardModel {
-  const modelSnapshot = useSyncExternalStore(subscribeAgentModels, getAgentModelSnapshot);
   const [query, setQuery] = useState('');
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleProjects = normalizedQuery
@@ -183,7 +181,6 @@ export function useDashboardModel(props: DashboardProps): DashboardModel {
   const transfer = useProjectTransfer(props.onImport);
   const thumbs = useProjectPosters(props.projects);
   return {
-    modelSnapshot,
     query,
     normalizedQuery,
     visibleProjects,

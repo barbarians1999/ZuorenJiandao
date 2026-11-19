@@ -29,7 +29,11 @@ import { AGENT_TOOL_TIMEOUTS } from './api-attempt';
 
 const projectId = 'harness-runtime-verify';
 const aspectSchema = TOOL_SCHEMAS.find((schema) => schema.name === 'set_aspect_ratio')!;
-const installSkillSchema = TOOL_SCHEMAS.find((schema) => schema.name === 'install_skill')!;
+const installSkillSchema: AgentToolSchema = {
+  name: 'install_skill', description: 'Retired tool rejection fixture',
+  input_schema: { type: 'object', properties: { repo: { type: 'string' } }, required: ['repo'] },
+};
+assert(!TOOL_SCHEMAS.some((schema) => schema.name === installSkillSchema.name));
 assert.equal(AGENT_TOOL_TIMEOUTS.toolMs, 30_000);
 assert.equal(AGENT_TOOL_TIMEOUTS.tools.transcribe_trackMs, 900_000);
 const ctx = {
@@ -74,7 +78,7 @@ async function executeInstallSkill(
 ): Promise<CodexToolExecution> {
   return executeOpenChatCutTool(installSkillSchema, { repo: 'owner/skill' }, {
     ctx, settings, runRecorder: fakeRecorder(log), toolCallId: crypto.randomUUID(),
-    toolCatalog: TOOL_SCHEMAS, activeToolCatalog: [installSkillSchema],
+    toolCatalog: TOOL_SCHEMAS, activeToolCatalog: TOOL_SCHEMAS,
     onEvent: () => undefined,
     executeTool: async () => executeTool(),
   });
@@ -219,13 +223,14 @@ async function verifyDurableBoundary(): Promise<void> {
 }
 
 async function verifyDirectExecutionBoundary(): Promise<void> {
-  // No approval gate: persistent-local tools execute straight through.
+  // Retired tools cannot be re-enabled by a caller supplying their old schema.
   let executions = 0;
-  await executeInstallSkill([], async () => {
+  const result = await executeInstallSkill([], async () => {
     executions += 1;
     return { ok: true };
   });
-  assert.equal(executions, 1, 'install_skill executes without a confirmation card');
+  assert.equal(result.success, false);
+  assert.equal(executions, 0, 'retired install_skill cannot reach the executor');
 }
 
 async function verifyAbortFence(): Promise<void> {

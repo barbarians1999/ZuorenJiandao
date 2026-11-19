@@ -14,44 +14,26 @@ import { Icon } from '../components/icons';
 import { tData, useT } from '../i18n/locale';
 import { setLibraryDrag } from './drag';
 import { useFixedVirtualGrid } from '../hooks/useFixedVirtualGrid';
+import { readSoundCollections, rememberSoundUse, writeSoundCollections, SOUND_COLLECTIONS_EVENT } from '../audio/soundCollections';
+import { filterSoundResults, matchesSoundQuery, SOUND_FILTERS } from '../audio/soundResults';
+import './sound-browser.css';
 
 // Sound-library tab:
 // search ("Search sounds") + chips [popular, …groups] + list rows:
 // [group-color glyph / play] [name] [waveform] [duration] [+ add]
 
-const POPULAR = '__popular__';
 const WAVE_W = 100;
 const WAVE_H = 32;
 const WAVE_BINS = 48;
 
 interface SoundBrowserProps {
   fps: number;
-  onAdd: (asset: AudioAsset) => void;
+  onAdd: (asset: AudioAsset) => boolean | void;
+  onAuditionStart?: () => void;
 }
 
 function matchesQuery(s: SoundEffect, q: string): boolean {
-  if (!q) return true;
-  const tokens = q
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .toLowerCase()
-    .split(/[^\p{Letter}\p{Number}]+/u)
-    .filter(Boolean);
-  if (!tokens.length) return true;
-  const hay = [
-    s.name,
-    tData(s.name),
-    s.desc,
-    s.group,
-    ...s.keywords,
-    SOUND_GROUPS.find((g) => g.id === s.group)?.name ?? '',
-    SOUND_GROUPS.find((g) => g.id === s.group)?.nameEn ?? '',
-  ]
-    .join(' ')
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .toLowerCase();
-  return tokens.every((t) => hay.includes(t));
+  return matchesSoundQuery(s, q, tData(s.name));
 }
 
 function toAsset(s: SoundEffect, fps: number): AudioAsset {
@@ -64,10 +46,13 @@ function toAsset(s: SoundEffect, fps: number): AudioAsset {
   };
 }
 
-export const SoundBrowser = memo(function SoundBrowser({ fps, onAdd }: SoundBrowserProps) {
+export const SoundBrowser = memo(function SoundBrowser({ fps, onAdd, onAuditionStart }: SoundBrowserProps) {
   const t = useT();
   const [query, setQuery] = useState('');
-  const [chip, setChip] = useState<string>(POPULAR);
+  const [chip, setChip] = useState<string>(SOUND_FILTERS.all);
+  const [collections, setCollections] = useState(readSoundCollections);
+  const [auditionError, setAuditionError] = useState<string | null>(null);
+  const [preferenceError, setPreferenceError] = useState(false);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -92,6 +77,16 @@ export const SoundBrowser = memo(function SoundBrowser({ fps, onAdd }: SoundBrow
 
   useEffect(() => () => stopAudition(), [stopAudition]);
 
+  useEffect(() => {
+    const refresh = () => setCollections(readSoundCollections());
+    window.addEventListener(SOUND_COLLECTIONS_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(SOUND_COLLECTIONS_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+
   const tick = useCallback(() => {
     const a = audioRef.current;
     if (!a || a.paused || !a.duration) return;
@@ -105,26 +100,31 @@ export const SoundBrowser = memo(function SoundBrowser({ fps, onAdd }: SoundBrow
       return;
     }
     stopAudition();
+    setAuditionError(null);
+    onAuditionStart?.();
     const audio = new Audio(soundEffectSrc(sound.id));
     audio.preload = 'auto';
     audioRef.current = audio;
     playingIdRef.current = sound.id;
     setPlayingId(sound.id);
     setProgress(0);
-    audio.onended = () => stopAudition();
-    audio.onerror = () => stopAudition();
+    audio.onended = () => { if (audioRef.current === audio) stopAudition(); };
+    const fail = () => {
+      if (audioRef.current !== audio) return;
+      stopAudition();
+      setAuditionError(t('无法试听「{name}」，请检查本地音效文件。', { name: tData(sound.name) }));
+    };
+    audio.onerror = fail;
     void audio.play().then(() => {
-      rafRef.current = requestAnimationFrame(tick);
-    }).catch(() => stopAudition());
-  }, [stopAudition, tick]);
+      if (audioRef.current === audio) rafRef.current = requestAnimationFrame(tick);
+    }).catch(fail);
+  }, [stopAudition, tick, onAuditionStart, t]);
 
   const list = useMemo(() => {
     const q = query.trim();
-    let base = SOUND_EFFECTS.filter((s) => matchesQuery(s, q));
-    if (chip === POPULAR) base = base.filter((s) => s.popular);
-    else base = base.filter((s) => s.group === chip);
-    return [...base].sort((a, b) => a.order - b.order);
-  }, [chip, query]);
+    const matches = SOUND_EFFECTS.filter((s) => matchesQuery(s, q));
+    return filterSoundResults(matches, chip, collections);
+  }, [chip, query, collections, t]);
 
   const pinnedIndexes = useMemo(() => {
     const pinnedIds = new Set([playingId, focusedId, draggedId].filter((id): id is string => id != null));
@@ -137,15 +137,26 @@ export const SoundBrowser = memo(function SoundBrowser({ fps, onAdd }: SoundBrow
   const virtualList = useFixedVirtualGrid({
     itemCount: list.length,
     cardWidth: 1,
-    rowHeight: 40,
+    rowHeight: 64,
     rowGap: 4,
     overscanRows: 2,
     fixedColumnCount: 1,
     pinnedIndexes,
   });
   const addSound = useCallback((sound: SoundEffect) => {
-    onAdd(toAsset(sound, fps));
-  }, [fps, onAdd]);
+    stopAudition();
+    if (onAdd(toAsset(sound, fps)) !== false) {
+      rememberSoundUse(sound.id);
+      setCollections(readSoundCollections());
+    }
+  }, [fps, onAdd, stopAudition]);
+  const toggleFavorite = useCallback((sound: SoundEffect) => {
+    const latest = readSoundCollections();
+    const next = { ...latest, favorites: latest.favorites.includes(sound.id)
+      ? latest.favorites.filter((id) => id !== sound.id) : [...latest.favorites, sound.id] };
+    setCollections(next);
+    setPreferenceError(!writeSoundCollections(next));
+  }, []);
 
   return (
     <div className="cc-sound-browser">
@@ -156,7 +167,7 @@ export const SoundBrowser = memo(function SoundBrowser({ fps, onAdd }: SoundBrow
           type="search"
           placeholder={t('搜索音效')}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => { setQuery(e.target.value); setChip(SOUND_FILTERS.all); }}
           autoComplete="off"
           spellCheck={false}
         />
@@ -168,15 +179,19 @@ export const SoundBrowser = memo(function SoundBrowser({ fps, onAdd }: SoundBrow
       </label>
 
       <div className="cc-sound-chips" role="tablist" aria-label={t('音效分组')}>
-        <button
+        {([
+          [SOUND_FILTERS.all, '全部'], [SOUND_FILTERS.popular, '热门'],
+          [SOUND_FILTERS.favorites, '收藏'], [SOUND_FILTERS.recent, '最近使用'],
+        ] as const).map(([id, label]) => <button
+          key={id}
           type="button"
           role="tab"
-          aria-selected={chip === POPULAR}
-          className={`cc-sound-chip${chip === POPULAR ? ' selected' : ''}`}
-          onClick={() => setChip(POPULAR)}
+          aria-selected={chip === id}
+          className={`cc-sound-chip${chip === id ? ' selected' : ''}`}
+          onClick={() => setChip(id)}
         >
-          {t('热门')}
-        </button>
+          {t(label)}
+        </button>)}
         {SOUND_GROUPS.map((g) => (
           <button
             key={g.id}
@@ -191,8 +206,13 @@ export const SoundBrowser = memo(function SoundBrowser({ fps, onAdd }: SoundBrow
         ))}
       </div>
 
+      {auditionError && <div className="cc-sound-feedback" role="alert">{auditionError}</div>}
+      {preferenceError && <div className="cc-sound-feedback" role="status">{t('收藏仅在本次打开时保留，无法保存到本机。')}</div>}
+
       {list.length === 0 ? (
-        <div className="cc-sound-empty">{t('此分类下暂无音效')}{query ? t('（与「{query}」不匹配）', { query }) : ''}</div>
+        <div className="cc-sound-empty">{query ? t('没有找到「{query}」相关音效', { query })
+          : chip === SOUND_FILTERS.favorites ? t('还没有收藏音效，点击音效旁的星标即可收藏。')
+            : chip === SOUND_FILTERS.recent ? t('添加音效后，会在这里显示最近使用。') : t('此分类下暂无音效')}</div>
       ) : (
         <div
           ref={virtualList.containerRef}
@@ -221,6 +241,9 @@ export const SoundBrowser = memo(function SoundBrowser({ fps, onAdd }: SoundBrow
                   progress={playingId === sound.id ? progress : 0}
                   onAudition={audition}
                   onAdd={addSound}
+                  favorite={collections.favorites.includes(sound.id)}
+                  onToggleFavorite={toggleFavorite}
+                  onStopAudition={stopAudition}
                   onFocusChange={setFocusedId}
                   onDragChange={setDraggedId}
                 />
@@ -230,7 +253,7 @@ export const SoundBrowser = memo(function SoundBrowser({ fps, onAdd }: SoundBrow
         </div>
       )}
 
-      <div className="cc-sound-hint">{t('单击试听 · 双击/点 + 或拖到时间线音轨 · 共 {n} 个音效', { n: list.length })}</div>
+      <div className="cc-sound-hint">{t('点「试听」预听；点「添加」放到播放头；拖到音轨上可指定位置 · 共 {n} 个音效', { n: list.length })}</div>
     </div>
   );
 });
@@ -241,6 +264,9 @@ interface SoundRowProps {
   progress: number;
   onAudition: (sound: SoundEffect) => void;
   onAdd: (sound: SoundEffect) => void;
+  favorite: boolean;
+  onToggleFavorite: (sound: SoundEffect) => void;
+  onStopAudition: () => void;
   onFocusChange: (id: string | null) => void;
   onDragChange: (id: string | null) => void;
 }
@@ -251,6 +277,9 @@ const SoundRow = memo(function SoundRow({
   progress,
   onAudition,
   onAdd,
+  favorite,
+  onToggleFavorite,
+  onStopAudition,
   onFocusChange,
   onDragChange,
 }: SoundRowProps) {
@@ -270,6 +299,7 @@ const SoundRow = memo(function SoundRow({
       title={t('{desc} · 可拖到时间线音轨', { desc: sound.desc })}
       draggable
       onDragStart={(event) => {
+        onStopAudition();
         onDragChange(sound.id);
         setLibraryDrag(event, {
           kind: 'sound',
@@ -291,6 +321,7 @@ const SoundRow = memo(function SoundRow({
         type="button"
         className="cc-sound-glyph"
         style={{ backgroundColor: tone.bg, color: tone.ink }}
+        onDoubleClick={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
           onAudition(sound);
@@ -314,15 +345,27 @@ const SoundRow = memo(function SoundRow({
       <span className="cc-sound-dur">{formatSoundDuration(sound.seconds)}</span>
       <button
         type="button"
+        className={`cc-sound-favorite${favorite ? ' selected' : ''}`}
+        title={t(favorite ? '取消收藏：{name}' : '收藏：{name}', { name: displayName })}
+        aria-label={t(favorite ? '取消收藏：{name}' : '收藏：{name}', { name: displayName })}
+        aria-pressed={favorite}
+        onDoubleClick={(event) => event.stopPropagation()}
+        onClick={(event) => { event.stopPropagation(); onToggleFavorite(sound); }}
+      >
+        <Icon name="star" size={18} />
+      </button>
+      <button
+        type="button"
         className="cc-sound-add"
-        title={t('添加到时间线：{name}', { name: displayName })}
+        title={t('添加到时间线播放头：{name}', { name: displayName })}
         aria-label={t('添加 {name}', { name: displayName })}
+        onDoubleClick={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
           onAdd(sound);
         }}
       >
-        <Icon name="plus" size={14} />
+        <Icon name="plus" size={14} /><span>{t('添加')}</span>
       </button>
     </div>
   );

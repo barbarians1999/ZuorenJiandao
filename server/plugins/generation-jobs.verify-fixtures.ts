@@ -11,6 +11,8 @@ export interface GenerationJobsFixture {
   expiryAssetId: string;
   expiryExportName: string;
   malformedAssetId: string;
+  previousDataDir: string | undefined;
+  previousDevProfileId: string | undefined;
   previousStorePath: string | undefined;
   providerMediaName: string;
   storePath: string;
@@ -45,6 +47,10 @@ export async function setupGenerationJobsFixture(): Promise<GenerationJobsFixtur
   const storeRoot = await mkdtemp(join(tmpdir(), 'openchatcut-generation-jobs-'));
   const storePath = join(storeRoot, 'operations.json');
   const previousStorePath = process.env.OPENCHATCUT_GENERATION_JOB_STORE;
+  const previousDataDir = process.env.OPENCHATCUT_DATA_DIR;
+  const previousDevProfileId = process.env.OPENCHATCUT_DEV_PROFILE_ID;
+  delete process.env.OPENCHATCUT_DEV_PROFILE_ID;
+  process.env.OPENCHATCUT_DATA_DIR = storeRoot;
   process.env.OPENCHATCUT_GENERATION_JOB_STORE = storePath;
   const restoredAt = Date.now() - 1_000;
   const acceptedAt = restoredAt + 100;
@@ -295,6 +301,8 @@ export async function setupGenerationJobsFixture(): Promise<GenerationJobsFixtur
     expiryAssetId,
     expiryExportName,
     malformedAssetId,
+    previousDataDir,
+    previousDevProfileId,
     previousStorePath,
     providerMediaName,
     storePath,
@@ -307,5 +315,9 @@ export async function setupGenerationJobsFixture(): Promise<GenerationJobsFixtur
 export async function cleanupGenerationJobsFixture(fixture: GenerationJobsFixture): Promise<void> {
   if (fixture.previousStorePath === undefined) delete process.env.OPENCHATCUT_GENERATION_JOB_STORE;
   else process.env.OPENCHATCUT_GENERATION_JOB_STORE = fixture.previousStorePath;
+  if (fixture.previousDataDir === undefined) delete process.env.OPENCHATCUT_DATA_DIR;
+  else process.env.OPENCHATCUT_DATA_DIR = fixture.previousDataDir;
+  if (fixture.previousDevProfileId === undefined) delete process.env.OPENCHATCUT_DEV_PROFILE_ID;
+  else process.env.OPENCHATCUT_DEV_PROFILE_ID = fixture.previousDevProfileId;
   await rm(fixture.storeRoot, { recursive: true, force: true });
 }

@@ -5,18 +5,20 @@ interface BuilderConfig {
   appId?: string;
   productName?: string;
   artifactName?: string;
+  directories?: { output?: string };
   publish?: unknown;
   win?: { target?: string[]; executableName?: string };
   mac?: { target?: string[] };
   files?: string[];
 }
 
-async function configFor(target: string, kind?: string): Promise<BuilderConfig> {
+async function configFor(target: string, kind?: string, output = 'release'): Promise<BuilderConfig> {
   // Query isolation is intentional: the config reads CC_EB_TARGET once at module evaluation.
   process.env.CC_EB_TARGET = target;
+  process.env.CC_EB_OUTPUT = output;
   if (kind) process.env.CC_EB_WIN_KIND = kind;
   else delete process.env.CC_EB_WIN_KIND;
-  const moduleUrl = new URL(`../config/electron-builder.config.mjs?target=${target}&kind=${kind ?? ''}`, import.meta.url);
+  const moduleUrl = new URL(`../config/electron-builder.config.mjs?target=${target}&kind=${kind ?? ''}&output=${output}`, import.meta.url);
   const loaded = await import(moduleUrl.href) as { default: BuilderConfig };
   return loaded.default;
 }
@@ -97,9 +99,11 @@ assert.equal(windows.productName, '左人剪刀');
 assert.deepEqual(windows.win?.target, ['nsis']);
 assert.equal(windows.win?.executableName, 'ZuorenJiandao');
 assert.equal(windows.artifactName, 'ZuorenJiandao-Setup-${version}-${arch}.${ext}');
+const stagedWindows = await configFor('win32-x64', undefined, 'release/.staging-test');
+assert.equal(stagedWindows.directories?.output, 'release/.staging-test', 'package staging must not overwrite the current release');
 const windowsPortable = await configFor('win32-x64', 'portable');
-assert.deepEqual(windowsPortable.win?.target, ['portable']);
-assert.equal(windowsPortable.artifactName, 'ZuorenJiandao-Portable-${version}-${arch}.${ext}');
+assert.deepEqual(windowsPortable.win?.target, ['nsis'], 'obsolete portable environment settings must not override installer-only packaging');
+assert.equal(windowsPortable.artifactName, 'ZuorenJiandao-Setup-${version}-${arch}.${ext}');
 assert.equal(arm64.productName, 'OpenChatCut', 'existing non-Windows packaging paths stay compatible');
 assert.equal(
   windows.files?.includes('!node_modules/sqlite-vec-windows-x64/**'),
@@ -132,7 +136,7 @@ const windowsDistScript = packageJson.scripts['desktop:dist:win'];
 assert.match(
   windowsDistScript,
   /node scripts\/package-windows\.mjs/,
-  'Windows packaging must use the deterministic NSIS + portable wrapper',
+  'Windows packaging must use the deterministic NSIS wrapper',
 );
 assert.doesNotMatch(
   windowsDistScript,
@@ -155,7 +159,7 @@ assert.match(
 );
 
 const workflow = await readFile(new URL('../.github/workflows/desktop.yml', import.meta.url), 'utf8');
-for (const metadata of ['latest-arm64-mac.yml', 'latest-x64-mac.yml', 'latest-x64.yml', 'latest-x64-linux.yml']) {
+for (const metadata of ['latest-arm64-mac.yml', 'latest-x64-mac.yml', 'latest.yml', 'latest-x64-linux.yml']) {
   assert.ok(workflow.includes(`release/${metadata}`), `desktop jobs must upload ${metadata}`);
 }
 assert.doesNotMatch(workflow, /release\/\*\.yml/, 'debug YAML must not leak into release artifacts');
@@ -165,7 +169,6 @@ assert.match(workflow, /-name '\*\.zip'.* = 2/, 'release aggregation must retain
 for (const blockmap of [
   'arm64.zip.blockmap',
   'x64.zip.blockmap',
-  'x64.exe.blockmap',
 ]) {
   assert.ok(
     workflow.includes(`release-files/OpenChatCut-\${EXPECTED_VERSION}-${blockmap}`),
@@ -174,7 +177,8 @@ for (const blockmap of [
 }
 assert.match(workflow, /test -f release-files\/latest-arm64-mac\.yml/);
 assert.match(workflow, /test -f release-files\/latest-x64-mac\.yml/);
-assert.match(workflow, /test -f release-files\/latest-x64\.yml/);
+assert.match(workflow, /test -f release-files\/latest\.yml/);
+assert.ok(workflow.includes('release-files/ZuorenJiandao-Setup-${EXPECTED_VERSION}-x64.exe.blockmap'));
 assert.match(workflow, /test -f release-files\/latest-x64-linux\.yml/);
 assert.match(workflow, /release-files\/\*/, 'GitHub Release must publish installers and update metadata together');
 
@@ -222,7 +226,7 @@ assert.match(
 );
 assert.match(
   workflow,
-  /Get-ChildItem -LiteralPath release -Filter '\*\.exe' -File/,
+  /Get-ChildItem -LiteralPath release -Filter 'ZuorenJiandao-Setup-\*\.exe' -File/,
   'Windows smoke must select the generated NSIS installer',
 );
 assert.match(

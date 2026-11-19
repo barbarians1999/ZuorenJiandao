@@ -5,7 +5,7 @@ import {
 import type { MediaAsset, Timeline } from '../editor/types';
 import type { SharedShotPlan } from './sharedShotPlan';
 
-const PROJECTION_VERSION = 'left-cut-timeline-projection/v1';
+const PROJECTION_VERSION = 'left-cut-timeline-projection/v3';
 
 function canonicalValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalValue);
@@ -42,6 +42,7 @@ function normalizedTimelineProjection(
       width: timeline.width,
       height: timeline.height,
       fit: timeline.fit ?? null,
+      compositing_order: timeline.compositingOrder ?? null,
       primary_track_id: primaryTrackId,
       tracks: trackIds.map((id) => ({
         id,
@@ -58,6 +59,7 @@ function normalizedTimelineProjection(
           track: item.track,
           name: item.name,
           kind: item.kind,
+          pictureDisabled: item.pictureDisabled ?? false,
           startFrame: item.startFrame,
           durationInFrames: item.durationInFrames,
           sourceAssetId: item.sourceAssetId ?? null,
@@ -74,6 +76,8 @@ function normalizedTimelineProjection(
           keyframes: item.keyframes ?? null,
           transform: item.transform ?? null,
           filters: item.filters ?? null,
+          mask: item.mask ?? null,
+          mosaic: item.mosaic ?? null,
           effects: item.effects ?? null,
           zoom: item.zoom ?? null,
           fadeInFrames: item.fadeInFrames ?? null,
@@ -83,6 +87,7 @@ function normalizedTimelineProjection(
           volume: item.volume ?? null,
         })),
       captions: timeline.captions ?? null,
+      transitions: (timeline.transitions ?? []).toSorted((left, right) => left.id.localeCompare(right.id)),
       markers: (timeline.markers ?? []).toSorted((left, right) => left.fromFrame - right.fromFrame || left.id.localeCompare(right.id)),
     },
     assets: assets.filter((asset) => referencedAssetIds.has(asset.id)).toSorted((left, right) => left.id.localeCompare(right.id)).map((asset) => ({

@@ -10,6 +10,7 @@ interface TrackContextMenuProps {
   y: number;
   hidden: boolean;
   muted: boolean;
+  soloed: boolean;
   locked: boolean;
   canTighten: boolean;
   hasContents: boolean;
@@ -21,11 +22,11 @@ interface TrackContextMenuProps {
   onClear: () => void;
   onToggleHidden: () => void;
   onToggleMuted: () => void;
+  onToggleSolo: () => void;
   onToggleLocked: () => void;
   onRename: () => void;
   onOpenDuck: (rect: DOMRect) => void;
   onOpenCaptionStyle: (rect: DOMRect) => void;
-  onOpenTranslate: (rect: DOMRect) => void;
   onDelete: () => void;
   onClose: () => void;
 }
@@ -65,9 +66,9 @@ function insertMenuItem(kind: TrackKind, t: (text: string) => string): { label: 
 }
 
 export function TrackContextMenu({
-  kind, x, y, hidden, muted, locked, canTighten, hasContents, hasSelectable, deleteBlockedReason,
-  onInsert, onTighten, onSelectAll, onClear, onToggleHidden, onToggleMuted, onToggleLocked,
-  onRename, onOpenDuck, onOpenCaptionStyle, onOpenTranslate, onDelete, onClose,
+  kind, x, y, hidden, muted, soloed, locked, canTighten, hasContents, hasSelectable, deleteBlockedReason,
+  onInsert, onTighten, onSelectAll, onClear, onToggleHidden, onToggleMuted, onToggleSolo, onToggleLocked,
+  onRename, onOpenDuck, onOpenCaptionStyle, onDelete, onClose,
 }: TrackContextMenuProps) {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
@@ -88,7 +89,7 @@ export function TrackContextMenu({
       left: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
       top: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
     });
-  }, [x, y, hidden, muted, locked, kind]);
+  }, [x, y, hidden, muted, soloed, locked, kind]);
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
       if (!ref.current?.contains(event.target as Node)) onClose();
@@ -119,16 +120,16 @@ export function TrackContextMenu({
       <Separator />
       <MenuItem label={t(hidden ? '显示轨道' : '隐藏轨道')} icon={hidden ? 'eyeOff' : 'eye'} checked={hidden} onClick={run(onToggleHidden)} />
       {kind !== 'caption' && <MenuItem label={t(muted ? '取消静音' : '静音轨道')} icon={muted ? 'volumeOff' : 'volume'} checked={muted} onClick={run(onToggleMuted)} />}
+      {kind !== 'caption' && <MenuItem label={t(soloed ? '取消独奏' : '独奏轨道')} icon="music" checked={soloed} onClick={run(onToggleSolo)} />}
       <MenuItem label={t(locked ? '解锁轨道' : '锁定轨道')} icon={locked ? 'lock' : 'unlock'} checked={locked} onClick={run(onToggleLocked)} />
       <MenuItem label={t('重命名轨道')} icon="pencil" onClick={run(onRename)} />
       <Separator />
       {kind === 'caption' ? (
         <>
           <MenuItem label={t('字幕样式')} icon="palette" chevron onClick={open(onOpenCaptionStyle)} />
-          <MenuItem label={t('翻译全部')} icon="text" chevron onClick={open(onOpenTranslate)} />
         </>
       ) : (
-        <MenuItem label={t('自动闪避')} icon="sliders" chevron onClick={open(onOpenDuck)} />
+        <MenuItem label={t('人声与配乐')} icon="sliders" chevron onClick={open(onOpenDuck)} />
       )}
       <Separator />
       <MenuItem label={t('删除轨道')} icon="trash" disabled={deleteBlockedReason !== null} danger onClick={run(onDelete)} />

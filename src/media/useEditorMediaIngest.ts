@@ -1,23 +1,21 @@
 import { useCallback, useEffect } from 'react';
-import type { AgentReference } from '../agent/context';
-import { enqueueVisualAnalysis, refreshVisualAnalysis } from '../agent/progress/visual-analysis-jobs';
 import { appendManualLane, identifyManualCues, isManualCaptionEntry, newManualCaptions } from '../captions/manualCaptions';
 import { placeMediaAssets, reflowPlacedMediaItems } from '../editor/mediaAssetPlacement';
 import { sourceRevisionOf } from '../editor/mediaSourceRevision';
+import { sourceRangeFromMap, type MediaSourceRanges } from '../editor/mediaSourceRange';
 import { isTimelineMediaAssetKind } from '../editor/mediaTypes';
 import type { EditorCommands } from '../editor/store';
-import { captionsOnTrack, defaultTrackId, trackKind, type MediaAsset, type ProjectDoc, type TimelineState, type TrackId } from '../editor/types';
-import type { Tpl } from '../types';
+import { captionsOnTrack, defaultTrackId, isEffectTrack, isTextTrack, trackKind, type MediaAsset, type ProjectDoc, type TimelineState, type TrackId } from '../editor/types';
 import type { t as translate } from '../i18n/locale';
 import { duplicateAssetName } from './assetMenuSelection';
 import { classifyExternalFile, parseDroppedCaptions } from './externalFileDrop';
 import { createImportContentIdentityHooks } from './importContentIdentity';
 import { findMediaNameConflict, MediaImportCancelledError } from './mediaImportConflict';
 import { mediaAssetRelinkPatch, uploadedMediaRelinkPatch } from './mediaAssetRelink';
+import { mediaPlacementVolume, type MediaPlacementPurpose } from './placementPurpose';
 import { importUploadedMedia } from './mobileImport';
-import { readProjectAssetDocuments } from './projectFile';
 import type { MobileUploadRecord } from './mobileUploadApi';
-import { createImportTranscriptionGate, createMediaAssetsChatSeed, importMedia, readyMediaAssetsForPaste, type ImportMediaHooks, type ImportTranscriptionStart } from './upload';
+import { createImportTranscriptionGate, importMedia, readyMediaAssetsForPaste, type ImportMediaHooks, type ImportTranscriptionStart } from './upload';
 import { enqueueTranscription, getTranscribeJob, shouldTranscribe, untranscribedTimelineItemIdsForRevision, type TranscribeJob } from '../transcript/transcribe-jobs';
 import { shouldAutoTranscribeIngest } from '../transcript/provider';
 import { showAppToast } from '../ui/appToast';
@@ -29,7 +27,6 @@ type StartAssetTranscription = (
   markRunning?: boolean,
   replaceExisting?: boolean,
 ) => void;
-type ChatSeed = { text: string; nonce: number; references?: AgentReference[] } | null;
 type ImportLifecycle = {
   onPlaceholder?: (asset: MediaAsset) => void;
   onAssetUpdated?: (asset: MediaAsset) => void;
@@ -49,8 +46,6 @@ interface EditorMediaIngestOptions {
   stateRef: { current: TimelineState };
   docRef: { current: ProjectDoc };
   getPlayhead: () => number;
-  setChatCollapsed: (collapsed: boolean) => void;
-  setChatSeed: (seed: ChatSeed) => void;
   t: Translate;
 }
 
@@ -144,7 +139,6 @@ function poolImportHooks(run: PoolImportRun, onProgress?: (ratio: number) => voi
       run.commands.relinkMediaAsset(ready.id, mediaAssetRelinkPatch(ready));
       const start = run.transcriptionGate.ready(ready);
       if (start && shouldAutoTranscribeIngest()) run.startAssetTranscription(start.asset, start.asrPath);
-      if (ready.kind !== 'audio') refreshVisualAnalysis(ready);
     },
   };
 }
@@ -262,7 +256,6 @@ function timelineImportHooks(batch: DropBatch, context: DropContext, placeholder
     },
     onReady: (asset) => {
       context.commands.relinkMediaAsset(asset.id, mediaAssetRelinkPatch(asset));
-      if (asset.kind !== 'audio') refreshVisualAnalysis(asset);
       updatePlacedAsset(batch, asset, context);
     },
   };
@@ -319,7 +312,7 @@ async function placeDroppedMedia(file: File, mediaKind: MediaAsset['kind'], trac
     const asset = await awaitTimelinePlaceholder(file, batch, context);
     const kind = mediaKind === 'audio' ? 'audio' : 'video';
     const snapshot = context.stateRef.current;
-    const destination = trackKind(snapshot, trackId) === kind
+    const destination = trackKind(snapshot, trackId) === kind && (kind !== 'video' || (!isTextTrack(snapshot, trackId) && !isEffectTrack(snapshot, trackId)))
       ? trackId
       : defaultTrackId(snapshot, kind);
     const itemStartFrame = nextStartForKind(batch, kind);
@@ -397,7 +390,6 @@ function usePoolImports(options: EditorMediaIngestOptions, start: StartAssetTran
     const autoTranscribe = shouldTranscribe(asset.kind) && shouldAutoTranscribeIngest();
     commands.addAsset(autoTranscribe ? { ...asset, transcribeStatus: 'running' } : asset);
     if (autoTranscribe) start(asset);
-    if (asset.kind !== 'audio') enqueueVisualAnalysis(asset);
   }, [commands, start]);
   const importMobileUpload = useCallback(async (record: MobileUploadRecord) => {
     ingestToPool(await importUploadedMedia(record, stateRef.current.fps));
@@ -421,16 +413,22 @@ function useTimelineImports(
   const dropExternalFilesToTimeline = useCallback((files: File[], trackId: TrackId, startFrame: number) => (
     dropFilesToTimeline(files, trackId, startFrame, { commands, stateRef, startAssetTranscription: start, t })
   ), [commands, start, stateRef, t]);
-  const addMediaAssetsToTimeline = useCallback((assets: MediaAsset[]) => {
+  const addMediaAssetsToTimeline = useCallback((assets: MediaAsset[], placement?: { purpose?: MediaPlacementPurpose; sourceRanges?: MediaSourceRanges }) => {
     const timelineAssets = assets.filter((asset) => isTimelineMediaAssetKind(asset.kind));
     if (!timelineAssets.length) return;
-    placeMediaAssets({
+    commands.beginHistoryGesture();
+    try { placeMediaAssets({
       assetIds: timelineAssets.map((asset) => asset.id),
       assets: timelineAssets,
       startFrame: getPlayhead(),
-      add: (asset, frame) => commands.addMediaItem(asset, { startFrame: frame }),
+      sourceRangeFor: (asset) => sourceRangeFromMap(placement?.sourceRanges, asset.id),
+      add: (asset, frame, sourceRange) => commands.addMediaItem(asset, {
+        ...sourceRange,
+        startFrame: frame,
+        volume: mediaPlacementVolume(asset.kind, placement?.purpose),
+      }),
       select: commands.selectItems,
-    });
+    }); } finally { commands.endHistoryGesture(); }
   }, [commands, getPlayhead]);
   const importToCanvas = useCallback(async (file: File, onProgress?: (ratio: number) => void) => {
     const asset = await importToPool(file, onProgress);
@@ -456,30 +454,6 @@ function useMediaPaste(options: EditorMediaIngestOptions) {
   }, [commands, stateRef, t]);
 }
 
-function useMediaAISeeds(options: EditorMediaIngestOptions) {
-  const { setChatCollapsed, setChatSeed, t } = options;
-  const useMediaAI = useCallback(async (assets: MediaAsset[]) => {
-    const seed = createMediaAssetsChatSeed(assets);
-    if (!seed) return;
-    setChatCollapsed(false);
-    const documents = await readProjectAssetDocuments(assets);
-    if (documents.errors[0]) showAppToast(documents.errors[0], { error: true });
-    setChatSeed({
-      ...seed,
-      text: documents.blocks.length ? `${seed.text}\n${documents.blocks.join('\n')}` : seed.text,
-    });
-  }, [setChatCollapsed, setChatSeed]);
-  const useTemplateAI = useCallback((tpl: Tpl) => {
-    setChatCollapsed(false);
-    setChatSeed({
-      text: t('参考模板「{name}」，用 create_motion_graphic 生成一个类似风格的动画： @{name} ', { name: tpl.name }),
-      nonce: Date.now(),
-      references: [{ id: tpl.id, name: tpl.name, kind: 'template' }],
-    });
-  }, [setChatCollapsed, setChatSeed, t]);
-  return { useMediaAI, useTemplateAI };
-}
-
 export function useEditorMediaIngest(options: EditorMediaIngestOptions) {
   const startAssetTranscription = useAssetTranscription(options);
   const retryAssetTranscription = useCallback<StartAssetTranscription>(
@@ -489,12 +463,10 @@ export function useEditorMediaIngest(options: EditorMediaIngestOptions) {
   const pool = usePoolImports(options, startAssetTranscription);
   const timeline = useTimelineImports(options, startAssetTranscription, pool.importToPool);
   const pasteMediaAssets = useMediaPaste(options);
-  const ai = useMediaAISeeds(options);
   return {
     startAssetTranscription: retryAssetTranscription,
     ...pool,
     ...timeline,
     pasteMediaAssets,
-    ...ai,
   };
 }

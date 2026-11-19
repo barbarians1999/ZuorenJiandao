@@ -60,6 +60,12 @@ assert.deepEqual(radiusDef.toTransformPatch?.(24), { borderRadius: 24 }, '圆角
 assert.equal(coerceKeyframeValue('borderRadius', 1200), 1000, '圆角关键帧按范围钳制');
 assert.equal(coerceKeyframeValue('volume', 9), 2, 'coerce 上钳 2');
 assert.equal(coerceKeyframeValue('volume', -1), 0, 'coerce 下钳 0');
+assert.deepEqual(getKeyframePropertyDefinition('maskFeather').valueRange, [0, 0.5], '遮罩羽化关键帧范围按短边归一化');
+const maskedVideo = item({ kind: 'video', mask: { type: 'rectangle', x: 0, y: 0, width: 1, height: 1 } });
+for (const prop of ['maskX', 'maskY', 'maskWidth', 'maskHeight', 'maskFeather'] as const) {
+  assert.ok(supportsKeyframeProperty(maskedVideo, prop), `${prop} 支持视频遮罩`);
+}
+assert.ok(!supportsKeyframeProperty(item({ kind: 'video' }), 'maskX'), '没有遮罩时拒绝遮罩关键帧');
 
 // ── reducer:setKeyframe accepts audio+volume; rejects image+volume(state as is) ──
 const base: TimelineState = {

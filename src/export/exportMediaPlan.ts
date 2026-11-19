@@ -3,6 +3,7 @@ import {
   ExportFailureError,
   type ExportMediaIssue,
 } from './exportFailure.js';
+import { fontAssetMetadata } from '../../shared/desktop-fonts.js';
 
 export type ExportMediaOwner = ExportMediaIssue['owner'];
 
@@ -142,7 +143,11 @@ export function collectExportMediaPlan(snapshot: unknown): ExportMediaPlan {
       if (typeof child === 'string' && /assetId$/i.test(key)) {
         const asset = assets.get(child);
         const assetSource = asset ? stringField(asset, 'src') : undefined;
-        if (assetSource) addReference({ ...context, source: assetSource, owner, assetId: child, field });
+        if (key === 'fontAssetId' && child && (!asset || !fontAssetMetadata(asset))) addIssue({ ...context, source: null, owner,
+          assetId: child, field, code: 'missing_reference', message: `工程缺少有效字体资源 ${child}，请重新导入字体` });
+        else if (assetSource) addReference({ ...context, source: assetSource, owner, assetId: child, field });
+        else if (key === 'fontAssetId' && child) addIssue({ ...context, source: null, owner,
+          assetId: child, field, code: 'missing_reference', message: `工程缺少字体资源 ${child}，请重新导入字体` });
       } else if (typeof child === 'string' && mediaField(key) && mediaLookingValue(child)) {
         addReference({ ...context, source: child, owner, field });
       } else if (child && typeof child === 'object') {

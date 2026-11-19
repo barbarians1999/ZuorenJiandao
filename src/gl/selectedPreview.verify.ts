@@ -10,6 +10,13 @@ import {
 import { buildEffectShaderFrame, buildTransitionShaderFrame, GL_COLOR_PIPELINE, transitionProgress } from './shaderFrame';
 import { disposeRuntimeSlot, ensureRuntimeSlot } from './runtimeSlot';
 import type { FxDef } from './fx/uniforms';
+import { videoReadyAtFrame } from './sourceReadiness';
+
+const readyVideo = { readyState: 2, seeking: false, currentTime: 10, duration: 720 };
+assert(videoReadyAtFrame(readyVideo, 300, 30));
+assert(!videoReadyAtFrame(readyVideo, 302, 30), 'old decoded position must not freeze the new transition texture');
+assert(!videoReadyAtFrame({ ...readyVideo, seeking: true }, 300, 30));
+assert(videoReadyAtFrame({ ...readyVideo, currentTime: 720 - 1 / 30 }, 21600, 30), 'last available source frame is clamped');
 
 const selectedPlayer = selectTransitionPreviewAdapter({
   mode: 'player', selected: true, type: 'page-curl', texturable: true, hasShader: true,
@@ -29,7 +36,7 @@ const unselectedPlayer = selectTransitionPreviewAdapter({
 });
 assert.deepEqual(unselectedPlayer, {
   adapter: 'css-transition', fidelity: 'approximate', fallbackAdapter: 'css-transition',
-}, 'non-selected Player transitions retain the existing CSS adapter');
+}, 'unselected Player is explicitly lightweight; selected Player uses the export adapter');
 const unsupportedMediaPlayer = selectTransitionPreviewAdapter({
   mode: 'player', selected: true, type: 'page-curl', texturable: false, hasShader: true,
 });

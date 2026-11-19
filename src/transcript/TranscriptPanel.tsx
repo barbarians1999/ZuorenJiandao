@@ -12,6 +12,9 @@ import { theme } from '../theme';
 import { Icon } from '../components/icons';
 import { useT } from '../i18n/locale';
 import { clipLabel, isLikelyNonSpeech, mediaOnTrack, pickDefaultTrack, trackTitle, type TranscriptTrackOption } from './trackOptions';
+import { localModelReadinessMessage } from './localModelReadiness';
+import { sourceRevisionForTimelineItem } from '../editor/mediaSourceRevision';
+import { TranscriptTrackSelector } from './TranscriptTrackSelector';
 
 export type { TranscriptTrackOption } from './trackOptions';
 
@@ -40,7 +43,9 @@ export function TranscriptPanel({
   onImportSrt, onOpenCaptionStyles,
 }: TranscriptPanelProps) {
   const t = useT();
-  const { status, error, progressNote, runMany, reset } = useTranscript();
+  const { status, error, progressNote, modelReadiness, checkModel, runMany, reset, cancel } = useTranscript();
+  const liveItems = useRef(items);
+  liveItems.current = items;
   const localProvider = preferredTranscriptionProvider() === 'local';
   const defaultId = useMemo(() => pickDefaultTrack(trackOptions, items), [trackOptions, items]);
   const [track, setTrack] = useState<TrackId | null>(defaultId);
@@ -72,6 +77,11 @@ export function TranscriptPanel({
 
   const activeTrack = trackOptions.find((t) => t.id === track) ?? null;
   const busy = status === 'uploading' || status === 'processing';
+  useEffect(() => {
+    const controller = new AbortController();
+    void checkModel(controller.signal).catch(() => {});
+    return () => controller.abort();
+  }, [checkModel]);
 
   const allClips = useMemo(() => (track ? mediaOnTrack(items, track) : []), [items, track]);
   const speechClips = useMemo(() => allClips.filter((c) => !isLikelyNonSpeech(c)), [allClips]);
@@ -120,6 +130,9 @@ export function TranscriptPanel({
     reset();
     try {
       await runMany(jobs, (itemId, r) => {
+        const source = clips.find((clip) => clip.id === itemId);
+        const current = liveItems.current.find((clip) => clip.id === itemId);
+        if (!source || !current || current.src !== source.src || sourceRevisionForTimelineItem(current, []) !== sourceRevisionForTimelineItem(source, [])) return;
         onSetItemTranscript(itemId, r.words);
         setFocusItemId(itemId);
       });
@@ -208,31 +221,18 @@ export function TranscriptPanel({
         )}
       </div>
 
-      {/* Track chips — alias · name, never bare UUID */}
-      <div className="cc-tx-tracks" role="tablist" aria-label={t('转写轨道')}>
-        {selectable.length === 0 ? (
-          <span className="cc-tx-muted">{t('时间线上还没有可转写的音视频轨')}</span>
-        ) : (
-          selectable.map((t) => {
-            const n = mediaOnTrack(items, t.id).length;
-            const speechN = mediaOnTrack(items, t.id).filter((c) => !isLikelyNonSpeech(c)).length;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                role="tab"
-                aria-selected={track === t.id}
-                className={`cc-tx-track-chip${track === t.id ? ' selected' : ''}`}
-                onClick={() => { setTrack(t.id); setFocusItemId(null); setPauseResult(null); }}
-                title={t.id}
-              >
-                <span className="cc-tx-track-alias">{t.alias}</span>
-                {t.name ? <span className="cc-tx-track-name">{t.name}</span> : null}
-                <span className="cc-tx-track-count">{speechN || n}</span>
-              </button>
-            );
-          })
-        )}
+      <TranscriptTrackSelector
+        selectable={selectable} items={items} track={track}
+        onSelectTrack={(id) => { if (busy) cancel(); setTrack(id); setFocusItemId(null); setPauseResult(null); }}
+      />
+
+      <div className="cc-cap-field" style={{ padding: '8px 12px', fontSize: 14 }}>
+        <div role="status">{modelReadiness ? t(localModelReadinessMessage(modelReadiness)) : t('正在检查本机识别模型…')}</div>
+        <div className="cc-cap-row-actions">
+          {busy ? <button type="button" className="cc-cap-btn" onClick={cancel}>{t('取消识别')}</button>
+            : <button type="button" className="cc-cap-btn ghost" onClick={() => { void checkModel().catch(() => {}); }}>{t('重新检查模型')}</button>}
+        </div>
+        {!busy && progressNote && <div className="cc-cap-hint" role="status">{progressNote}</div>}
       </div>
 
       {editMode && editable && focusItem && (

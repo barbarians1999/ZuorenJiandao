@@ -1,5 +1,5 @@
 // Built-in sound-effect library.
-// Data: sound-library/sounds.json + assets/sound-effects/<id>.mp3.
+// Catalogue below + assets/sound-effects/<id>.mp3. No network download required.
 // UI: search + chips(popular/group) + waveform cards with peaks.
 
 export interface SoundEffect {

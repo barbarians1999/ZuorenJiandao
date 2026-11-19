@@ -1,26 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AbsoluteFill, cancelRender, continueRender, delayRender } from 'remotion';
-import { loadTimelineFonts } from '../fonts/projectFonts';
-import { prepareTemplate } from '../template-host';
+import { prepareTimelineReadiness } from './timelineReadiness';
 import type { TimelineState } from './types';
 
 interface TimelineReadinessGateProps {
   state: TimelineState;
   dependencies?: readonly TimelineState[];
   children: () => ReactNode;
-}
-
-function prepareTimelineTemplates(state: TimelineState): Promise<void> {
-  const templates = state.items.filter((item) => item.kind === 'motion-graphic' && item.code);
-  return Promise.all(templates.map(async (item) => {
-    try {
-      await prepareTemplate(item.code as string);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`${item.name} — compile error:\n${message}`);
-    }
-  })).then(() => undefined);
 }
 
 export function TimelineReadinessGate({ state, dependencies = [], children }: TimelineReadinessGateProps) {
@@ -48,7 +35,7 @@ export function TimelineReadinessGate({ state, dependencies = [], children }: Ti
       }
     };
     Promise.resolve()
-      .then(() => Promise.all(readinessStates.flatMap((entry) => [loadTimelineFonts(entry), prepareTimelineTemplates(entry)])))
+      .then(() => prepareTimelineReadiness(readinessStates))
       .then(
       () => { if (active) setReady(true); release(); },
       (reason: unknown) => fail(reason),

@@ -2,6 +2,9 @@ import type { BrowserWindow } from 'electron';
 import { externalMcpToken } from '../server/editor-auth.ts';
 import { runDesktopMcpRecoverySmoke } from './smoke-mcp-recovery.ts';
 import { runDesktopRendererRecoverySmoke } from './smoke-renderer-recovery.ts';
+import { runEditorOnlySmoke } from './smoke-editor-only.ts';
+import { runFastExportSmoke } from './smoke-fast-export.ts';
+import { runMaskBlurSmoke } from './smoke-mask-blur.ts';
 
 const RENDER_DRAIN_MS = 500;
 // Under the app's 240s watchdog, over any plausible healthy render (previous
@@ -37,6 +40,28 @@ export async function runDesktopSmokeProbe(
     throw new Error(`/api/external-mcp/mcp → HTTP ${mcp.status}`);
   }
   console.log('[smoke] external MCP endpoint ok');
+  if (process.env.CC_SMOKE_EDITOR_ONLY === '1') await runEditorOnlySmoke(origin, win);
+  const previewPhase = process.env.CC_SMOKE_PREVIEW_PHASE;
+  if (previewPhase === 'write' || previewPhase === 'read') {
+    if (previewPhase === 'write') await win.webContents.executeJavaScript(`
+      (() => {
+        const button = [...document.querySelectorAll('button')].find((entry) => entry.textContent?.trim() === '\u6d41\u7545');
+        if (!button) throw new Error('Preview source button missing');
+        button.click();
+      })()
+    `);
+    const deadline = Date.now() + 10_000;
+    while (!await win.webContents.executeJavaScript(`
+      localStorage.getItem('cc.previewSource.v1') === 'proxy' &&
+      [...document.querySelectorAll('button')].some((entry) =>
+        entry.textContent?.trim() === '\u6d41\u7545' && entry.getAttribute('aria-pressed') === 'true')
+    `)) {
+      if (Date.now() > deadline) throw new Error(`Preview setting ${previewPhase} failed`);
+      await new Promise((done) => setTimeout(done, 100));
+    }
+    win.webContents.session.flushStorageData();
+    console.log(`[smoke] preview preference ${previewPhase} ok`);
+  }
   if (process.env.CC_SMOKE_MCP_RECOVERY === '1') {
     await runDesktopMcpRecoverySmoke(origin, externalMcpToken());
   }
@@ -116,4 +141,6 @@ export async function runDesktopSmokeProbe(
   if (process.env.CC_SMOKE_RENDERER_RECOVERY === '1') {
     await runDesktopRendererRecoverySmoke(win);
   }
+  if (render && process.env.CC_SMOKE_FAST_EXPORT === '1') await runFastExportSmoke(origin);
+  if (render && process.env.CC_SMOKE_MASK_BLUR === '1') await runMaskBlurSmoke();
 }

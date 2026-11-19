@@ -1,6 +1,8 @@
 import { sampleKeyframes } from './keyframes';
 import type { TimelineItem } from './types';
-import { flexCropClipPath, hasFlexCrop } from './flexCrop';
+import { flexCropClipPath, flexCropRect, hasFlexCrop, type FlexCropRect } from './flexCrop';
+import { clipMaskPath, resolveMaskAt, type ResolvedClipMask } from './clipMask';
+import { pictureAnimationAt } from './clipAnimation';
 
 /** Fade multiplier at a Sequence-relative frame. */
 export function clipFadeFactor(
@@ -22,13 +24,18 @@ export function clipOpacityAt(item: TimelineItem, frame: number, hidden = false)
     ? sampleKeyframes(opacityKeyframes, frame)
     : item.transform?.opacity ?? 1;
   const visibleOpacity = hidden ? 0 : Math.max(0, Math.min(1, opacity));
-  return clipFadeFactor(frame, item.durationInFrames, item.fadeInFrames, item.fadeOutFrames) * visibleOpacity;
+  return clipFadeFactor(frame, item.durationInFrames, item.fadeInFrames, item.fadeOutFrames) * visibleOpacity * pictureAnimationAt(item, frame).opacity;
 }
 
 export interface ClipAppearance {
   opacity: number;
   borderRadius: number;
   foregroundStyle: import('react').CSSProperties;
+  maskClipPath?: string;
+  mask?: ResolvedClipMask;
+  /** Numerical counterpart of foregroundStyle.transform, in the same order. */
+  transformSurfaces: Array<{ x: number; y: number; rotation: number; scaleX: number; scaleY: number }>;
+  cropRect?: FlexCropRect;
 }
 
 /** Per-frame clip appearance (opacity/border/transform/crop/filters) shared by
@@ -54,21 +61,31 @@ export function appearanceAt(
   const cssTransform = hasTransform
     ? `translate(${keyframeValue('x') ?? transform?.x ?? 0}%, ${keyframeValue('y') ?? transform?.y ?? 0}%) rotate(${keyframeValue('rotation') ?? transform?.rotation ?? 0}deg) scale(${scaleX}, ${scaleY})`
     : undefined;
+  const motion = pictureAnimationAt(item, frame);
   const crop = transform?.crop;
   const clipPath = hasFlexCrop(crop) ? flexCropClipPath(crop, canvas.width, canvas.height) : undefined;
   const opacity = clipOpacityAt(item, frame, hiddenByCaptions);
   const filters = item.filters;
+  const mask = resolveMaskAt(item, frame, canvas);
   return {
     opacity,
     borderRadius: Math.max(0, keyframeValue('borderRadius') ?? transform?.borderRadius ?? 0),
     foregroundStyle: {
-      transform: cssTransform,
+      transform: [motion.transform, cssTransform].filter(Boolean).join(' ') || undefined,
       transformOrigin: '50% 50%',
       transformBox: 'border-box',
-      filter: filters
-        ? `brightness(${filters.brightness ?? 1}) contrast(${filters.contrast ?? 1}) saturate(${filters.saturate ?? 1}) blur(${filters.blur ?? 0}px)`
+      filter: filters || motion.blur > 0
+        ? `brightness(${filters?.brightness ?? 1}) contrast(${filters?.contrast ?? 1}) saturate(${filters?.saturate ?? 1}) blur(${(filters?.blur ?? 0) + motion.blur}px)`
         : undefined,
       clipPath,
     },
+    mask,
+    maskClipPath: clipMaskPath(mask),
+    transformSurfaces: [
+      ...motion.surfaces.map((surface) => ({ x: surface.x, y: surface.y, rotation: surface.rotation, scaleX: surface.scale, scaleY: surface.scale })),
+      { x: keyframeValue('x') ?? transform?.x ?? 0, y: keyframeValue('y') ?? transform?.y ?? 0,
+        rotation: keyframeValue('rotation') ?? transform?.rotation ?? 0, scaleX, scaleY },
+    ],
+    cropRect: hasFlexCrop(crop) ? flexCropRect(crop, canvas.width, canvas.height) : undefined,
   };
 }

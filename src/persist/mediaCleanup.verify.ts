@@ -1,7 +1,9 @@
 // 素材清理纯逻辑检查:引用做差、级联删的独占判定语义(经内存态 projectStore 走真流程)。
 // 跑法:npx tsx src/persist/mediaCleanup.check.ts(已挂 verify:persist,随 pretest 执行)。
 import assert from 'node:assert/strict';
-import { collectAllUploadRefs, orphanDocIdsToPurge, unreferencedOf } from './mediaCleanup';
+import { collectAllUploadRefs, orphanDocIdsToPurge, scanUnreferenced, unreferencedOf } from './mediaCleanup';
+import { configureSharedKvBackend, kvDel, kvGet, kvSet, type SharedKvBackend } from './sharedKv';
+import { listPacks } from '../plugins/store';
 import { createProject, listProjectDocIds, purgeProject } from './projectStore';
 import type { ProjectDoc } from '../editor/types';
 
@@ -61,3 +63,63 @@ import type { ProjectDoc } from '../editor/types';
 }
 
 console.log('\nmediaCleanup.check: ALL PASSED');
+
+// A missing index entry is recoverable data, not permission for scan-time deletion.
+{
+  const originalFetch = globalThis.fetch;
+  const retained = { assets: [{ src: '/media/uploads/recoverable.mp4' }] };
+  await kvSet('project:unindexed-recovery', retained);
+  await kvSet('versions:unindexed-recovery', [{ doc: { assets: [{ src: '/media/uploads/old-version.mp4' }] } }]);
+  globalThis.fetch = (async () => Response.json({ files: [
+    { name: 'recoverable.mp4', bytes: 10, mtimeMs: 1 },
+    { name: 'old-version.mp4', bytes: 10, mtimeMs: 1 },
+  ] })) as typeof fetch;
+  try {
+    const scan = await scanUnreferenced();
+    assert.equal(scan.orphanDocsPurged, 0);
+    assert.deepEqual(scan.sourceCandidates, [], 'orphan documents and version media remain protected');
+    assert.deepEqual(await kvGet('project:unindexed-recovery'), retained, 'scanning never removes project data');
+  } finally { globalThis.fetch = originalFetch; }
+}
+
+// A storage error must stop cleanup instead of returning every upload as unreferenced.
+{
+  const failing = {
+    keys: async () => { throw new Error('inventory unavailable'); },
+    get: async () => undefined,
+    set: async () => undefined,
+    delete: async () => undefined,
+    writeAgentRuntime: async () => { throw new Error('unused'); },
+    updateAgentRunLease: async () => { throw new Error('unused'); },
+  } satisfies SharedKvBackend;
+  configureSharedKvBackend(failing);
+  try { await assert.rejects(collectAllUploadRefs(), /inventory unavailable/); }
+  finally { configureSharedKvBackend(undefined); }
+}
+console.log('mediaCleanup: read-only orphan scan and incomplete inventory protection passed');
+
+{
+  const names = ['my clip.mp4', "author's.mp4", 'encoded%20name.mp4'];
+  await kvSet('export-recovery:filename-test', { nested: names.map((name) => ({ src: `/media/uploads/${name}` })) });
+  const refs = await collectAllUploadRefs();
+  assert.deepEqual(unreferencedOf(names.map((name) => ({ name, bytes: 1, mtimeMs: 1 })), refs), []);
+  assert.ok(refs.has('/media/uploads/encoded name.mp4'));
+  await kvSet('project:quarantine-test', { kind: 'quarantined-project-store-entry', quarantineFile: 'preserved.json' });
+  await assert.rejects(collectAllUploadRefs(), /无法安全清理/);
+  await kvDel('project:quarantine-test');
+}
+{
+  const originalFetch = globalThis.fetch;
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
+  try {
+    globalThis.fetch = (async () => { throw new TypeError('extension inventory unavailable'); }) as typeof fetch;
+    await assert.rejects(listPacks({ strict: true }), /extension inventory unavailable/);
+    globalThis.fetch = (async () => Response.json({ packs: [{ id: 'unknown', cubeUrls: { lut: '/media/uploads/keep.cube' } }] })) as typeof fetch;
+    await assert.rejects(listPacks({ strict: true }), /Cannot verify/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+}

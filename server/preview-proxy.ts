@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync } from 'node:fs';
-import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { ffmpegBin, ffprobeBin } from './media-binaries.ts';
 import { ffmpegThreadArgs, spawnMediaProcess } from './media-process.ts';
 
@@ -10,6 +10,7 @@ const GOP_SAMPLE_SECONDS = 12;
 const LONG_GOP_SECONDS = 4;
 const MAX_CAPTURE_CHARS = 128 * 1024;
 const DIRECT_CODECS = new Set(['h264', 'vp8', 'vp9', 'av1']);
+export const PREVIEW_PROXY_KIND = 'proxy-720-v1';
 
 export interface PreviewSourceProbe {
   durationMs: number;
@@ -45,6 +46,7 @@ export function runPreviewProcess(
     let stderr = '';
     let timedOut = false;
     const abort = () => child.kill('SIGKILL');
+    process.once('exit', abort);
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
     if (signal.aborted) abort();
     else signal.addEventListener('abort', abort, { once: true });
@@ -53,11 +55,13 @@ export function runPreviewProcess(
     child.on('error', (error) => {
       clearTimeout(timer);
       signal.removeEventListener('abort', abort);
+      process.removeListener('exit', abort);
       reject(error);
     });
     child.on('close', (code) => {
       clearTimeout(timer);
       signal.removeEventListener('abort', abort);
+      process.removeListener('exit', abort);
       if (signal.aborted) reject(abortError());
       else if (timedOut) reject(new Error(`${command} timed out`));
       else if (code === 0) resolve({ stdout, stderr });
@@ -120,9 +124,9 @@ export async function buildPreviewProxy(file: string, output: string, signal: Ab
   await runPreviewProcess(ffmpegBin(), [
     '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', file,
     '-map', '0:v:0', '-map', '0:a:0?', '-sn', '-dn',
-    '-vf', "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
-    '-c:v', 'libx264', ...ffmpegThreadArgs(), '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
-    '-force_key_frames', 'expr:gte(t,n_forced*0.5)', '-movflags', '+faststart',
+    '-vf', "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+    '-c:v', 'libx264', ...ffmpegThreadArgs(), '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p',
+    '-force_key_frames', 'expr:gte(t,n_forced*1)', '-movflags', '+faststart',
     '-c:a', 'aac', '-b:a', '160k', output,
   ], signal, PROXY_TIMEOUT_MS);
 }
@@ -143,6 +147,7 @@ interface PreviewProxyDependencies {
     key: string,
     work: (signal: AbortSignal) => Promise<T>,
     protectedPath?: string,
+    retainUntilComplete?: boolean,
   ) => Promise<T>;
   serveCached: (req: IncomingMessage, res: ServerResponse, path: string) => Promise<void>;
   sendJson: (res: ServerResponse, status: number, body: unknown) => void;
@@ -191,14 +196,16 @@ async function createProxyPayload(
   const source = sourcePayload(src, probe);
   const reason = previewProxyReason(probe, force);
   if (!reason) return { source, proxy: { status: 'not-needed', reason: 'source-compatible' } };
-  const previewSrc = `/api/preview-proxy-file?src=${encodeURIComponent(src)}`;
-  if (existsSync(proxyPath)) return { source, proxy: { status: 'ready', reason, previewSrc } };
+  const previewSource = async () => `/api/preview-proxy-file?src=${encodeURIComponent(src)}&revision=${Math.floor((await stat(proxyPath)).mtimeMs * 1000)}`;
+  // A rebuilt file at the same URL can reuse a poisoned browser/decoder cache.
+  // The revision changes only when this derivative is actually replaced.
+  if (existsSync(proxyPath)) return { source, proxy: { status: 'ready', reason, previewSrc: await previewSource() } };
   const failed = await previousFailure(statusPath);
   if (failed) return { source, proxy: { status: 'failed', ...failed } };
   try {
     await deps.atomicBuild(proxyPath, (tmp) => buildPreviewProxy(hit.file, tmp, signal));
     await unlink(statusPath).catch(() => {});
-    return { source, proxy: { status: 'ready', reason, previewSrc } };
+    return { source, proxy: { status: 'ready', reason, previewSrc: await previewSource() } };
   } catch (error) {
     if (signal.aborted) throw error;
     const message = error instanceof Error ? error.message : String(error);
@@ -218,16 +225,27 @@ export async function handlePreviewProxy(
     if (!hit) return;
     const url = new URL(req.url ?? '/', 'http://localhost');
     const src = url.searchParams.get('src') ?? '';
-    const force = url.searchParams.get('force') === '1';
-    const proxyPath = deps.cachePath(hit.name, hit.source, 'proxy', 'mp4');
-    const statusPath = deps.cachePath(hit.name, hit.source, 'proxy-status', 'json');
-    let payload = await deps.runDerivative(req, res, proxyPath, (signal) => (
-      createProxyPayload(hit, src, force, proxyPath, statusPath, deps, signal)
-    ));
+    const retry = url.searchParams.get('retry') === '1';
+    const force = url.searchParams.get('force') === '1' || retry;
+    const proxyPath = deps.cachePath(hit.name, hit.source, PREVIEW_PROXY_KIND, 'mp4');
+    const statusPath = deps.cachePath(hit.name, hit.source, `${PREVIEW_PROXY_KIND}-status`, 'json');
+    // Long proxy builds keep their bounded queue lease when the view disconnects.
+    let payload = await deps.runDerivative(req, res, proxyPath, async (signal) => {
+      if (retry) {
+        if (signal.aborted) throw abortError();
+        // Only this source's derivative artifacts, never the master media.
+        for (const path of [statusPath, proxyPath]) {
+          await unlink(path).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error;
+          });
+        }
+      }
+      return createProxyPayload(hit, src, force, proxyPath, statusPath, deps, signal);
+    }, proxyPath, true);
     if (force && payload.proxy.status === 'not-needed') {
       payload = await deps.runDerivative(req, res, `${proxyPath}#force`, (signal) => (
         createProxyPayload(hit, src, true, proxyPath, statusPath, deps, signal)
-      ), proxyPath);
+      ), proxyPath, true);
     }
     if (!res.destroyed) deps.sendJson(res, 200, payload);
   } catch (error) {
@@ -243,7 +261,7 @@ export async function handlePreviewProxyFile(
   try {
     const hit = await deps.resolve(req, res);
     if (!hit) return;
-    const proxyPath = deps.cachePath(hit.name, hit.source, 'proxy', 'mp4');
+    const proxyPath = deps.cachePath(hit.name, hit.source, PREVIEW_PROXY_KIND, 'mp4');
     if (!existsSync(proxyPath)) {
       deps.sendJson(res, 404, { error: 'preview proxy is not ready' });
       return;

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { captionPages } from './exportCaptions';
-import { captionTrackEntries, type TimelineState, type TrackId } from '../editor/types';
+import { buildCaptionPages } from './captionPages';
+import { captionTrackEntries, captionsOnTrack, type TimelineState, type TrackId } from '../editor/types';
 import { collectTimelineSnapPoints, snapDraggedEdges, sortTimelineSnapPoints, type SnapDraggedEdgesOptions, type SnapPoint } from '../editor/snap';
-import type { CaptionPage, CaptionsData } from './types';
+import type { CaptionPage, CaptionSourceSpan, CaptionsData } from './types';
 import type { TranscriptWord } from '../transcript/types';
-import { isManualCaptionEntry, resizeManualCue, type ManualCueEdge } from './manualCaptions';
+import { isManualCaptionEntry, resizeManualCue, rollAdjacentManualCues, type ManualCueEdge } from './manualCaptions';
+import { projectCaptionSourceSpans } from './captionSourceSpans';
 import type { CaptionSelectionRef } from './captionSelection';
-import { captionDragMoveMode, clampTimelineSelectionDelta, resolveCaptionDragSelection, type TimelineSelectionMovePreview } from './captionGroupMove';
+import { captionDragMoveMode, clampTimelineSelectionDelta, displayCueMoveProblem, resolveCaptionDragSelection, type TimelineSelectionMovePreview } from './captionGroupMove';
 
 const SNAP_PX = 8;
 
@@ -23,6 +25,139 @@ export interface CaptionCueMove {
   startMs: number;
   endMs: number;
   targetTrackId: TrackId;
+}
+
+export interface DisplayCueTrimTarget {
+  laneId: string;
+  editId: string;
+  partId: string;
+  key: string;
+  source: TimelineState['items'][number];
+  sourceSpans: readonly CaptionSourceSpan[];
+}
+
+export function resizeDisplayCueSourceSpans(
+  source: TimelineState['items'][number], spans: readonly CaptionSourceSpan[], fps: number,
+  edge: ManualCueEdge, deltaFrames: number,
+): CaptionSourceSpan[] | null {
+  const projected = projectCaptionSourceSpans(source, spans, fps);
+  if (!projected.length || new Set(projected.map((span) => span.segmentKey)).size !== 1) return null;
+  const boundary = edge === 'start' ? projected[0]! : projected.at(-1)!;
+  const span = spans[boundary.spanIndex];
+  if (!span) return null;
+  const sourceFrames = boundary.sourceEndFrame - boundary.sourceStartFrame;
+  const timelineFrames = boundary.endFrame - boundary.startFrame;
+  if (sourceFrames < 1 || timelineFrames < 1) return null;
+  const minimumFrames = Math.max(6, Math.round(fps * 0.5));
+  const minimumMs = Math.max(1, Math.ceil(sourceFrames / timelineFrames * minimumFrames)) * 1000 / fps;
+  if (span.endMs - span.startMs < minimumMs) return null;
+  const deltaMs = Math.round(deltaFrames * sourceFrames / timelineFrames) * 1000 / fps;
+  const next = edge === 'start'
+    ? Math.min(span.endMs - minimumMs, Math.max(span.startMs, span.startMs + deltaMs))
+    : Math.max(span.startMs + minimumMs, Math.min(span.endMs, span.endMs + deltaMs));
+  if (next === (edge === 'start' ? span.startMs : span.endMs)) return null;
+  return spans.map((candidate, index) => index === boundary.spanIndex
+    ? { ...candidate, [edge === 'start' ? 'startMs' : 'endMs']: next }
+    : candidate);
+}
+
+export function displayCueTrimRange(
+  target: DisplayCueTrimTarget, fps: number, edge: ManualCueEdge, deltaFrames: number,
+): { start: number; end: number } | null {
+  const spans = resizeDisplayCueSourceSpans(target.source, target.sourceSpans, fps, edge, deltaFrames);
+  if (!spans) return null;
+  const projected = projectCaptionSourceSpans(target.source, spans, fps);
+  if (!projected.length || new Set(projected.map((span) => span.segmentKey)).size !== 1) return null;
+  return {
+    start: Math.min(...projected.map((span) => span.startFrame)) * 1000 / fps,
+    end: Math.max(...projected.map((span) => span.endFrame)) * 1000 / fps,
+  };
+}
+
+function buildDisplayTrimSourceEntries(
+  state: TimelineState, trackId: TrackId, target: DisplayCueTrimTarget, spans: CaptionSourceSpan[],
+) {
+  return (captionsOnTrack(state, trackId)?.sourceEntries ?? []).map((entry) => entry.id !== target.laneId ? entry : ({
+    ...entry,
+    displayCueEdits: entry.displayCueEdits?.map((edit) => edit.id !== target.editId ? edit : ({
+      ...edit, parts: edit.parts.map((part) => part.id === target.partId ? { ...part, sourceSpans: spans } : part),
+    })),
+  }));
+}
+
+function clampDisplayTrimDelta(
+  state: TimelineState, trackId: TrackId, target: DisplayCueTrimTarget, edge: ManualCueEdge, requested: number,
+): number {
+  const captions = captionsOnTrack(state, trackId);
+  if (!captions) return requested;
+  const pages = buildCaptionPages(captions, state.items, state.fps)
+    .filter((identity) => identity.laneId === target.laneId)
+    .sort((left, right) => left.page.start - right.page.start || left.page.end - right.page.end);
+  const index = pages.findIndex((identity) => identity.displayCueEditId === target.editId
+    && identity.displayCuePartId === target.partId);
+  if (index < 0) return requested;
+  const page = pages[index]!.page;
+  const start = Math.round(page.start * state.fps / 1000);
+  const end = Math.round(page.end * state.fps / 1000);
+  const minimum = Math.max(6, Math.round(state.fps * 0.5));
+  if (edge === 'start') {
+    const previousEnd = index > 0 ? Math.round(pages[index - 1]!.page.end * state.fps / 1000) : 0;
+    return Math.max(previousEnd - start, Math.min(end - start - minimum, requested));
+  }
+  const nextStart = index + 1 < pages.length
+    ? Math.round(pages[index + 1]!.page.start * state.fps / 1000) : Number.POSITIVE_INFINITY;
+  return Math.max(minimum - (end - start), Math.min(nextStart - end, requested));
+}
+
+export function useDisplayCueTrim(options: {
+  state: TimelineState; trackId: TrackId; playheadFrame: number; px: number; snapping: boolean; locked: boolean;
+  onUpdate: (patch: Partial<CaptionsData>) => void; onLivePreview?: (patch: Partial<CaptionsData> | null) => void; onProblem: (message: string) => void;
+}) {
+  const { state, trackId, playheadFrame, px, snapping, locked, onUpdate, onLivePreview, onProblem } = options;
+  const [drag, setDrag] = useState<(CueTimingDrag & { target: DisplayCueTrimTarget; edge: ManualCueEdge }) | null>(null);
+  const commit = (target: DisplayCueTrimTarget, edge: ManualCueEdge, deltaFrames: number) => {
+    const boundedDelta = clampDisplayTrimDelta(state, trackId, target, edge, deltaFrames);
+    const spans = resizeDisplayCueSourceSpans(target.source, target.sourceSpans, state.fps, edge, boundedDelta);
+    if (!spans) { onProblem('这句字幕跨越多个剪辑区间或没有可裁范围，未修改。'); return; }
+    onUpdate({ sourceEntries: buildDisplayTrimSourceEntries(state, trackId, target, spans) });
+  };
+  const start = (event: ReactPointerEvent, key: string, target: DisplayCueTrimTarget, edge: ManualCueEdge) => {
+    if (locked || event.button !== 0) return;
+    const firstDelta = clampDisplayTrimDelta(state, trackId, target, edge, edge === 'start' ? 1 : -1);
+    if (!firstDelta || !displayCueTrimRange(target, state.fps, edge, firstDelta)) {
+      event.preventDefault();
+      event.stopPropagation();
+      onProblem('这句字幕跨越多个剪辑区间或没有可裁范围，未修改。');
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const projection = projectCaptionSourceSpans(target.source, target.sourceSpans, state.fps);
+    const startMs = Math.min(...projection.map((span) => span.startFrame)) * 1000 / state.fps;
+    const endMs = Math.max(...projection.map((span) => span.endFrame)) * 1000 / state.fps;
+    setDrag({ key, target, edge, startX: event.clientX, baseStartMs: startMs, baseEndMs: endMs,
+      deltaFrames: 0, snapPoints: captionSnapPoints(state, trackId) });
+  };
+  const move = (event: ReactPointerEvent, key: string) => {
+    if (!drag || drag.key !== key) return;
+    const requested = cueDeltaFrames(drag, event.clientX, drag.edge === 'start' ? 'trim-left' : 'trim-right', state, playheadFrame, px, snapping);
+    const deltaFrames = clampDisplayTrimDelta(state, trackId, drag.target, drag.edge, requested);
+    setDrag((current) => current?.key === key ? { ...current, deltaFrames } : current);
+  };
+  const finish = (event: ReactPointerEvent, key: string) => {
+    if (!drag || drag.key !== key) return;
+    const requested = cueDeltaFrames(drag, event.clientX, drag.edge === 'start' ? 'trim-left' : 'trim-right', state, playheadFrame, px, snapping);
+    const deltaFrames = clampDisplayTrimDelta(state, trackId, drag.target, drag.edge, requested);
+    setDrag(null);
+    onLivePreview?.(null);
+    if (!deltaFrames) return;
+    commit(drag.target, drag.edge, deltaFrames);
+  };
+  const nudge = (target: DisplayCueTrimTarget, edge: ManualCueEdge, frames: number) => {
+    if (!locked) commit(target, edge, frames);
+  };
+  return { drag, start, move, finish, nudge, cancel: () => { setDrag(null); onLivePreview?.(null); } };
 }
 
 interface CueTimingDrag {
@@ -50,6 +185,9 @@ interface MoveDrag extends CueDrag {
 interface SelectionMoveDrag extends CueTimingDrag {
   itemIds: string[];
   captionSelections: CaptionSelectionRef[];
+  selection: CaptionSelectionRef;
+  pointerMoved: boolean;
+  hadGroupSelection: boolean;
 }
 
 export function manualCueTargets(captions: CaptionsData | null): Map<string, ManualCueTarget> {
@@ -62,8 +200,12 @@ export function manualCueTargets(captions: CaptionsData | null): Map<string, Man
   return targets;
 }
 
-function captionSnapPoints(state: TimelineState, sourceTrackId: TrackId): SnapPoint[] {
-  const points = collectTimelineSnapPoints(state, {});
+function captionSnapPoints(
+  state: TimelineState,
+  sourceTrackId: TrackId,
+  excludeItemIds?: readonly string[],
+): SnapPoint[] {
+  const points = collectTimelineSnapPoints(state, { excludeItemIds });
   for (const entry of captionTrackEntries(state)) {
     if (entry.id === sourceTrackId || !entry.captions) continue;
     for (const page of captionPages(entry.captions, state.items, state.fps)) {
@@ -98,9 +240,9 @@ function cueDeltaFrames(
 
 export function useCaptionTrim(options: {
   state: TimelineState; captions: CaptionsData | null; trackId: TrackId; playheadFrame: number;
-  px: number; snapping: boolean; locked: boolean; onUpdate: (patch: Partial<CaptionsData>) => void;
+  px: number; snapping: boolean; locked: boolean; onUpdate: (patch: Partial<CaptionsData>) => void; onLivePreview?: (patch: Partial<CaptionsData> | null) => void;
 }) {
-  const { state, captions, trackId, playheadFrame, px, snapping, locked, onUpdate } = options;
+  const { state, captions, trackId, playheadFrame, px, snapping, locked, onUpdate, onLivePreview } = options;
   const [drag, setDrag] = useState<TrimDrag | null>(null);
   const delta = (current: TrimDrag, clientX: number) => cueDeltaFrames(
     current, clientX, current.edge === 'start' ? 'trim-left' : 'trim-right', state, playheadFrame, px, snapping,
@@ -124,31 +266,187 @@ export function useCaptionTrim(options: {
   const finish = (event: ReactPointerEvent, key: string) => {
     if (!drag || drag.key !== key || !captions) return;
     const deltaMs = delta(drag, event.clientX) * 1000 / state.fps;
-    const patch = deltaMs ? resizeManualCue(captions, drag.target.laneId, drag.target.index, drag.edge, deltaMs) : null;
+    const patch = deltaMs ? resizeManualCue(captions, drag.target.laneId, drag.target.index, drag.edge, deltaMs, state.fps) : null;
     setDrag(null);
+    onLivePreview?.(null);
     if (patch) onUpdate(patch);
   };
   const nudge = (target: ManualCueTarget, edge: ManualCueEdge, frames: number) => {
     if (!captions || locked) return;
-    const patch = resizeManualCue(captions, target.laneId, target.index, edge, frames * 1000 / state.fps);
+    const patch = resizeManualCue(captions, target.laneId, target.index, edge, frames * 1000 / state.fps, state.fps);
     if (patch) onUpdate(patch);
   };
-  return { drag, start, move, finish, cancel: () => setDrag(null), nudge };
+  return { drag, start, move, finish, cancel: () => { setDrag(null); onLivePreview?.(null); }, nudge };
+}
+
+export type CaptionRollPair =
+  | { key: string; kind: 'manual'; leftKey: string; rightKey: string; left: ManualCueTarget; right: ManualCueTarget }
+  | { key: string; kind: 'display'; leftKey: string; rightKey: string; left: DisplayCueTrimTarget; right: DisplayCueTrimTarget };
+
+interface CaptionRollDrag extends CueTimingDrag {
+  pair: CaptionRollPair;
+}
+
+export function resolveDisplayRollSpans(
+  left: DisplayCueTrimTarget,
+  right: DisplayCueTrimTarget,
+  fps: number,
+  requestedDeltaFrames: number,
+): {
+  deltaFrames: number;
+  leftSpans: CaptionSourceSpan[];
+  rightSpans: CaptionSourceSpan[];
+  leftRange: { start: number; end: number };
+  rightRange: { start: number; end: number };
+} | null {
+  if (!requestedDeltaFrames) return null;
+  const tryAt = (delta: number) => {
+    const leftSpans = resizeDisplayCueSourceSpans(left.source, left.sourceSpans, fps, 'end', delta);
+    const rightSpans = resizeDisplayCueSourceSpans(right.source, right.sourceSpans, fps, 'start', delta);
+    if (!leftSpans || !rightSpans) return null;
+    const lp = projectCaptionSourceSpans(left.source, leftSpans, fps);
+    const rp = projectCaptionSourceSpans(right.source, rightSpans, fps);
+    if (!lp.length || !rp.length) return null;
+    const lStart = Math.min(...lp.map((s) => s.startFrame));
+    const lEnd = Math.max(...lp.map((s) => s.endFrame));
+    const rStart = Math.min(...rp.map((s) => s.startFrame));
+    const rEnd = Math.max(...rp.map((s) => s.endFrame));
+    if (lEnd <= lStart || rEnd <= rStart || lEnd > rStart + 1) return null;
+    return {
+      deltaFrames: delta,
+      leftSpans,
+      rightSpans,
+      leftRange: { start: lStart * 1000 / fps, end: lEnd * 1000 / fps },
+      rightRange: { start: rStart * 1000 / fps, end: rEnd * 1000 / fps },
+    };
+  };
+  const direct = tryAt(requestedDeltaFrames);
+  if (direct) return direct;
+  const sign = requestedDeltaFrames > 0 ? 1 : -1;
+  let lo = 0;
+  let hi = Math.abs(requestedDeltaFrames);
+  let best: ReturnType<typeof tryAt> = null;
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >> 1;
+    const probe = tryAt(mid * sign);
+    if (probe) { best = probe; lo = mid; }
+    else hi = mid;
+  }
+  return best;
+}
+
+export function useCaptionRollTrim(options: {
+  state: TimelineState; captions: CaptionsData | null; trackId: TrackId; playheadFrame: number;
+  px: number; snapping: boolean; locked: boolean; onUpdate: (patch: Partial<CaptionsData>) => void; onLivePreview?: (patch: Partial<CaptionsData> | null) => void; onProblem: (message: string) => void;
+}) {
+  const { state, captions, trackId, playheadFrame, px, snapping, locked, onUpdate, onLivePreview, onProblem } = options;
+  const [drag, setDrag] = useState<CaptionRollDrag | null>(null);
+  const delta = (current: CaptionRollDrag, clientX: number) => cueDeltaFrames(
+    current, clientX, 'trim-right', state, playheadFrame, px, snapping,
+  );
+  const rollPatch = (pair: CaptionRollPair, deltaFrames: number): Partial<CaptionsData> | null => {
+    if (!captions || !deltaFrames) return null;
+    if (pair.kind === 'manual') {
+      return rollAdjacentManualCues(captions, pair.left.laneId, pair.left.index, pair.right.index,
+        deltaFrames * 1000 / state.fps, state.fps);
+    }
+    const resolved = resolveDisplayRollSpans(pair.left, pair.right, state.fps, deltaFrames);
+    if (!resolved) return null;
+    const sourceEntries = (captionsOnTrack(state, trackId)?.sourceEntries ?? []).map((entry) => {
+      if (entry.id !== pair.left.laneId && entry.id !== pair.right.laneId) return entry;
+      return {
+        ...entry,
+        displayCueEdits: entry.displayCueEdits?.map((edit) => ({
+          ...edit,
+          parts: edit.parts.map((part) => (
+            part.id === pair.left.partId && edit.id === pair.left.editId
+              ? { ...part, sourceSpans: resolved.leftSpans }
+              : part.id === pair.right.partId && edit.id === pair.right.editId
+                ? { ...part, sourceSpans: resolved.rightSpans }
+                : part
+          )),
+        })),
+      };
+    });
+    return { sourceEntries };
+  };
+  const commit = (pair: CaptionRollPair, deltaFrames: number) => {
+    if (!captions || !deltaFrames) return;
+    const patch = rollPatch(pair, deltaFrames);
+    if (!patch && pair.kind === 'display') {
+      onProblem('相邻字幕已到达可调边界，未修改。');
+      return;
+    }
+    if (patch) onUpdate(patch);
+  };
+  const start = (event: ReactPointerEvent, pair: CaptionRollPair, boundaryMs: number) => {
+    if (locked || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDrag({
+      key: pair.key,
+      pair,
+      startX: event.clientX,
+      baseStartMs: boundaryMs,
+      baseEndMs: boundaryMs,
+      deltaFrames: 0,
+      snapPoints: captionSnapPoints(state, trackId),
+    });
+  };
+  const move = (event: ReactPointerEvent, key: string) => {
+    if (!drag || drag.key !== key) return;
+    const deltaFrames = delta(drag, event.clientX);
+    setDrag((current) => current?.key === key ? { ...current, deltaFrames } : current);
+  };
+  const finish = (event: ReactPointerEvent, key: string) => {
+    if (!drag || drag.key !== key) return;
+    const deltaFrames = delta(drag, event.clientX);
+    const activePair = drag.pair;
+    setDrag(null);
+    onLivePreview?.(null);
+    commit(activePair, deltaFrames);
+  };
+  const nudge = (pair: CaptionRollPair, frames: number) => {
+    if (!locked) commit(pair, frames);
+  };
+  return { drag, start, move, finish, nudge, cancel: () => { setDrag(null); onLivePreview?.(null); } };
 }
 
 export function useCaptionMove(options: {
-  state: TimelineState; trackId: TrackId; playheadFrame: number; px: number; snapping: boolean; locked: boolean;
+  state: TimelineState; captions?: CaptionsData | null; trackId: TrackId; playheadFrame: number; px: number; snapping: boolean; locked: boolean;
   trackFromClientY: (clientY: number) => TrackId; onMove: (move: CaptionCueMove) => void;
+  onLivePreview?: (patch: Partial<CaptionsData> | null) => void;
   isOverChatComposer?: (clientX: number, clientY: number) => boolean;
   onDropSelectionToChat?: (selection: { itemIds: string[]; captionSelections: CaptionSelectionRef[] }) => void;
 }) {
   const {
-    state, trackId, playheadFrame, px, snapping, locked, trackFromClientY, onMove,
+    state, captions = null, trackId, playheadFrame, px, snapping, locked, trackFromClientY, onMove, onLivePreview,
     isOverChatComposer, onDropSelectionToChat,
   } = options;
   const [drag, setDrag] = useState<MoveDrag | null>(null);
   const dragRef = useRef<MoveDrag | null>(null);
-  const updateDrag = (next: MoveDrag | null) => { dragRef.current = next; setDrag(next); };
+  const cleanupListenersRef = useRef<(() => void) | null>(null);
+  const updateDrag = useCallback((next: MoveDrag | null) => { dragRef.current = next; setDrag(next); }, []);
+  const delta = useCallback((current: CueDrag, clientX: number) => cueDeltaFrames(
+    current, clientX, 'move', state, playheadFrame, px, snapping,
+  ), [state, playheadFrame, px, snapping]);
+  const handlersRef = useRef({
+    state, captions, trackId, delta, trackFromClientY, onMove, onLivePreview,
+    isOverChatComposer, onDropSelectionToChat,
+  });
+  useEffect(() => {
+    handlersRef.current = {
+      state, captions, trackId, delta, trackFromClientY, onMove, onLivePreview,
+      isOverChatComposer, onDropSelectionToChat,
+    };
+  });
+  const cancel = useCallback(() => {
+    cleanupListenersRef.current?.();
+    cleanupListenersRef.current = null;
+    handlersRef.current.onLivePreview?.(null);
+    if (dragRef.current) updateDrag(null);
+  }, [updateDrag]);
   const start = (
     event: ReactPointerEvent,
     key: string,
@@ -159,61 +457,80 @@ export function useCaptionMove(options: {
     if (!cue || locked || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
-    updateDrag({
+    cleanupListenersRef.current?.();
+    const initial: MoveDrag = {
       key, target, selection, startX: event.clientX, baseStartMs: cue.start, baseEndMs: cue.end,
       deltaFrames: 0, targetTrackId: trackId, snapPoints: captionSnapPoints(state, trackId),
-    });
-  };
-  useEffect(() => {
-    if (!dragRef.current) return;
-    const delta = (current: CueDrag, clientX: number) => cueDeltaFrames(
-      current, clientX, 'move', state, playheadFrame, px, snapping,
-    );
-    const move = (event: PointerEvent) => {
+    };
+    updateDrag(initial);
+    const move = (moveEvent: PointerEvent) => {
       const current = dragRef.current;
       if (!current) return;
+      const h = handlersRef.current;
+      const nextDeltaFrames = h.delta(current, moveEvent.clientX);
+      const nextTargetTrackId = h.trackFromClientY(moveEvent.clientY);
       updateDrag({
         ...current,
-        deltaFrames: delta(current, event.clientX),
-        targetTrackId: trackFromClientY(event.clientY),
+        deltaFrames: nextDeltaFrames,
+        targetTrackId: nextTargetTrackId,
       });
+      // Movement is painted from drag state; do not write/re-sort the caption model during pointer movement.
+      h.onLivePreview?.(null);
     };
-    const finish = (event: PointerEvent) => {
+    const finish = (upEvent: PointerEvent) => {
+      cleanupListenersRef.current?.();
+      cleanupListenersRef.current = null;
       const current = dragRef.current;
       if (!current) return;
-      if (onDropSelectionToChat && isOverChatComposer?.(event.clientX, event.clientY)) {
+      const h = handlersRef.current;
+      h.onLivePreview?.(null);
+      if (h.onDropSelectionToChat && h.isOverChatComposer?.(upEvent.clientX, upEvent.clientY)) {
         updateDrag(null);
-        onDropSelectionToChat({ itemIds: [], captionSelections: [current.selection] });
+        h.onDropSelectionToChat({ itemIds: [], captionSelections: [current.selection] });
         return;
       }
-      const deltaMs = delta(current, event.clientX) * 1000 / state.fps;
-      const cue = current.target.words[current.target.index];
-      const targetTrackId = trackFromClientY(event.clientY);
+      const deltaMs = h.delta(current, upEvent.clientX) * 1000 / h.state.fps;
+      const cueId = current.target.words[current.target.index]?.id;
+      const currentWords = h.captions?.sourceEntries?.find((entry) => entry.id === current.target.laneId
+        && isManualCaptionEntry(entry))?.words;
+      const currentIndex = cueId ? currentWords?.findIndex((word) => word.id === cueId) ?? -1 : -1;
+      const currentCue = currentIndex >= 0 ? currentWords?.[currentIndex] : undefined;
+      const targetTrackId = h.trackFromClientY(upEvent.clientY);
       updateDrag(null);
-      if (!cue || (!deltaMs && targetTrackId === trackId)) return;
-      onMove({
+      if (!currentCue || (!deltaMs && targetTrackId === h.trackId)) return;
+      const durationMs = Math.max(20, current.baseEndMs - current.baseStartMs);
+      let nextStartMs = Math.max(0, current.baseStartMs + deltaMs);
+      if (targetTrackId === h.trackId && currentWords) {
+        const otherWords = currentWords.filter((word) => word.id !== cueId);
+        const previousEnd = Math.max(0, ...otherWords.filter((word) => word.end <= current.baseStartMs).map((word) => word.end));
+        const nextStart = Math.min(Number.POSITIVE_INFINITY, ...otherWords.filter((word) => word.start >= current.baseEndMs).map((word) => word.start));
+        nextStartMs = Math.max(previousEnd, Math.min(nextStart - durationMs, nextStartMs));
+      }
+      h.onMove({
         laneId: current.target.laneId,
-        index: current.target.index,
-        text: cue.text,
-        startMs: Math.max(0, current.baseStartMs + deltaMs),
-        endMs: current.baseEndMs + deltaMs,
+        index: currentIndex,
+        text: currentCue.text,
+        startMs: nextStartMs,
+        endMs: nextStartMs + durationMs,
         targetTrackId,
       });
     };
-    const cancel = () => updateDrag(null);
+    const onCancel = () => cancel();
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', finish, { once: true });
-    window.addEventListener('pointercancel', cancel, { once: true });
-    return () => {
+    window.addEventListener('pointercancel', onCancel, { once: true });
+    cleanupListenersRef.current = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('pointercancel', onCancel);
     };
-  }, [
-    drag?.key, state, trackId, playheadFrame, px, snapping, trackFromClientY, onMove,
-    isOverChatComposer, onDropSelectionToChat,
-  ]);
-  return { drag, start, cancel: () => updateDrag(null) };
+  };
+  useEffect(() => () => {
+    cleanupListenersRef.current?.();
+    cleanupListenersRef.current = null;
+    if (dragRef.current) handlersRef.current.onLivePreview?.(null);
+  }, []);
+  return { drag, start, cancel };
 }
 
 export function useCaptionSelectionMove(options: {
@@ -231,15 +548,18 @@ export function useCaptionSelectionMove(options: {
     captionSelections: readonly CaptionSelectionRef[],
     deltaFrames: number,
   ) => void;
+  onClickWithoutDrag?: (selection: CaptionSelectionRef) => void;
+  onBlocked?: (message: string) => void;
   isOverChatComposer?: (clientX: number, clientY: number) => boolean;
   onDropSelectionToChat?: (selection: { itemIds: string[]; captionSelections: CaptionSelectionRef[] }) => void;
 }) {
   const {
-    state, trackId, playheadFrame, px, snapping, locked, selectedCaptions, selectedItemIds,
-    onPreview, onCommit, isOverChatComposer, onDropSelectionToChat,
+    state, trackId, playheadFrame, px, snapping, locked, selectedCaptions, selectedItemIds, onBlocked,
+    onPreview, onCommit, onClickWithoutDrag, isOverChatComposer, onDropSelectionToChat,
   } = options;
   const [drag, setDrag] = useState<SelectionMoveDrag | null>(null);
   const dragRef = useRef<SelectionMoveDrag | null>(null);
+  const cleanupListenersRef = useRef<(() => void) | null>(null);
   const updateDrag = useCallback((next: SelectionMoveDrag | null) => {
     dragRef.current = next;
     setDrag(next);
@@ -262,81 +582,124 @@ export function useCaptionSelectionMove(options: {
       requested,
     );
   }, [state, playheadFrame, px, snapping]);
+  const handlersRef = useRef({
+    delta,
+    preview,
+    onPreview,
+    onCommit,
+    onClickWithoutDrag,
+    isOverChatComposer,
+    onDropSelectionToChat,
+    onBlocked,
+    state,
+  });
+  useEffect(() => {
+    handlersRef.current = {
+      delta,
+      preview,
+      onPreview,
+      onCommit,
+      onClickWithoutDrag,
+      isOverChatComposer,
+      onDropSelectionToChat,
+      onBlocked,
+      state,
+    };
+  });
+  const cancel = useCallback(() => {
+    cleanupListenersRef.current?.();
+    cleanupListenersRef.current = null;
+    if (!dragRef.current) return;
+    updateDrag(null);
+    handlersRef.current.onPreview(null);
+  }, [updateDrag]);
   const start = (
     event: ReactPointerEvent,
     key: string,
     page: CaptionPage,
     selection: CaptionSelectionRef,
+    overrideSelectedCaptions?: readonly CaptionSelectionRef[],
   ): boolean => {
     if (locked || event.button !== 0) return false;
     const resolved = resolveCaptionDragSelection(
       selection,
-      selectedCaptions,
+      overrideSelectedCaptions ?? selectedCaptions,
       selectedItemIds,
     );
     const usesTimelineSelectionMove = captionDragMoveMode(selection, resolved) === 'timeline-selection';
     if (!usesTimelineSelectionMove) return false;
     event.preventDefault();
     event.stopPropagation();
+    cleanupListenersRef.current?.();
     const next: SelectionMoveDrag = {
       key,
       startX: event.clientX,
       baseStartMs: page.start,
       baseEndMs: page.end,
       deltaFrames: 0,
-      snapPoints: captionSnapPoints(state, trackId),
+      snapPoints: captionSnapPoints(state, trackId, resolved.itemIds),
       itemIds: resolved.itemIds,
       captionSelections: resolved.captionSelections,
+      selection,
+      pointerMoved: false,
+      hadGroupSelection: !overrideSelectedCaptions && (resolved.itemIds.length > 0 || resolved.captionSelections.length > 1),
     };
     updateDrag(next);
     preview(next);
-    return true;
-  };
-  const cancel = useCallback(() => {
-    if (!dragRef.current) return;
-    updateDrag(null);
-    onPreview(null);
-  }, [onPreview, updateDrag]);
-  useEffect(() => {
-    if (!dragRef.current) return;
-    const move = (event: PointerEvent) => {
+    const move = (moveEvent: PointerEvent) => {
       const current = dragRef.current;
       if (!current) return;
-      const next = { ...current, deltaFrames: delta(current, event.clientX) };
-      updateDrag(next);
-      preview(next);
+      const pointerMoved = current.pointerMoved || Math.abs(moveEvent.clientX - current.startX) >= 3;
+      const nextDrag = {
+        ...current,
+        pointerMoved,
+        deltaFrames: handlersRef.current.delta(current, moveEvent.clientX),
+      };
+      updateDrag(nextDrag);
+      handlersRef.current.preview(nextDrag);
     };
-    const finish = (event: PointerEvent) => {
+    const finish = (upEvent: PointerEvent) => {
+      cleanupListenersRef.current?.();
+      cleanupListenersRef.current = null;
       const current = dragRef.current;
       if (!current) return;
-      if (onDropSelectionToChat && isOverChatComposer?.(event.clientX, event.clientY)) {
+      const h = handlersRef.current;
+      if (h.onDropSelectionToChat && h.isOverChatComposer?.(upEvent.clientX, upEvent.clientY)) {
         updateDrag(null);
-        onPreview(null);
-        onDropSelectionToChat({
+        h.onPreview(null);
+        h.onDropSelectionToChat({
           itemIds: current.itemIds,
           captionSelections: current.captionSelections,
         });
         return;
       }
-      const deltaFrames = delta(current, event.clientX);
+      const deltaFrames = h.delta(current, upEvent.clientX);
+      const pointerMoved = current.pointerMoved || Math.abs(upEvent.clientX - current.startX) >= 3;
       updateDrag(null);
-      onPreview(null);
-      if (deltaFrames) onCommit(current.itemIds, current.captionSelections, deltaFrames);
+      h.onPreview(null);
+      if (deltaFrames) {
+        const problem = displayCueMoveProblem(h.state, current.captionSelections);
+        if (problem) h.onBlocked?.(problem);
+        else h.onCommit(current.itemIds, current.captionSelections, deltaFrames);
+      } else if (!pointerMoved && current.hadGroupSelection) {
+        h.onClickWithoutDrag?.(current.selection);
+      }
     };
+    const onCancel = () => cancel();
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', finish, { once: true });
-    window.addEventListener('pointercancel', cancel, { once: true });
-    return () => {
+    window.addEventListener('pointercancel', onCancel, { once: true });
+    cleanupListenersRef.current = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('pointercancel', onCancel);
     };
-  }, [
-    drag?.key, delta, updateDrag, preview, cancel, onPreview, onCommit,
-    isOverChatComposer, onDropSelectionToChat,
-  ]);
+    return true;
+  };
   useEffect(() => () => {
-    if (dragRef.current) onPreview(null);
-  }, [onPreview]);
+    cleanupListenersRef.current?.();
+    cleanupListenersRef.current = null;
+    if (dragRef.current) handlersRef.current.onPreview(null);
+  }, []);
   return { drag, start, cancel };
 }

@@ -6,10 +6,13 @@ import type { Tpl } from '../types';
 import type { AtomicAction } from './reduce';
 import type { SequenceGraphErrorDetails } from './sequenceGraph';
 import type { SlipResult } from './slip';
+import type { CompactTracksResult } from './trackConsolidate';
+import type { CompositionMosaic } from './compositionMosaic';
 import type {
   AspectFit,
   ClipEffect,
   ClipFilters,
+  ClipMask,
   ClipTransform,
   DesignStyle,
   KeyframeEasing,
@@ -39,10 +42,12 @@ export interface AddAudioResult {
 }
 
 export interface EditorCommands {
+  /** Read the live active timeline before committing asynchronous editor work. */
+  getState?: () => TimelineState;
   addMotionGraphic: (tpl: Tpl, at?: { track?: TrackId; startFrame?: number; ripple?: boolean; overwrite?: boolean }) => void;
   addAudio: (asset: AudioAsset, at?: { track?: TrackId; startFrame?: number; ripple?: boolean; overwrite?: boolean }) => AddAudioResult;
   addAsset: (asset: MediaAsset) => void;
-  addMediaItem: (asset: MediaAsset, at?: { track?: TrackId; startFrame?: number; srcInFrame?: number; ripple?: boolean; overwrite?: boolean }) => string;
+  addMediaItem: (asset: MediaAsset, at?: { track?: TrackId; startFrame?: number; srcInFrame?: number; durationInFrames?: number; ripple?: boolean; overwrite?: boolean; volume?: number }) => string;
   /** Add an instance of another timeline without copying its contents. */
   addSequence: (timelineId: string, at?: {
     track?: TrackId;
@@ -83,6 +88,9 @@ export interface EditorCommands {
     name?: string;
     ripple?: boolean;
   }) => string;
+  addShapeItem: (shape: 'rectangle' | 'ellipse', at?: { track?: TrackId; startFrame?: number; durationInFrames?: number }) => string;
+  addCompositionMosaic: (at?: { track?: TrackId; startFrame?: number; durationInFrames?: number }) => string;
+  setCompositionMosaic: (id: string, patch: Partial<CompositionMosaic>) => void;
   /** Authored text clip. Returns the new item id. */
   addTextClip: (at?: {
     track?: TrackId;
@@ -101,9 +109,11 @@ export interface EditorCommands {
   setItemTiming: (id: string, timing: { startFrame?: number; durationInFrames?: number; srcInFrame?: number; ripple?: boolean }) => void;
   slipItem: (id: string, deltaInFrames: number) => SlipResult;
   setItemVolume: (id: string, volume: number) => void;
+  toggleSelectedPicture: (ids: string[]) => void;
   setItemFade: (id: string, fade: { fadeInFrames?: number; fadeOutFrames?: number }) => void;
   setItemTransform: (id: string, patch: ClipTransform) => void;
   setItemFilters: (id: string, patch: ClipFilters) => void;
+  setItemMask: (id: string, mask: ClipMask | null) => void;
   setItemBackgroundFill: (id: string, enabled: boolean, strength?: number) => void;
   setItemZoom: (id: string, patch: Partial<ZoomEffect> | null) => void;
   /** Replace a clip's per-clip WebGL effect stack. */
@@ -133,12 +143,13 @@ export interface EditorCommands {
   splitItem: (id: string, atFrame: number) => void;
   clearTimeline: () => void;
   setAspect: (width: number, height: number, fit?: AspectFit) => void;
-  toggleTrackFlag: (track: TrackId, flag: 'hidden' | 'muted' | 'collapsed' | 'locked') => void;
-  createTrack: (kind: TrackKind, opts?: { name?: string; role?: TrackFlags['role']; order?: number; audioRouting?: TrackFlags['audioRouting'] }) => TrackId;
+  toggleTrackFlag: (track: TrackId, flag: 'hidden' | 'muted' | 'soloed' | 'collapsed' | 'locked') => void;
+  createTrack: (kind: TrackKind, opts?: { name?: string; visualRole?: TrackFlags['visualRole']; role?: TrackFlags['role']; order?: number; audioRouting?: TrackFlags['audioRouting'] }) => TrackId;
   createCaptionTrack: (captions: CaptionsData, opts?: { name?: string; order?: number }) => TrackId;
   updateTrack: (track: TrackId, patch: TrackUpdate) => void;
   deleteTracks: (tracks: TrackId[]) => void;
   tightenTrack: (track: TrackId) => void;
+  compactTracks: () => CompactTracksResult;
   setCaptions: (captions: CaptionsData | null, track?: TrackId) => void;
   updateCaptions: (patch: Partial<CaptionsData>, track?: TrackId) => void;
   /** Global caption-system switch: captions off also hides on-screen text clips. */
@@ -176,6 +187,8 @@ export interface EditorCommands {
   selectAll: () => void;
   /** atomically replace the whole timeline (proposal apply → one undo step) */
   applyState: (state: TimelineState) => void;
+  /** Re-plan and commit a rolling trim against the live timeline in one history step. */
+  applyRollingTrim: (leftId: string, rightId: string, deltaF: number) => void;
   /** atomically replace the whole project (project-level proposal apply → one undo step) */
   applyDoc: (doc: ProjectDoc) => void;
   /** Execute multiple reducer operations as one undo/redo history entry. */
@@ -185,11 +198,13 @@ export interface EditorCommands {
   createTimeline: (opts?: { name?: string; width?: number; height?: number; fit?: AspectFit; activate?: boolean }) => string;
   /** make a timeline active (no history step) */
   switchTimeline: (id: string) => void;
+  createSubdraft: (ids: readonly string[]) => { ok: true; timelineId: string; itemId: string } | { ok: false; error: string };
   /** copy a timeline (optionally retargeting the canvas for long→short); returns the copy's id */
   duplicateTimeline: (id: string, opts?: { name?: string; retarget?: { width: number; height: number; fit?: AspectFit }; activate?: boolean }) => string;
   deleteTimeline: (id: string) => void;
   renameTimeline: (id: string, name: string) => void;
   retargetTimeline: (id: string, width: number, height: number, fit?: AspectFit) => void;
+  setTimelineSnapping: (snapping: boolean) => void;
   /** Hide/restore a timeline tab; the last visible one cannot be hidden. */
   setTimelineHidden: (id: string, hidden: boolean) => void;
   // ── Design style = project brand ────────────────────────────────────────

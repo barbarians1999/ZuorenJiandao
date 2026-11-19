@@ -255,6 +255,7 @@ const MIME: Record<string, string> = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
   webp: 'image/webp', svg: 'image/svg+xml', avif: 'image/avif', heic: 'image/heic', heif: 'image/heif',
   srt: 'application/x-subrip', vtt: 'text/vtt', txt: 'text/plain', json: 'application/json',
+  ttf: 'font/ttf', otf: 'font/otf', ttc: 'font/collection', woff: 'font/woff', woff2: 'font/woff2',
 };
 
 export function mimeFor(name: string): string {

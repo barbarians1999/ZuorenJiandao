@@ -46,7 +46,7 @@ export class DerivativeQueue {
 
   acquire<T>(key: string, work: DerivativeWork<T>): DerivativeLease<T> {
     const running = this.jobs.get(key) as Job<T> | undefined;
-    if (running) {
+    if (running && !running.controller.signal.aborted) {
       running.consumers += 1;
       return this.lease(running);
     }

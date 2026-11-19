@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 import { keyStatus, setKeys } from '../keystore.ts';
-import { runProbe } from '../key-probes.ts';
 import {
   checkMediaDir,
   DEFAULT_UPLOAD_DIR,
@@ -34,6 +33,17 @@ const ISOLATED_R2_SETTINGS = [
   'R2_ENABLED',
   'R2_PRESIGN',
 ] as const;
+
+export const EDITOR_SETTINGS_KEYS = new Set([
+  'OPENCHATCUT_DATA_DIR', 'MEDIA_DIR', 'UI_SCALE', 'LOCAL_ASR_MODEL',
+  'AUTO_TRANSCRIBE_INGEST', 'TRANSCRIPTION_LANGUAGE', 'TRANSCRIPTION_DIARIZATION', 'UI_LOCALE',
+]);
+
+export function assertEditorSettingsPatch(patch: Readonly<Record<string, unknown>>): void {
+  if (Object.keys(patch).some((key) => !EDITOR_SETTINGS_KEYS.has(key))) {
+    throw new Error('Only local editor settings are supported; embedded AI/API configuration was removed.');
+  }
+}
 
 export function assertProfileSensitiveSettingsPatch(
   patch: Readonly<Record<string, unknown>>,
@@ -87,11 +97,12 @@ function settingsBody(restartRequired = false) {
   const status = keyStatus();
   const configured = readDataDirPointer() ?? '';
   return {
-    ...status,
+    keys: {},
+    caps: { image: false, voice: false, video: false, music: false, sound: false, stock: false, transcription: false, sandbox: false, web: false },
     // The storage root is configuration, not a credential: echo it raw so the
     // settings field shows where projects actually live. It is not a keystore
     // key (the keystore lives inside the root), hence the explicit merge.
-    models: { ...status.models, [DATA_DIR_ENV]: configured },
+    models: { ...Object.fromEntries(Object.entries(status.models).filter(([key]) => EDITOR_SETTINGS_KEYS.has(key))), [DATA_DIR_ENV]: configured, PREFERRED_TRANSCRIPTION_PROVIDER: 'local' },
     mediaDir: uploadDir(),
     dataDir: profile.rootDir,
     ...(restartRequired ? { restartRequired: true } : {}),
@@ -130,8 +141,7 @@ async function applyDataDirChange(
     const outcome = await relocateDataDir(profile.rootDir, destination, log, sqliteStoreEnabled());
     if (outcome.refused === 'sqlite-store-active') {
       throw new Error(
-        'the project store has been migrated to SQLite and cannot be relocated yet: '
-        + 'moving a live database needs a quiesced snapshot, which this setting does not do',
+        '工程索引数据库启用中，暂不支持在软件运行时直接迁移数据目录；如需迁移，请先关闭软件并手动移动整个数据目录。',
       );
     }
     // Uploads are addressed by name through uploadReadDirs(), so the copy must
@@ -149,20 +159,11 @@ export function settingsPlugin(): Plugin {
       server.middlewares.use('/api/keys', async (req, res) => {
         try {
           if (req.method === 'GET') { sendJson(res, 200, settingsBody()); return; }
-          // POST /api/keys/test: "Test connection" detection. overrides = unsaved temporary values of the panel,
-          // Only this detection takes effect and does not fall into keystore / .env.local; the result will never contain the key value.
-          if (req.method === 'POST' && req.url === '/test') {
-            const body = await readBody(req);
-            const page = typeof body.page === 'string' ? body.page : '';
-            const overrides = body.overrides && typeof body.overrides === 'object' && !Array.isArray(body.overrides)
-              ? body.overrides as Record<string, unknown>
-              : {};
-            sendJson(res, 200, await runProbe(page, overrides));
-            return;
-          }
+          if (req.url === '/test') { sendJson(res, 410, { error: 'AI provider configuration was removed' }); return; }
           if (req.method === 'POST') {
             const profile = runtimeProfile();
             const patch = await readBody(req);
+            assertEditorSettingsPatch(patch);
             assertProfileSensitiveSettingsPatch(patch, profile);
             // The storage root is not a keystore key (the keystore lives inside
             // it): handle and strip it before setKeys sees the patch.

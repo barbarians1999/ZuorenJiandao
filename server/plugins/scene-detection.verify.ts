@@ -9,6 +9,7 @@ import {
   detectScenesInFile,
   parseProgressTimeMs,
   sceneAnalysisFps,
+  resolveSceneAnalysisRange,
 } from './scene-detection.ts';
 import { normalizeSceneCandidates, parseSceneMetadata } from '../../src/scene-detection/detect.ts';
 
@@ -39,6 +40,11 @@ assert.equal(parseProgressTimeMs('progress=continue'), null);
 assert.equal(sceneAnalysisFps(3_600_000), 10);
 assert.equal(sceneAnalysisFps(36_000_000), 1);
 assert.equal(sceneAnalysisFps(1_000), 12);
+assert.deepEqual(resolveSceneAnalysisRange(3000), { rangeStartMs: 0, rangeEndMs: 3000, analysisDurationMs: 3000 });
+assert.deepEqual(resolveSceneAnalysisRange(3000, 1200, 9000), { rangeStartMs: 1200, rangeEndMs: 3000, analysisDurationMs: 1800 });
+assert.throws(() => resolveSceneAnalysisRange(3000, -1, 2000), /invalid/);
+assert.throws(() => resolveSceneAnalysisRange(3000, 3000, 4000), /outside/);
+assert.throws(() => resolveSceneAnalysisRange(3000, 0, Number.NaN), /invalid/);
 assert.deepEqual(addSceneEvidence('/media/uploads/cuts.mp4', [{
   timeMs: 1000, score: 0.42, kind: 'cut',
 }], 3000), [{
@@ -83,6 +89,14 @@ try {
   assert.ok(progress.some((update) => update.phase === 'detecting' && update.processedMs > 0));
   assert.equal(progress.at(-1)!.phase, 'finalizing');
   assert.equal(progress.at(-1)!.processedMs, result.durationMs);
+
+  const bounded = await detectScenesInFile(video, { threshold: .2, minSceneMs: 200, maxScenes: 1,
+    rangeStartMs: 1200, rangeEndMs: 2800 });
+  assert.equal(bounded.scenes.length, 1, 'range-external cuts cannot consume maxScenes');
+  assert.ok(Math.abs(bounded.scenes[0]!.timeMs - 2000) <= 100, 'source-time offset is restored after seeking');
+  assert.equal(bounded.rangeStartMs, 1200);
+  assert.equal(bounded.rangeEndMs, 2800);
+  assert.equal(bounded.sampleFps, 12);
 
   const cancelled = new AbortController();
   cancelled.abort();

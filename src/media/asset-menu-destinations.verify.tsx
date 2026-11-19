@@ -6,7 +6,10 @@ import { createServer } from 'vite';
 
 const testLocaleId = '\0asset-menu-destinations-test-locale';
 const vite = await createServer({
+  configFile: false,
   appType: 'custom',
+  esbuild: { jsx: 'automatic' },
+  optimizeDeps: { noDiscovery: true },
   plugins: [{
     name: 'asset-menu-destinations-test-locale',
     enforce: 'pre',
@@ -23,7 +26,7 @@ const vite = await createServer({
       `;
     },
   }],
-  server: { middlewareMode: true },
+  server: { middlewareMode: true, watch: null },
 });
 
 try {
@@ -86,21 +89,17 @@ try {
   const markup = renderToStaticMarkup(createElement(AssetMenuDestinations, {
     assetName: '7月7日.mp4',
     onAddTimeline: () => undefined,
-    onAddChat: () => undefined,
   }));
 
   assert.match(markup, /添加到：/);
   assert.match(markup, />时间线</);
-  assert.match(markup, />AI 对话框</);
-  assert.ok(markup.indexOf('>AI 对话框<') < markup.indexOf('>时间线<'), 'AI 对话框应位于左侧，时间线应位于右侧');
+  assert.doesNotMatch(markup, /AI|chat/);
   assert.match(markup, /aria-label="添加 7月7日.mp4 到时间线"/);
-  assert.match(markup, /aria-label="添加 7月7日.mp4 到 AI 对话框"/);
 
   const documentMarkup = renderToStaticMarkup(createElement(AssetMenuDestinations, {
     assetName: 'script.md',
-    onAddChat: () => undefined,
   }));
-  assert.match(documentMarkup, />AI 对话框</);
+  assert.doesNotMatch(documentMarkup, /AI|chat/);
   assert.doesNotMatch(documentMarkup, />时间线</);
 
   const blankMenuMarkup = renderToStaticMarkup(createElement(BlankMediaMenuActions, {

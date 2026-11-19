@@ -8,10 +8,11 @@ function fallbackReasonText(status: SelectedPreviewStatus): string {
   if (status.fallbackReason === 'missing-shader') return t('着色器资源缺失');
   if (status.fallbackReason === 'shader-error') return t('着色器编译或运行失败');
   if (status.fallbackReason === 'unsupported-transition') return t('转场不支持 GL');
+  if (status.fallbackReason === 'privacy-transition') return t('打码片段转场使用兼容叠化');
   return t('资源尚未就绪');
 }
 
-export function PreviewFidelityStatus({ status }: { status?: SelectedPreviewStatus }) {
+export function PreviewFidelityStatus({ status, protectedSource = false }: { status?: SelectedPreviewStatus; protectedSource?: boolean }) {
   const t = useT();
   if (!status || status.phase === 'inactive') return null;
   const fallback = status.phase === 'fallback';
@@ -20,14 +21,14 @@ export function PreviewFidelityStatus({ status }: { status?: SelectedPreviewStat
     : status.phase === 'waiting'
       ? t('正在准备真实 GL 预览…')
       : status.adapter === 'css-transition'
-        ? t('CSS 回退预览 · 不代表导出效果')
-        : t('源画面回退 · 当前未显示特效');
+        ? status.fallbackReason === 'privacy-transition' ? t('兼容叠化 · 预览与导出一致') : t('CSS 回退预览 · 不代表导出效果')
+        : protectedSource ? t('打码预览未就绪 · 已隐藏源画面') : t('源画面回退 · 当前未显示特效');
   return (
     <div role="status" aria-live="polite" style={{
       display: 'flex', alignItems: 'center', gap: 6, minHeight: 24,
       padding: '4px 6px', border: `0.5px solid ${fallback ? theme.accent : theme.border}`,
       borderRadius: 4, color: fallback ? theme.text : theme.textMuted,
-      background: theme.panelAlt, fontSize: 10.5, lineHeight: 1.35,
+      background: theme.panelAlt, fontSize: 14, lineHeight: 1.5,
     }}>
       <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: '50%', flex: '0 0 auto', background: fallback ? theme.accent : status.phase === 'ready' ? theme.success : theme.textDim }} />
       <span>{label}{fallback ? ` · ${t(fallbackReasonText(status))}` : ''}</span>

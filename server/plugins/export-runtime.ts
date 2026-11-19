@@ -344,20 +344,36 @@ export function finalH264EncoderOutcome(
   return { ...retimed, encoderFallbackReason: rendered.encoderFallbackReason };
 }
 
+export type RenderProgressPhase = 'rendering' | 'finalizing';
+export interface RenderProgressCallback {
+  (value: number): void;
+  setPhase: (phase: RenderProgressPhase) => void;
+}
+
 export function createRenderProgress(
   update: UpdateGenerationJob,
   totalFrames: number,
   span: number,
-): (value: number) => void {
-  return (value) => {
+): RenderProgressCallback {
+  let phase: RenderProgressPhase = 'rendering';
+  const report = ((value: number) => {
     const normalized = Math.min(1, Math.max(0, Number(value) || 0));
     update({
-      phase: 'rendering',
-      progress: 8 + normalized * span,
-      processedFrames: Math.min(totalFrames, Math.floor(normalized * totalFrames)),
+      phase,
+      progress: phase === 'finalizing' ? 96 + normalized * 2 : 8 + normalized * span,
+      processedFrames: phase === 'finalizing'
+        ? totalFrames
+        : Math.min(totalFrames, Math.floor(normalized * totalFrames)),
       totalFrames,
     });
+  }) as RenderProgressCallback;
+  report.setPhase = (next) => {
+    phase = next;
+    update(next === 'finalizing'
+      ? { phase, progress: 96, processedFrames: totalFrames, totalFrames }
+      : { phase, progress: 8, processedFrames: 0, totalFrames });
   };
+  return report;
 }
 
 export function exportOutputSize(state: unknown, scale: number): { width: number; height: number } {

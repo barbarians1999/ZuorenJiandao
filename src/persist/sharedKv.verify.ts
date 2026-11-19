@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { kvDel, kvGet, kvGetFresh, kvKeys, kvRemoteMode, kvSet, resetSharedKvMemory } from './sharedKv';
+import { kvDel, kvEntriesForCleanup, kvGet, kvGetFresh, kvKeys, kvRemoteMode, kvSet, resetSharedKvMemory } from './sharedKv';
 import { mergeProjectEntries } from '../../server/plugins/project-store-entries';
 import { CURRENT_PROJECT_VERSION } from '../../shared/project-version';
 import { loadProjectForEditing, migrateProjectDoc } from './projectStore';
@@ -452,6 +452,25 @@ try {
   assert.equal(local.has(PENDING_KEYS_KEY), false, 'all three pending documents have explicit confirmation');
   await verifyEditedRecovery(false);
   await verifyEditedRecovery(true);
+  // Cleanup must retain local unsynced references and freshly read remote ones.
+  local.clear();
+  resetSharedKvMemory();
+  let rejectSnapshot = false;
+  installGlobal('window', { openChatCutDesktop: {
+    projectStore: async (request: { operation: string }) => {
+      if (request.operation === 'entry') return { found: true, value: [] };
+      if (request.operation === 'snapshot' && rejectSnapshot) throw new Error('snapshot unavailable');
+      return { version: 1, entries: { projects: [], 'project:remote': { src: '/media/uploads/remote.mp4' } } };
+    },
+  } });
+  await kvGet('projects');
+  local.set('project:pending', { src: '/media/uploads/local.mp4' });
+  const cleanupInventory = await kvEntriesForCleanup();
+  assert.deepEqual(cleanupInventory['project:remote'], { src: '/media/uploads/remote.mp4' });
+  assert.deepEqual(cleanupInventory['local:project:pending'], { src: '/media/uploads/local.mp4' });
+  rejectSnapshot = true;
+  await assert.rejects(kvEntriesForCleanup(), /snapshot unavailable/,
+    'cleanup never falls back to incomplete local data after a remote read failure');
 } finally {
   resetSharedKvMemory();
   restoreGlobals();

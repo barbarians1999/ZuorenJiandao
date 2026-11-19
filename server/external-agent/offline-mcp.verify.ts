@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate as delayImmediate } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -24,6 +25,7 @@ function projectDoc(width = 1920, height = 1080, fit?: 'cover' | 'contain'): Pro
       height,
       items: [],
       selectedId: null,
+      selectedIds: [],
       trackOrder: ['track-v1'],
       tracks: { 'track-v1': { kind: 'video' } },
       ...(fit ? { fit } : {}),
@@ -54,12 +56,15 @@ function sessionId(result: CallToolResult): string {
 }
 
 const root = await mkdtemp(join(tmpdir(), 'occ-offline-mcp-'));
-const previousHome = process.env.HOME;
-process.env.HOME = root;
+const previousDataDir = process.env.OPENCHATCUT_DATA_DIR;
+process.env.OPENCHATCUT_DATA_DIR = root;
 
-// The store captures HOME at module evaluation; delay these known modules so this
-// verification can never touch the user's real project data.
+// Windows os.homedir() ignores HOME. Pin the exact test storage root before
+// importing the store, so this check never reads existing user/test fixtures.
+const { runtimeProfile } = await import('../runtime-profile.ts');
+assert.equal(runtimeProfile().rootDir, root);
 const { getStoredEntry, setStoredEntry } = await import('../plugins/project-store.ts');
+const { createExternalProject } = await import('./projects.ts');
 const {
   registerEditor,
   resetExternalAgentBrokerForTest,
@@ -72,6 +77,13 @@ const {
 } = await import('./mcp.ts');
 
 const projectId = 'offline-mcp-project';
+const createdProject = await createExternalProject({ name: 'Created defaults', compositionWidth: 1280, compositionHeight: 720 });
+const createdProjectDoc = (await getStoredEntry(`project:${createdProject.id}`)).value as ProjectDoc;
+assert.equal(createdProjectDoc.timelines[0]!.width, 1280);
+assert.equal(createdProjectDoc.timelines[0]!.height, 720);
+assert.equal(createdProjectDoc.timelines[0]!.interaction?.magnet, false);
+assert.equal(createdProjectDoc.timelines[0]!.interaction?.linkage, false);
+assert.equal(createdProjectDoc.timelines[0]!.interaction?.snapping, true);
 await setStoredEntry(`project:${projectId}`, projectDoc());
 await setStoredEntry('projects', [{ id: projectId, name: 'Offline MCP', updatedAt: 1 }]);
 await resetMcpSessionsForTest();
@@ -124,7 +136,7 @@ try {
   assert.equal(resultField(review, 'status'), 'applied');
   assert.deepEqual((await getStoredEntry(`project:${projectId}`)).value, projectDoc(1080, 1920, 'contain'));
   const versions = (await getStoredEntry(`versions:${projectId}`)).value;
-  assert(Array.isArray(versions) && versions.length === 1);
+  assert(Array.isArray(versions) && versions.length === 1, `Expected one edit checkpoint: ${JSON.stringify(versions)}`);
   assert(versions[0] && typeof versions[0] === 'object' && 'doc' in versions[0]);
   assert.deepEqual(versions[0].doc, projectDoc());
 
@@ -147,6 +159,14 @@ try {
   assert.equal(staleReview.isError, true);
   assert.equal(resultField(staleReview, 'outcome'), 'stale');
   assert.deepEqual((await getStoredEntry(`project:${projectId}`)).value, concurrent);
+  await delayImmediate();
+  assert.ok((await staleClient.listTools()).tools.some((tool) => tool.name === 'target_project'));
+  for (const name of ['openchatcut_status', 'set_aspect_ratio', 'get_edit_session']) {
+    const result = await staleClient.callTool({ name, arguments: { editSessionId: staleId, ratio: '16:9' } });
+    assert.equal(result.isError, true);
+    assert.equal(resultField(result, 'outcome'), 'stale');
+    assert.equal(resultField(result, 'message'), resultField(staleReview, 'message'));
+  }
 
   const takeoverClient = await connect('offline-takeover');
   await takeoverClient.callTool({ name: 'target_project', arguments: { projectId } });
@@ -167,14 +187,26 @@ try {
   assert.equal(resultField(takeoverReview, 'outcome'), 'stale');
   assert.deepEqual((await getStoredEntry(`project:${projectId}`)).value, concurrent);
   await unregisterEditor(projectId, 'browser-owner');
+
+  const ownershipClient = await connect('offline-stale-ownership');
+  await ownershipClient.callTool({ name: 'target_project', arguments: { projectId } });
+  await setStoredEntry(`project:${projectId}`, projectDoc(640, 360));
+  const ownershipStale = await ownershipClient.callTool({ name: 'openchatcut_status', arguments: {} });
+  assert.equal(resultField(ownershipStale, 'outcome'), 'stale');
+  await delayImmediate();
+  assert.ok((await ownershipClient.listTools()).tools.some((tool) => tool.name === 'target_project'));
+  const freshOfflineClient = await connect('offline-after-stale-ownership');
+  assert.notEqual((await freshOfflineClient.callTool({
+    name: 'target_project', arguments: { projectId },
+  })).isError, true, 'a stale offline binding releases ownership without closing its MCP transport');
 } finally {
   await resetMcpSessionsForTest();
   await Promise.all(clients.map((client) => client.close().catch(() => undefined)));
   resetExternalAgentBrokerForTest();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await getStoredEntry('projects');
-  if (previousHome === undefined) delete process.env.HOME;
-  else process.env.HOME = previousHome;
+  if (previousDataDir === undefined) delete process.env.OPENCHATCUT_DATA_DIR;
+  else process.env.OPENCHATCUT_DATA_DIR = previousDataDir;
   await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 10 });
 }
 

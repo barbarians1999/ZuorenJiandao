@@ -4,9 +4,10 @@
 import assert from 'node:assert';
 import { SHORTCUT_CATALOG } from './catalog';
 import {
-  effectiveCatalog, setBinding, resetBinding, resetAllBindings, isCustomized, customizedCount,
+  effectiveCatalog, effectiveMatchingCatalog, setBinding, resetBinding, resetAllBindings, isCustomized, customizedCount,
   chordFromEvent, findConflicts,
 } from './keymap';
+import { matchShortcut } from './match';
 
 const keysOf = (id: string): string => effectiveCatalog().find((a) => a.id === id)!.keys;
 
@@ -48,6 +49,21 @@ assert.ok(conflicts.some((c) => c.id === 'undo'), 'Mod+Z conflicts with undo');
 assert.ok(!findConflicts(SHORTCUT_CATALOG, 'undo', 'Mod + Z').some((c) => c.id === 'undo'), 'self excluded');
 // a free chord has no conflicts
 assert.equal(findConflicts(SHORTCUT_CATALOG, 'undo', 'Mod + Alt + Shift + Y').length, 0, 'free chord clean');
+
+// A newly added group default may overlap an old explicit user binding.
+// Real dispatch must keep that user binding, while settings retain catalog order.
+const originalOrder = effectiveCatalog().map((entry) => entry.id);
+const target = { tagName: 'DIV', isContentEditable: false, closest: () => null } as unknown as HTMLElement;
+const groupKey = { ...ev({ key: 'g', ctrlKey: true }), target, repeat: false } as KeyboardEvent;
+const context = { held: new Set<string>(), isMac: false };
+setBinding('select-all', 'Mod + G');
+assert.equal(matchShortcut(groupKey, effectiveMatchingCatalog(), context), 'select-all');
+assert.deepEqual(effectiveCatalog().map((entry) => entry.id), originalOrder);
+resetBinding('select-all');
+assert.equal(matchShortcut(groupKey, effectiveMatchingCatalog(), context), 'group');
+setBinding('group', 'Mod + Alt + G');
+assert.equal(matchShortcut(groupKey, effectiveMatchingCatalog(), context), null);
+assert.equal(matchShortcut({ ...groupKey, altKey: true }, effectiveMatchingCatalog(), context), 'group');
 
 resetAllBindings();
 console.log('keymap.verify.ts OK');

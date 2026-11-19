@@ -15,6 +15,7 @@ export interface CaptionLayout {
   anchor?: CaptionAnchor;
   offsetXRatio?: number;
   offsetYRatio?: number;
+  widthRatio?: number;
   scale?: number;
   rotation?: number;
   opacity?: number;
@@ -88,6 +89,8 @@ export interface CaptionsData {
   /** custom style fields layered OVER the template preset (edit_captions
    * action=style). Only what the user set; unset fields inherit the preset. */
   styleOverride?: CaptionStyleOverride;
+  /** Optional per-cue font, keyed by manual cue identity or the first source-word identity. */
+  cueFonts?: Record<string, Pick<CaptionStyleOverride, 'fontFamily' | 'fontAssetId'>>;
   /** whole-block placement (edit_captions action=layout). Unset = the
    * template's default bottom-center. */
   layout?: CaptionLayout;
@@ -145,6 +148,29 @@ export interface CaptionSourceEntry {
   heightRatio?: number;
   /** per-source style overrides layered over template+styleOverride (source_update.style) */
   style?: CaptionStyleOverride;
+  /** User-edited display cues keyed to the original source words and media-time spans. */
+  displayCueEdits?: CaptionDisplayCueEdit[];
+}
+
+export interface CaptionSourceSpan {
+  wordRef: string;
+  startMs: number;
+  endMs: number;
+  sourceText: string;
+  timingOffsetMs?: number;
+}
+
+export interface CaptionDisplayCuePart {
+  id: string;
+  text: string;
+  sourceSpans: CaptionSourceSpan[];
+}
+
+export interface CaptionDisplayCueEdit {
+  id: string;
+  /** All original words hidden while this display edit is active. */
+  coveredWordRefs: string[];
+  parts: CaptionDisplayCuePart[];
 }
 
 /** How multiple sources share the screen (action=layout_policy). */

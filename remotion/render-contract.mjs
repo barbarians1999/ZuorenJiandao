@@ -9,6 +9,16 @@ const H264_PROFILE_LABELS = {
 const RENDER_MEDIA_FIELD = /(?:^|_)(?:src|url|path|cube|lut)$/i;
 const RENDER_MEDIA_FIELD_SUFFIX = /(?:Src|Url|Path)$/;
 
+/** Thumbnail callers keep their payload budget; visual audits opt into native pixels. */
+export function timelineStillOptions({ width, frameCount, fullResolution = false }) {
+  if (typeof fullResolution !== 'boolean') throw new TypeError('fullResolution must be a boolean');
+  if (!Number.isFinite(width) || width <= 0) throw new TypeError('Still composition width must be positive');
+  return {
+    scale: fullResolution ? 1 : (frameCount > 6 ? 480 : 640) / width,
+    jpegQuality: fullResolution ? 95 : 72,
+  };
+}
+
 export function normalizeH264Profile(codec, profile) {
   if (codec !== 'h264') return undefined;
   const id = profile?.id;

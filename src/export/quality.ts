@@ -1,3 +1,5 @@
+import { pictureAnimationTiming } from '../../shared/picture-animation-timing.mjs';
+
 interface TimelineQaState {
   fps: number;
   width: number;
@@ -9,6 +11,19 @@ interface TimelineQaState {
     durationInFrames: number;
     kind: string;
     volume?: number;
+    audioDetached?: boolean;
+    fadeInFrames?: number;
+    fadeOutFrames?: number;
+    pictureDisabled?: boolean;
+    props?: Record<string, unknown>;
+  }>;
+  transitions?: Array<{
+    type: string;
+    durationInFrames: number;
+    outgoingItemId: string;
+    incomingItemId: string;
+    trackId: string;
+    enabled?: boolean;
   }>;
   tracks?: Record<string, { kind?: 'video' | 'audio' | 'caption'; hidden?: boolean; muted?: boolean; captions?: TimelineQaState['captions'] } | undefined>;
   captions?: {
@@ -84,6 +99,8 @@ export interface ExportQaExpectations {
   height: number;
   fps: number;
   expectsAudio: boolean;
+  expectedBlackIntervals?: ExportQaInterval[];
+  expectedSilenceIntervals?: ExportQaInterval[];
 }
 
 export interface ExportQaReport extends ExportQaAnalysis {
@@ -199,6 +216,160 @@ function interval(start: number, end: number): ExportQaInterval | null {
   };
 }
 
+function withoutExpectedIntervals(
+  measured: readonly ExportQaInterval[],
+  fps: number,
+  expected: readonly ExportQaInterval[] = [],
+): ExportQaInterval[] {
+  const guard = 0.5 / Math.max(1, fps);
+  const allowed = expected
+    .map((value) => ({ start: value.startSeconds + guard, end: value.endSeconds - guard }))
+    .filter((value) => value.end > value.start)
+    .sort((a, b) => a.start - b.start);
+  const result: ExportQaInterval[] = [];
+  for (const value of measured) {
+    let parts: Array<[number, number]> = [[value.startSeconds, value.endSeconds]];
+    for (const window of allowed) {
+      parts = parts.flatMap(([start, end]) => {
+        if (window.end <= start || window.start >= end) return [[start, end]];
+        return [
+          ...(window.start > start ? [[start, Math.min(window.start, end)] as [number, number]] : []),
+          ...(window.end < end ? [[Math.max(window.end, start), end] as [number, number]] : []),
+        ];
+      });
+      if (!parts.length) break;
+    }
+    result.push(...parts.map(([start, end]) => ({ startSeconds: start, endSeconds: end, durationSeconds: end - start })));
+  }
+  return result;
+}
+
+interface FrameRange { startFrame: number; endFrameExclusive: number }
+interface QaFrameLayer {
+  id: string;
+  startFrame: number;
+  endFrameExclusive: number;
+  transparentRanges: Array<[number, number]>;
+}
+
+function uncoveredIntentIntervals(
+  layers: readonly QaFrameLayer[],
+  range: FrameRange,
+  fps: number,
+): ExportQaInterval[] {
+  const boundaries = new Set([range.startFrame, range.endFrameExclusive]);
+  for (const layer of layers) {
+    for (const frame of [layer.startFrame, layer.endFrameExclusive, ...layer.transparentRanges.flat()]) {
+      if (frame > range.startFrame && frame < range.endFrameExclusive) boundaries.add(frame);
+    }
+  }
+  const sorted = [...boundaries].sort((a, b) => a - b);
+  const intervals: ExportQaInterval[] = [];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const start = sorted[index - 1]!;
+    const end = sorted[index]!;
+    const middle = (start + end) / 2;
+    const active = layers.filter((layer) => middle >= layer.startFrame && middle < layer.endFrameExclusive);
+    const fullyVisible = active.some((layer) => !layer.transparentRanges.some(([fadeStart, fadeEnd]) =>
+      middle >= fadeStart && middle < fadeEnd));
+    // A gap is intentional. A fade can expose black only when it is the sole
+    // active layer; any other active layer may cover the gap/fade.
+    if (active.length > 1 || (active.length === 1 && fullyVisible)) continue;
+    const value = interval((start - range.startFrame) / fps, (end - range.startFrame) / fps);
+    if (!value) continue;
+    const previous = intervals.at(-1);
+    if (previous && Math.abs(previous.endSeconds - value.startSeconds) < 1e-9) {
+      previous.endSeconds = value.endSeconds;
+      previous.durationSeconds = value.endSeconds - previous.startSeconds;
+    } else intervals.push(value);
+  }
+  return intervals;
+}
+
+function frameLayer(
+  item: TimelineQaState['items'][number],
+  range: FrameRange,
+  includePictureFade: boolean,
+): QaFrameLayer {
+  const endFrameExclusive = item.startFrame + item.durationInFrames;
+  const transparentRanges: Array<[number, number]> = [];
+  const addTransparent = (start: number, end: number) => {
+    const clippedStart = Math.max(range.startFrame, item.startFrame, start);
+    const clippedEnd = Math.min(range.endFrameExclusive, endFrameExclusive, end);
+    if (clippedEnd > clippedStart) transparentRanges.push([clippedStart, clippedEnd]);
+  };
+  addTransparent(item.startFrame, item.startFrame + Math.max(0, item.fadeInFrames ?? 0));
+  addTransparent(endFrameExclusive - Math.max(0, item.fadeOutFrames ?? 0), endFrameExclusive);
+  if (includePictureFade && item.props) {
+    const timing = pictureAnimationTiming(item);
+    if (item.props.visualEntrance === 'fade' && timing.entrance) {
+      addTransparent(item.startFrame + timing.entrance.from, item.startFrame + timing.entrance.until);
+    }
+    if (item.props.visualExit === 'fade' && timing.exit) {
+      addTransparent(item.startFrame + timing.exit.from, item.startFrame + timing.exit.until);
+    }
+  }
+  return {
+    id: item.id,
+    startFrame: Math.max(range.startFrame, item.startFrame),
+    endFrameExclusive: Math.min(range.endFrameExclusive, endFrameExclusive),
+    transparentRanges,
+  };
+}
+
+function uncoveredTransitionBlackIntervals(
+  state: TimelineQaState,
+  range: FrameRange,
+  fps: number,
+  visualLayers: readonly QaFrameLayer[],
+): ExportQaInterval[] {
+  const result: ExportQaInterval[] = [];
+  for (const transition of state.transitions ?? []) {
+    if (transition.enabled === false || transition.type !== 'dip-to-black'
+      || !Number.isSafeInteger(transition.durationInFrames) || transition.durationInFrames <= 0) continue;
+    const outgoing = state.items.find((item) => item.id === transition.outgoingItemId);
+    const incoming = state.items.find((item) => item.id === transition.incomingItemId);
+    if (!outgoing || !incoming || outgoing.track !== incoming.track || outgoing.track !== transition.trackId
+      || !visualLayers.some((layer) => layer.id === outgoing.id)
+      || !visualLayers.some((layer) => layer.id === incoming.id)) continue;
+    const start = incoming.startFrame - Math.floor(transition.durationInFrames / 2);
+    const firstBlackFrame = Math.ceil(transition.durationInFrames * 0.45);
+    const endBlackFrameExclusive = Math.floor(transition.durationInFrames * 0.55) + 1;
+    const candidateStart = Math.max(range.startFrame, start + firstBlackFrame);
+    const candidateEnd = Math.min(range.endFrameExclusive, start + endBlackFrameExclusive);
+    if (candidateEnd <= candidateStart) continue;
+
+    const blockers = visualLayers.filter((layer) => layer.id !== outgoing.id && layer.id !== incoming.id);
+    const boundaries = new Set([candidateStart, candidateEnd]);
+    for (const blocker of blockers) {
+      if (blocker.startFrame > candidateStart && blocker.startFrame < candidateEnd) boundaries.add(blocker.startFrame);
+      if (blocker.endFrameExclusive > candidateStart && blocker.endFrameExclusive < candidateEnd) boundaries.add(blocker.endFrameExclusive);
+    }
+    const sorted = [...boundaries].sort((a, b) => a - b);
+    for (let index = 1; index < sorted.length; index += 1) {
+      const a = sorted[index - 1]!;
+      const b = sorted[index]!;
+      const middle = (a + b) / 2;
+      if (blockers.some((layer) => middle >= layer.startFrame && middle < layer.endFrameExclusive)) continue;
+      result.push({ startSeconds: (a - range.startFrame) / fps, endSeconds: (b - range.startFrame) / fps,
+        durationSeconds: (b - a) / fps });
+    }
+  }
+  return result;
+}
+
+function mergeIntervals(intervals: readonly ExportQaInterval[]): ExportQaInterval[] {
+  const result: ExportQaInterval[] = [];
+  for (const value of [...intervals].sort((a, b) => a.startSeconds - b.startSeconds)) {
+    const previous = result.at(-1);
+    if (previous && value.startSeconds <= previous.endSeconds) {
+      previous.endSeconds = Math.max(previous.endSeconds, value.endSeconds);
+      previous.durationSeconds = previous.endSeconds - previous.startSeconds;
+    } else result.push({ ...value });
+  }
+  return result;
+}
+
 /** Parse the stable key/value messages emitted by FFmpeg analysis filters. */
 export function parseExportQaLog(log: string): Pick<
   ExportQaAnalysis,
@@ -295,7 +466,8 @@ export function assessExportQuality(
     add({ code: 'missing_audio', severity: 'error', message: 'The timeline contains audible media but the export has no audio stream.' });
   }
 
-  for (const black of analysis.blackFrames.filter((value) => value.durationSeconds >= 0.2)) {
+  for (const black of withoutExpectedIntervals(analysis.blackFrames, expected.fps, expected.expectedBlackIntervals)
+    .filter((value) => value.durationSeconds >= 0.2)) {
     const atEdge = black.startSeconds <= 0.08 || black.endSeconds >= analysis.durationSeconds - 0.08;
     if (!atEdge || black.durationSeconds >= 0.75) {
       add({
@@ -308,7 +480,8 @@ export function assessExportQuality(
     }
   }
 
-  for (const frozen of analysis.frozenFrames.filter((value) => value.durationSeconds >= 0.75)) {
+  for (const frozen of withoutExpectedIntervals(analysis.frozenFrames, expected.fps, expected.expectedBlackIntervals)
+    .filter((value) => value.durationSeconds >= 0.75)) {
     add({
       code: 'frozen_frames',
       severity: frozen.durationSeconds >= 3 ? 'error' : 'warning',
@@ -319,7 +492,8 @@ export function assessExportQuality(
   }
 
   if (expected.expectsAudio) {
-    for (const silent of analysis.silence.filter((value) => value.durationSeconds >= 3)) {
+    for (const silent of withoutExpectedIntervals(analysis.silence, expected.fps, expected.expectedSilenceIntervals)
+      .filter((value) => value.durationSeconds >= 3)) {
       const atEdge = silent.startSeconds <= 0.1 || silent.endSeconds >= analysis.durationSeconds - 0.1;
       if (!atEdge || silent.durationSeconds >= 5) {
         add({
@@ -368,19 +542,45 @@ export function timelineCutTimesSeconds(state: TimelineQaState, maxCuts = 12): n
     .slice(0, Math.max(1, Math.min(24, Math.round(maxCuts))));
 }
 
-export function exportQaExpectations(state: TimelineQaState): ExportQaExpectations {
+export function exportQaExpectations(
+  state: TimelineQaState,
+  frameRange?: FrameRange,
+): ExportQaExpectations {
+  const fps = Math.max(1, state.fps);
+  const timelineDuration = qaTimelineDuration(state);
+  const startFrame = Math.max(0, Math.min(timelineDuration - 1, Math.floor(frameRange?.startFrame ?? 0)));
+  const endFrameExclusive = Math.max(startFrame + 1, Math.min(timelineDuration,
+    Math.ceil(frameRange?.endFrameExclusive ?? timelineDuration)));
+  const range = { startFrame, endFrameExclusive };
+  const overlapsRange = (item: TimelineQaState['items'][number]) =>
+    item.startFrame < endFrameExclusive && item.startFrame + item.durationInFrames > startFrame;
   const audibleItems = state.items.filter((item) => {
     const track = state.tracks?.[item.track];
     return !track?.hidden
       && !track?.muted
       && (item.kind === 'audio' || item.kind === 'video')
-      && (item.volume ?? 1) > 0;
+      && !(item.kind === 'video' && item.audioDetached)
+      && (item.volume ?? 1) > 0
+      && overlapsRange(item);
   });
+  const visibleLayers = state.items.filter((item) => !item.pictureDisabled
+    && item.kind !== 'audio' && item.kind !== 'mosaic'
+    && qaTrackKind(state, item.track) === 'video'
+    && !state.tracks?.[item.track]?.hidden
+    && overlapsRange(item));
+  const visualLayers = visibleLayers.map((item) => frameLayer(item, range, true));
+  const audioLayers = audibleItems.map((item) => frameLayer(item, range, false));
+  const expectedBlackIntervals = mergeIntervals([
+    ...uncoveredIntentIntervals(visualLayers, range, fps),
+    ...uncoveredTransitionBlackIntervals(state, range, fps, visualLayers),
+  ]);
   return {
-    durationSeconds: qaTimelineDuration(state) / Math.max(1, state.fps),
+    durationSeconds: (endFrameExclusive - startFrame) / fps,
     width: state.width,
     height: state.height,
-    fps: state.fps,
+    fps,
     expectsAudio: audibleItems.length > 0,
+    expectedBlackIntervals,
+    expectedSilenceIntervals: uncoveredIntentIntervals(audioLayers, range, fps),
   };
 }

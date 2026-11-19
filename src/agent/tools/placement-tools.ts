@@ -67,7 +67,7 @@ export function pickUnderlyingVideo(
   let bestLayer = Number.POSITIVE_INFINITY;
   let bestOverlap = 0;
   for (const item of state.items) {
-    if (item.kind !== 'video' || state.tracks?.[item.track]?.hidden) continue;
+    if (item.kind !== 'video' || item.pictureDisabled === true || state.tracks?.[item.track]?.hidden) continue;
     const layer = visualTracks.indexOf(item.track);
     if (layer < 0 || (graphicLayer >= 0 && layer <= graphicLayer)) continue;
     const overlap = Math.min(toFrame, item.startFrame + item.durationInFrames)

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { ASR_INFERENCE_CONTRACT } from '../../shared/asr-inference-contract';
+import { ASR_INFERENCE_CONTRACT, ASR_TRANSCRIPTION_PROGRESS } from '../../shared/asr-inference-contract';
+import { reportModelProgress } from './local-asr';
 import {
   CLAP_INFERENCE_CONTRACT,
   RHYTHM_INFERENCE_CONTRACT,
@@ -62,7 +63,7 @@ const inference = {
   transcribe: async (request: DesktopAsrRequest) => {
     transcribeCalls += 1;
     if (shouldFail) throw new Error('forced native failure');
-    progressListener?.({ requestId: request.requestId, progress: 50 });
+    progressListener?.({ requestId: request.requestId, progress: 50, file: ASR_TRANSCRIPTION_PROGRESS });
     return {
       requestId: request.requestId,
       backend: 'directml' as const,
@@ -118,15 +119,21 @@ globalThis.window = originalWindow;
 await setDesktopNativeInferenceEnabled(true);
 assert.equal(values.get(DESKTOP_NATIVE_INFERENCE_KEY), '1');
 const progress: number[] = [];
+const progressTags: (string | undefined)[] = [];
 const result = await tryDesktopNativeAsr({
   sourcePath: '/media/uploads/example.mp4',
   config,
   language: 'zh',
-  onProgress: (value) => { if (value != null) progress.push(value); },
+  onProgress: (value, file) => { if (value != null) progress.push(value); progressTags.push(file); },
 });
 assert.equal(result?.backend, 'directml');
 assert.equal(result?.result.text, '测试完成');
 assert.deepEqual(progress, [50]);
+assert.deepEqual(progressTags, [ASR_TRANSCRIPTION_PROGRESS], 'native inference phase reaches the renderer unchanged');
+const notes: string[] = [];
+reportModelProgress(note => { if (note) notes.push(note); }, 57, ASR_TRANSCRIPTION_PROGRESS);
+reportModelProgress(note => { if (note) notes.push(note); }, 42, 'model.bin');
+assert.deepEqual(notes, ['识别当前素材 57%', '模型下载 42%'], 'inference and model download percentages remain distinct');
 assert.equal(unsubscribes, 1);
 assert.equal(await warmUpDesktopNativeAsr(config), true);
 assert.equal(preloadCalls, 1);

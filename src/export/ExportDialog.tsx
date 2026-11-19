@@ -12,10 +12,12 @@ interface ExportDialogProps {
   projectName: string;
   exportJobs: ExportJobStore;
   onClose: () => void;
+  zoneIn?: number | null;
+  zoneOut?: number | null;
 }
 
-export function ExportDialog({ state, project, projectId, projectName, exportJobs, onClose }: ExportDialogProps) {
-  const model = useExportDialogModel({ state, project, projectId, projectName, exportJobs, onClose });
+export function ExportDialog({ state, project, projectId, projectName, exportJobs, onClose, zoneIn, zoneOut }: ExportDialogProps) {
+  const model = useExportDialogModel({ state, project, projectId, projectName, exportJobs, onClose, zoneIn, zoneOut });
   const selectTab = (tab: ExportTab) => {
     model.setTab(tab);
     model.workflow.resetFeedback();

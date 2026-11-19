@@ -1,11 +1,9 @@
-import type { CSSProperties } from 'react';
+import { useMemo, type CSSProperties } from 'react';
 import {
   Audio as BrowserAudio,
-  Video as BrowserVideo,
   type AudioProps as BrowserAudioProps,
-  type VideoProps as BrowserVideoProps,
 } from '@remotion/media';
-import { AbsoluteFill, Audio as ServerAudio, Img, Sequence, useCurrentFrame } from 'remotion';
+import { AbsoluteFill, Audio as ServerAudio, Html5Audio, Img, Sequence, getRemotionEnvironment, useCurrentFrame } from 'remotion';
 import { ClipFx } from '../gl/ClipFx';
 import { firstGlEffect } from '../gl/clipEffects';
 import { selectEffectPreviewAdapter, type SelectedPreviewStatusListener } from '../gl/previewAdapter';
@@ -18,32 +16,40 @@ import { zoomAt } from './zoom';
 import { clipFadeFactor, clipOpacityAt } from './clipFade';
 import { volumeAtFrame } from './keyframes';
 import { sourceFrameAt } from './sourceLimit';
-import type { AspectFit, TimelineItem, TransitionItem } from './types';
-import { isAudioTransition } from './types';
+import { audioCrossfadeAutomation } from './audioCrossfade';
+import type { AspectFit, MediaAsset, TimelineItem, TransitionItem } from './types';
 import { clampVisualBorderRadius, objectFitInsideVisualFrame, visibleVisualFrameRect } from './visualFrameGeometry';
+import { ClipMaskSurface } from './ClipMaskSurface';
+import { sharedVisualFrame, sharedAudioVolume } from './transitionAudio';
+import { pictureAnimationAt } from './clipAnimation';
+import { RuntimeVideo, usesSeparatePlainMediaAudio } from './RuntimeVideo';
+import { hasPrivacyMosaic } from './mosaic';
+import { usesVideoAudioRenderer } from './videoAudioRouting';
+import { audioPlaybackWindows } from './audioPlaybackWindow';
 
-type RuntimeVideoProps = Pick<BrowserVideoProps, 'src' | 'trimBefore' | 'trimAfter' | 'playbackRate' | 'volume' | 'style' | 'muted'> & {
+const EMPTY_MEDIA_ASSETS: MediaAsset[] = [];
+
+function RuntimeAudio({ browserRenderer, videoAudio = false, ...props }: BrowserAudioProps & {
   browserRenderer: boolean;
-};
-
-function RuntimeAudio({ browserRenderer, ...props }: BrowserAudioProps & { browserRenderer: boolean }) {
-  return browserRenderer
+  videoAudio?: boolean;
+}) {
+  if (getRemotionEnvironment().isPlayer) {
+    // Html5Audio combines the clip rate with the Player's global JKL rate itself.
+    return <Html5Audio {...props} preservePitch />;
+  }
+  return browserRenderer || videoAudio
     ? <BrowserAudio {...props} />
     : <ServerAudio {...props} preservePitch />;
 }
 
-function RuntimeVideo({ browserRenderer, style, ...props }: RuntimeVideoProps) {
-  void browserRenderer;
-  const { objectFit, ...browserStyle } = style ?? {};
-  return <BrowserVideo {...props} style={browserStyle} objectFit={objectFit as BrowserVideoProps['objectFit']} />;
-}
-
-function MixedRuntimeAudio({ item, browserRenderer, volume, ...props }: Omit<BrowserAudioProps, 'src'> & {
+function MixedRuntimeAudio({ item, browserRenderer, videoAudio, volume, ...props }: Omit<BrowserAudioProps, 'src'> & {
   item: TimelineItem;
   browserRenderer: boolean;
+  videoAudio?: boolean;
 }) {
+  const useVideoAudio = videoAudio ?? usesVideoAudioRenderer(item);
   if (!item.denoisedSrc) {
-    return <RuntimeAudio browserRenderer={browserRenderer} {...props} src={item.src!} volume={volume} />;
+    return <RuntimeAudio browserRenderer={browserRenderer} videoAudio={useVideoAudio} {...props} src={item.src!} volume={volume} />;
   }
   const mix = voiceIsolationMix(item.denoiseStrength);
   const scaledVolume = (gain: number): BrowserAudioProps['volume'] => (
@@ -51,8 +57,8 @@ function MixedRuntimeAudio({ item, browserRenderer, volume, ...props }: Omit<Bro
   );
   return (
     <>
-      {mix.dry > 0 && <RuntimeAudio browserRenderer={browserRenderer} {...props} src={item.src!} volume={scaledVolume(mix.dry)} />}
-      {mix.wet > 0 && <RuntimeAudio browserRenderer={browserRenderer} {...props} src={item.denoisedSrc} volume={scaledVolume(mix.wet)} />}
+      {mix.dry > 0 && <RuntimeAudio browserRenderer={browserRenderer} videoAudio={useVideoAudio} {...props} src={item.src!} volume={scaledVolume(mix.dry)} />}
+      {mix.wet > 0 && <RuntimeAudio browserRenderer={browserRenderer} videoAudio={useVideoAudio} {...props} src={item.denoisedSrc} volume={scaledVolume(mix.wet)} />}
     </>
   );
 }
@@ -92,33 +98,25 @@ export function VisualClipSurface({ item, fit, canvasW, canvasH, borderRadius, c
   );
 }
 
-function audioCrossfadeMultiplier(item: TimelineItem, localFrame: number, transitions?: TransitionItem[]): number {
-  if (!transitions?.length) return 1;
-  let multiplier = 1;
-  for (const transition of transitions) {
-    if (transition.enabled === false || !isAudioTransition(transition.type)) continue;
-    const duration = Math.max(1, transition.durationInFrames);
-    if (transition.outgoingItemId === item.id && localFrame >= item.durationInFrames - duration) {
-      multiplier *= 1 - Math.min(1, Math.max(0, (localFrame - item.durationInFrames + duration) / duration));
-    }
-    if (transition.incomingItemId === item.id && localFrame < duration) {
-      multiplier *= Math.min(1, Math.max(0, localFrame / duration));
-    }
-  }
-  return multiplier;
-}
-
-export function AudioClip({ item, fps, muted, gainAt, transitions, premountFor, browserRenderer }: {
+export function AudioClip({ item, fps, muted, gainAt, timelineItems, assets = EMPTY_MEDIA_ASSETS, transitions, premountFor, browserRenderer }: {
   item: TimelineItem;
   fps: number;
   muted: boolean;
   gainAt: (frame: number) => number;
+  timelineItems: TimelineItem[];
+  assets?: MediaAsset[];
   transitions?: TransitionItem[];
   premountFor: number;
   browserRenderer: boolean;
 }) {
   const volumeAt = (localFrame: number) => (muted ? 0 : volumeAtFrame(item, localFrame));
+  const crossfade = useMemo(
+    () => audioCrossfadeAutomation(item, timelineItems, transitions, assets),
+    [item, timelineItems, transitions, assets],
+  );
   if (!item.src) return null;
+  const extensions = crossfade.extensions;
+  const frameGainAt = (localFrame: number): number => crossfade.gainAt(item.startFrame + localFrame);
   if (hasOperationalTranscript(item)) {
     const deleted = new Set(item.deletedWordIdx ?? []);
     return <>{keptSegments(item.transcript, deleted, fps, item.startFrame, {
@@ -126,43 +124,57 @@ export function AudioClip({ item, fps, muted, gainAt, transitions, premountFor, 
       window: itemWindow(item),
     }).map((segment, index) => (
       <Sequence key={`${item.id}_${index}`} from={segment.fromFrame} durationInFrames={segment.durFrames} premountFor={premountFor} name={item.name}>
-        <MixedRuntimeAudio item={item} browserRenderer={browserRenderer} trimBefore={segment.srcStartFrame} trimAfter={segment.srcEndFrame}
+        <MixedRuntimeAudio item={item} browserRenderer={browserRenderer} videoAudio={usesVideoAudioRenderer(item, timelineItems)}
+          trimBefore={segment.srcStartFrame} trimAfter={segment.srcEndFrame}
           volume={(frame) => volumeAt(segment.fromFrame - item.startFrame + frame) * gainAt(segment.fromFrame + frame)
             * clipFadeFactor(segment.fromFrame - item.startFrame + frame, item.durationInFrames, item.fadeInFrames, item.fadeOutFrames)
-            * audioCrossfadeMultiplier(item, segment.fromFrame - item.startFrame + frame, transitions)} />
+            * frameGainAt(segment.fromFrame - item.startFrame + frame)} />
       </Sequence>
     ))}</>;
   }
   return (
-    <Sequence from={item.startFrame} durationInFrames={item.durationInFrames} premountFor={premountFor} name={item.name}>
-      <MixedRuntimeAudio item={item} browserRenderer={browserRenderer} trimBefore={item.srcInFrame ?? 0} playbackRate={item.playbackRate ?? 1}
-        volume={(frame) => volumeAt(frame) * gainAt(item.startFrame + frame)
-          * clipFadeFactor(frame, item.durationInFrames, item.fadeInFrames, item.fadeOutFrames)
-          * audioCrossfadeMultiplier(item, frame, transitions)} />
+    <Sequence from={item.startFrame - extensions.beforeFrames}
+      durationInFrames={item.durationInFrames + extensions.beforeFrames + extensions.afterFrames}
+      premountFor={premountFor} name={item.name}>
+      <MixedRuntimeAudio item={item} browserRenderer={browserRenderer} videoAudio={usesVideoAudioRenderer(item, timelineItems)}
+        trimBefore={sourceFrameAt(item, -extensions.beforeFrames)} playbackRate={item.playbackRate ?? 1}
+        volume={(frame) => {
+          const localFrame = frame - extensions.beforeFrames;
+          return volumeAt(localFrame) * gainAt(item.startFrame + localFrame)
+            * clipFadeFactor(localFrame, item.durationInFrames, item.fadeInFrames, item.fadeOutFrames)
+            * frameGainAt(localFrame);
+        }} />
     </Sequence>
   );
+}
+
+export function PlayerAudioLayers({ items, timelineItems, assets = EMPTY_MEDIA_ASSETS, transitions, fps, premountFor, browserRenderer, isMuted, gainAt }: {
+  items: TimelineItem[]; timelineItems: TimelineItem[]; assets?: MediaAsset[]; transitions?: TransitionItem[];
+  fps: number; premountFor: number; browserRenderer: boolean;
+  isMuted: (track: TimelineItem['track']) => boolean;
+  gainAt: (track: TimelineItem['track'], frame: number) => number;
+}) {
+  const frame = useCurrentFrame();
+  const windows = useMemo(() => audioPlaybackWindows(items, timelineItems, assets, transitions, fps, premountFor),
+    [items, timelineItems, assets, transitions, fps, premountFor]);
+  return <>{windows.filter(window => frame >= window.from && frame < window.to).map(({ item }) => (
+    <AudioClip key={item.id} item={item} fps={fps} muted={isMuted(item.track)} gainAt={(at) => gainAt(item.track, at)}
+      timelineItems={timelineItems} assets={assets} transitions={transitions} premountFor={premountFor} browserRenderer={browserRenderer} />
+  ))}</>;
 }
 
 export function ContinuousVideoAudio({ items, muted, gainAt, premountFor, browserRenderer }: {
   items: TimelineItem[];
   muted: boolean;
-  gainAt: (frame: number) => number;
+  gainAt: (track: TimelineItem['track'], frame: number) => number;
   premountFor: number;
   browserRenderer: boolean;
 }) {
+  const volume = useMemo(() => sharedAudioVolume(items, muted, gainAt), [items, muted, gainAt]);
   const first = items[0];
   const last = items.at(-1);
-  if (!first || !last) return null;
+  if (!first || !last || (volume === 0 && getRemotionEnvironment().isPlayer)) return null;
   const duration = last.startFrame + last.durationInFrames - first.startFrame;
-  const volume = (frame: number) => {
-    const timelineFrame = first.startFrame + frame;
-    const item = items.find((candidate) => timelineFrame >= candidate.startFrame
-      && timelineFrame < candidate.startFrame + candidate.durationInFrames);
-    if (!item || muted) return 0;
-    const localFrame = timelineFrame - item.startFrame;
-    return volumeAtFrame(item, localFrame) * gainAt(timelineFrame)
-      * clipFadeFactor(localFrame, item.durationInFrames, item.fadeInFrames, item.fadeOutFrames);
-  };
   return (
     <Sequence from={first.startFrame} durationInFrames={duration} premountFor={premountFor} name={`${first.name}:audio`}>
       <MixedRuntimeAudio item={first} browserRenderer={browserRenderer} trimBefore={first.srcInFrame ?? 0}
@@ -171,7 +183,7 @@ export function ContinuousVideoAudio({ items, muted, gainAt, premountFor, browse
   );
 }
 
-export function SharedVideoVisualGroup({ group, fit, muted, canvasW, canvasH, premountFor, browserRenderer }: {
+export function SharedVideoVisualGroup({ group, fit, canvasW, canvasH, premountFor, browserRenderer }: {
   group: TimelineItem[];
   fit: AspectFit;
   muted: boolean;
@@ -185,10 +197,7 @@ export function SharedVideoVisualGroup({ group, fit, muted, canvasW, canvasH, pr
   const last = group.at(-1);
   if (!first || !last || !first.src) return null;
   const duration = last.startFrame + last.durationInFrames - first.startFrame;
-  const timelineFrame = first.startFrame + frame;
-  const item = group.find((candidate) => timelineFrame >= candidate.startFrame
-    && timelineFrame < candidate.startFrame + candidate.durationInFrames) ?? first;
-  const localFrame = timelineFrame - item.startFrame;
+  const { item, localFrame } = sharedVisualFrame(group, frame)!;
   const appearance = appearanceAt(item, localFrame, false, { width: canvasW, height: canvasH });
   const sourceWidth = item.width ?? canvasW;
   const sourceHeight = item.height ?? canvasH;
@@ -205,7 +214,7 @@ export function SharedVideoVisualGroup({ group, fit, muted, canvasW, canvasH, pr
   };
   let visual = (
     <RuntimeVideo browserRenderer={browserRenderer} src={first.src} trimBefore={first.srcInFrame ?? 0}
-      playbackRate={first.playbackRate ?? 1} volume={0} muted={muted} style={style} />
+      playbackRate={first.playbackRate ?? 1} volume={0} muted style={style} />
   );
   if (item.zoom) {
     const zoom = zoomAt(item.zoom, localFrame, item.durationInFrames);
@@ -225,33 +234,37 @@ export function SharedVideoVisualGroup({ group, fit, muted, canvasW, canvasH, pr
         filter: appearance.foregroundStyle.filter,
         clipPath: appearance.foregroundStyle.clipPath,
       }}>
-        <AbsoluteFill>
-          <div style={{
-            position: 'absolute',
-            left: rect.x,
-            top: rect.y,
-            width: rect.width,
-            height: rect.height,
-            overflow: resolvedRadius ? 'hidden' : undefined,
-            borderRadius: resolvedRadius,
-          }}>
-            {visual}
-          </div>
+        <AbsoluteFill style={{ clipPath: appearance.maskClipPath }}>
+          <ClipMaskSurface mask={appearance.mask} width={canvasW} height={canvasH}>
+            <div style={{
+              position: 'absolute',
+              left: rect.x,
+              top: rect.y,
+              width: rect.width,
+              height: rect.height,
+              overflow: resolvedRadius ? 'hidden' : undefined,
+              borderRadius: resolvedRadius,
+            }}>
+              {visual}
+            </div>
+          </ClipMaskSurface>
         </AbsoluteFill>
       </AbsoluteFill>
     </Sequence>
   );
 }
 
-export function BackgroundFillLayer({ item, frameOffset, canvasW, canvasH, browserRenderer }: {
+export function BackgroundFillLayer({ item, frameOffset, canvasW, canvasH, browserRenderer, exactEffects = true }: {
   item: TimelineItem;
   frameOffset: number;
   canvasW: number;
   canvasH: number;
   browserRenderer: boolean;
+  exactEffects?: boolean;
 }) {
   const appearance = backgroundFillAppearanceFor(item, canvasW, canvasH);
   const opacity = clipOpacityAt(item, useCurrentFrame() + frameOffset);
+  const motion = pictureAnimationAt(item, useCurrentFrame() + frameOffset);
   const trimBefore = sourceFrameAt(item, frameOffset);
   const filters = item.filters;
   const style: CSSProperties = {
@@ -261,9 +274,13 @@ export function BackgroundFillLayer({ item, frameOffset, canvasW, canvasH, brows
     transform: `scale(${appearance.overscanScale})`,
     filter: backgroundFillFilter(appearance, filters),
   };
-  const effect = firstGlEffect(item);
+  const effect = (exactEffects || hasPrivacyMosaic(item)) && firstGlEffect(item);
+  if (hasPrivacyMosaic(item) && !effect) {
+    if (getRemotionEnvironment().isRendering) throw new Error('Mosaic background unavailable; refusing an unredacted export');
+    return <AbsoluteFill style={{ backgroundColor: '#000' }} />;
+  }
   return (
-    <AbsoluteFill aria-hidden style={{ opacity, overflow: 'hidden', pointerEvents: 'none' }}>
+    <AbsoluteFill aria-hidden style={{ opacity, transform: motion.transform || undefined, filter: motion.blur ? `blur(${motion.blur}px)` : undefined, overflow: 'hidden', pointerEvents: 'none' }}>
       {effect
         ? <AbsoluteFill style={style}>
             <ClipFx item={item} fit="cover" width={canvasW} height={canvasH} frameOffset={frameOffset} />
@@ -288,6 +305,7 @@ interface MediaFillProps {
   gainAt: (frame: number) => number;
   browserRenderer: boolean;
   onPreviewStatus?: SelectedPreviewStatusListener;
+  exactEffects?: boolean;
 }
 
 type MediaVolume = (frame: number) => number;
@@ -323,14 +341,17 @@ function PlainMediaFill({ props, trimBefore, volume }: {
   const { item, fit, canvasW, canvasH, borderRadius, groupedAudio, browserRenderer, muted } = props;
   const style: CSSProperties = { width: '100%', height: '100%', objectFit: objectFitInsideVisualFrame(fit) };
   const still = item.kind === 'image' || item.kind === 'gif' || item.kind === 'svg';
+  // `@remotion/media` <Video> in Player sets HTMLMediaElement.playbackRate without preservesPitch;
+  // route live Player preview audio via MixedRuntimeAudio -> <Html5Audio preservePitch>.
+  const separateAudio = usesSeparatePlainMediaAudio(item.kind, item.denoisedSrc, getRemotionEnvironment().isPlayer);
   return (
     <VisualClipSurface item={item} fit={fit} canvasW={canvasW} canvasH={canvasH} borderRadius={borderRadius}>
       {still
         ? <Img src={item.src!} style={style} />
-        : item.denoisedSrc
+        : separateAudio
           ? <><RuntimeVideo browserRenderer={browserRenderer} src={item.src!} trimBefore={trimBefore}
               playbackRate={item.playbackRate ?? 1} volume={0} muted style={style} />
-            {!groupedAudio && <MixedRuntimeAudio item={item} browserRenderer={browserRenderer} trimBefore={trimBefore}
+            {!groupedAudio && !muted && <MixedRuntimeAudio item={item} browserRenderer={browserRenderer} trimBefore={trimBefore}
               playbackRate={item.playbackRate ?? 1} volume={volume} />}</>
           : <RuntimeVideo browserRenderer={browserRenderer} src={item.src!} trimBefore={trimBefore}
               playbackRate={item.playbackRate ?? 1} volume={groupedAudio ? 0 : volume}
@@ -352,7 +373,11 @@ export function MediaFill(props: MediaFillProps) {
     declared: !!firstGlEffect(item),
     texturable: item.kind === 'video' || item.kind === 'image',
   });
-  return adapter.adapter === 'gl-effect'
+  if (hasPrivacyMosaic(item) && adapter.adapter !== 'gl-effect') {
+    if (getRemotionEnvironment().isRendering) throw new Error('Mosaic is unavailable for this media type; refusing an unredacted export');
+    return <AbsoluteFill style={{ backgroundColor: '#000', color: '#fff', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>马赛克暂不可用，已隐藏画面</AbsoluteFill>;
+  }
+  return (props.exactEffects !== false || hasPrivacyMosaic(item)) && adapter.adapter === 'gl-effect'
     ? <EffectMediaFill props={props} trimBefore={trimBefore} volume={volume} />
     : <PlainMediaFill props={{ ...props, groupedAudio }} trimBefore={trimBefore} volume={volume} />;
 }

@@ -1,9 +1,12 @@
-import type { RenderMediaOnWebProgress } from '@remotion/web-renderer';
+import type { OnFrameCallback, RenderMediaOnWebProgress } from '@remotion/web-renderer';
 import type { ComponentType } from 'react';
 import type { TimelineCompositionProps } from '../editor/TimelineComposition';
 import { timelineDuration, type ProjectDoc, type TimelineState } from '../editor/types';
 import { resolveTimelineRenderPlan } from '../editor/sequenceGraph';
+import { normalizeClipMask } from '../editor/clipMask';
+import { compositionPlan } from '../editor/compositionPlan';
 import { webScaledExportDimensions, type ExportResolution } from './mediaSettings';
+import { normalizeFrameRange } from './range';
 // The local renderer's per-frame budget, shared so both engines agree.
 import { DEFAULT_RENDER_TIMEOUT_MS } from '../../remotion/render-timeout.mjs';
 const DEFAULT_CAPABILITY_BITRATE_BPS = 12_000_000;
@@ -22,6 +25,8 @@ export interface BrowserExportOptions {
   codec: PlannedVideoCodec;
   resolution: ExportResolution;
   fps: number;
+  startFrame?: number;
+  endFrameExclusive?: number;
   videoBitrate?: number;
   signal?: AbortSignal;
   onProgress?: (progress: RenderMediaOnWebProgress) => void;
@@ -46,7 +51,29 @@ function abortError(): DOMException {
 }
 
 export function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+/** Supply the final sample's duration too; no subsequent timestamp can infer it. */
+export function createBrowserFrameDurationCallback(fps: number): OnFrameCallback {
+  if (!Number.isFinite(fps) || fps <= 0) throw new RangeError('Browser export fps must be finite and positive');
+  return (frame) => {
+    const timestamp = frame.timestamp;
+    if (!Number.isSafeInteger(timestamp) || timestamp < 0) throw new RangeError('Invalid browser frame timestamp');
+    // The renderer rebases frameRange timestamps to zero. Derive the adjacent
+    // rounded timestamp from that relative clock, never the timeline start.
+    const index = Math.round(timestamp / 1_000_000 * fps);
+    const expectedTimestamp = Math.round(index / fps * 1_000_000);
+    const nextTimestamp = Math.round((index + 1) / fps * 1_000_000);
+    const duration = nextTimestamp - timestamp;
+    if (!Number.isSafeInteger(index) || expectedTimestamp !== timestamp
+      || !Number.isSafeInteger(nextTimestamp) || duration <= 0) {
+      throw new RangeError('Browser frame timestamp is outside the export frame clock');
+    }
+    // Remotion validates the clone and closes the original; after encoding it
+    // closes this returned frame. Leave both lifetime decisions to that owner.
+    return new VideoFrame(frame, { duration });
+  };
 }
 
 /**
@@ -68,9 +95,23 @@ export function isAbortError(error: unknown): boolean {
  * `staticBrowserBlocker`.
  */
 export function browserTimelineBlocker(state: TimelineState, project?: ProjectDoc, timelineId?: string): string | null {
-  void state;
-  void project;
-  void timelineId;
+  // Web-renderer's DOM capture treats mask-image url(#inline-svg) as an
+  // external raster URL. The normal DOM/GL renderer supports this surface,
+  // but WebCodecs must explicitly use the compatibility route until it has
+  // a raster-mask adapter. Check reachable nested timelines too.
+  const timelines = [state];
+  if (project && timelineId) {
+    const reachable = resolveTimelineRenderPlan(project, timelineId).timelineIds;
+    timelines.push(...project.timelines.filter((timeline) => timeline.id !== timelineId && reachable.includes(timeline.id)));
+  }
+  if (timelines.some((timeline) => timeline.items.some((item) => item.kind === 'mosaic'))) {
+    return '独立马赛克需要本机合成导出：WebCodecs 暂不支持合成区域滤镜';
+  }
+  if (timelines.some((timeline) => compositionPlan(timeline).ordered.some((item) => {
+    const mask = normalizeClipMask(item.mask);
+    return mask && ((mask.feather ?? 0) > 0
+      || item.keyframes?.maskFeather?.some(({ value }) => Number.isFinite(value) && value > 0));
+  }))) return '羽化遮罩需要兼容渲染：WebCodecs 暂不支持内联 SVG 遮罩';
   return null;
 }
 
@@ -193,24 +234,33 @@ async function executeBrowserRender(
   try {
     const { TimelineComposition } = await (options.loadComposition ?? (() => import('../editor/TimelineComposition')))();
     throwIfAborted(signal);
+    const durationInFrames = Math.max(1, project && timelineId ? resolveTimelineRenderPlan(project, timelineId).durationInFrames : timelineDuration(state));
+    const frameRange = normalizeFrameRange(durationInFrames, options.startFrame, options.endFrameExclusive);
     const result = await config.renderer.renderMediaOnWeb({
       composition: {
         id: 'openchatcut-timeline-browser',
         component: TimelineComposition,
-        durationInFrames: Math.max(1, project && timelineId ? resolveTimelineRenderPlan(project, timelineId).durationInFrames : timelineDuration(state)),
+        durationInFrames,
         fps: state.fps,
         width: state.width,
         height: state.height,
         defaultProps: props,
       },
       inputProps: props,
+      ...(frameRange ? { frameRange } : {}),
       container: config.container,
       videoCodec: codec,
       audioCodec: config.audioCodec,
       scale: config.scale,
       signal,
       onProgress,
-      hardwareAcceleration: 'prefer-hardware',
+      onFrame: createBrowserFrameDurationCallback(state.fps),
+      // canRenderMediaOnWeb probes browser codec support without requiring a
+      // hardware encoder. Keep the actual request consistent: prefer-hardware
+      // can reject the first frame even when that preflight returned true.
+      // Chromium may still select hardware; driver/runtime failure falls back
+      // once to the local route, never on cancellation.
+      hardwareAcceleration: 'no-preference',
       pageResponsiveness: 'medium',
       // Without this, @remotion/web-renderer falls back to Remotion's 30s
       // default and delayRender reports 30s minus its own 2s buffer — the
@@ -250,20 +300,41 @@ export async function exportVideoWithFallback<T>({
   browser,
   server,
   onFallback,
+  signal,
 }: {
   browser: () => Promise<BrowserExportAttempt>;
   server: () => Promise<T>;
   onFallback?: (reason: string) => void;
+  signal?: AbortSignal;
 }): Promise<VideoExportWithFallback<T>> {
+  throwIfAborted(signal);
+  let reason: string;
+  let originalError: unknown;
   try {
     const attempt = await browser();
+    throwIfAborted(signal);
     if (attempt.status === 'rendered') return { engine: 'browser', attempt };
-    onFallback?.(attempt.reason);
-    return { engine: 'server', value: await server(), reason: attempt.reason };
+    reason = attempt.reason;
   } catch (error) {
+    throwIfAborted(signal);
     if (isAbortError(error)) throw error;
-    const reason = error instanceof Error ? error.message : '浏览器快导失败';
-    onFallback?.(reason);
+    originalError = error;
+    reason = error instanceof Error ? error.message : '浏览器快导失败';
+  }
+  // Only the browser attempt is caught above: a failed compatibility export
+  // must not recursively start a second compatibility job.
+  throwIfAborted(signal);
+  onFallback?.(reason);
+  throwIfAborted(signal);
+  try {
     return { engine: 'server', value: await server(), reason };
+  } catch (error) {
+    throwIfAborted(signal);
+    if (isAbortError(error)) throw error;
+    throw new AggregateError(
+      [originalError ?? new Error(reason), error],
+      `浏览器快导失败：${reason}；兼容渲染失败：${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }

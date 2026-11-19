@@ -1,0 +1,26 @@
+.cc-sound-browser { gap:12px; }
+.cc-sound-browser .cc-sound-search { height:38px; padding:0 10px; }
+.cc-sound-browser .cc-sound-search input { height:36px; font-size:15px; line-height:1.4; }
+.cc-sound-browser .cc-sound-chips { flex-wrap:wrap; overflow:visible; margin-top:0; padding:0; }
+.cc-sound-browser .cc-sound-chip { min-height:36px; padding:5px 12px; font-size:14px; border-radius:999px; border-color:transparent; }
+.cc-sound-browser .cc-sound-row {
+  grid-template-columns:32px minmax(0,1fr) 44px 30px 52px;
+  grid-template-rows:24px 18px;
+  gap:2px 8px; height:64px; min-height:64px; box-sizing:border-box; padding:9px 8px;
+}
+.cc-sound-browser .cc-sound-glyph { grid-row:1 / 3; width:32px; height:36px; }
+.cc-sound-browser .cc-sound-meta { grid-column:2; grid-row:1; }
+.cc-sound-browser .cc-sound-name { font-size:14px; line-height:24px; color:var(--cc-text); }
+.cc-sound-browser .cc-sound-wave { grid-column:2; grid-row:2; height:16px; }
+.cc-sound-browser .cc-sound-dur { grid-column:3; grid-row:1 / 3; font-size:14px; }
+.cc-sound-browser .cc-sound-favorite { grid-column:4; grid-row:1 / 3; }
+.cc-sound-browser .cc-sound-add { grid-column:5; grid-row:1 / 3; width:52px; height:36px; display:flex; align-items:center; justify-content:center; gap:3px; font-size:14px; white-space:nowrap; }
+.cc-sound-browser .cc-sound-favorite {
+  display:grid; place-items:center; border:0; padding:0; width:30px; height:36px;
+  background:transparent; color:var(--cc-text-dim); border-radius:4px; cursor:pointer;
+}
+.cc-sound-browser .cc-sound-favorite.selected { color:var(--cc-text-strong); background:var(--cc-hover); }
+.cc-sound-browser .cc-sound-favorite.selected svg { fill:currentColor; }
+.cc-sound-browser .cc-sound-favorite:hover { color:var(--cc-text); background:var(--cc-hover); }
+.cc-sound-browser .cc-sound-hint, .cc-sound-browser .cc-sound-empty { font-size:14px; line-height:1.6; }
+.cc-sound-feedback { padding:8px 10px; font-size:14px; line-height:1.5; color:var(--cc-text); border:1px solid var(--cc-border); border-radius:4px; }

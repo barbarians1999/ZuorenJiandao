@@ -3,6 +3,7 @@ import type { EditorCommands } from '../../editor/store';
 import type { TimelineState } from '../../editor/types';
 import type { Drag } from './timelineUtil';
 import { commitTimelineDragGesture } from './useTimelinePointer';
+import { shouldClearSelectionOnModeSwitch } from './useTimelineShortcuts';
 
 const state: TimelineState = {
   fps: 30,
@@ -167,3 +168,38 @@ commitTimelineDragGesture(state, commands, {
 assert.equal(calls.length, 1, 'slip release commits exactly one editor operation');
 assert.equal(calls[0]?.method, 'slipItem');
 assert.deepEqual(calls[0]?.args, ['clip-a', 7]);
+
+assert.equal(
+  shouldClearSelectionOnModeSwitch('selection', 'selection', 2, 0),
+  true,
+  'pressing A in selection mode with multiple items selected clears batch selection',
+);
+assert.equal(
+  shouldClearSelectionOnModeSwitch('selection', 'selection', 0, 3),
+  true,
+  'pressing A in selection mode with multiple captions selected clears batch selection',
+);
+assert.equal(
+  shouldClearSelectionOnModeSwitch('selection', 'selection', 0, 0),
+  false,
+  'pressing A with empty selection is a no-op',
+);
+assert.equal(
+  shouldClearSelectionOnModeSwitch('blade', 'selection', 1, 0),
+  false,
+  'returning from blade mode preserves single-item selection',
+);
+assert.equal(
+  shouldClearSelectionOnModeSwitch('blade', 'selection', 2, 1),
+  true,
+  'returning from blade mode clears multi-item/mixed batch selection',
+);
+assert.equal(
+  shouldClearSelectionOnModeSwitch('selection', 'blade', 3, 2),
+  false,
+  'switching to another tool mode does not clear selection',
+);
+
+const pointerSource = (await import('node:fs')).readFileSync(new URL('./useTimelinePointer.ts', import.meta.url), 'utf8');
+assert.match(pointerSource, /currentDrag\.mode === 'move' && currentDrag\.activated === false/, 'plain clicks inside 4px deadzone do not trigger clip moves');
+assert.match(pointerSource, /canItemMoveToTrack\(state, draggedPrimary, targetTrack\)/, 'vertical drags prevent video clips from jumping onto dedicated text tracks');

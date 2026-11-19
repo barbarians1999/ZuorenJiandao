@@ -5,13 +5,15 @@ const moduleUrl = new URL('./window-frame.ts', import.meta.url);
 assert.equal(existsSync(moduleUrl), true, 'desktop window frame policy must be independently testable');
 
 if (existsSync(moduleUrl)) {
-  const { applyDesktopWindowFrame, desktopWindowFrameOptions } = await import(moduleUrl.href);
+  const { applyDesktopWindowFrame, desktopWindowFrameOptions, resolveTitlebarAppearance } = await import(moduleUrl.href);
   assert.deepEqual(
     desktopWindowFrameOptions('darwin'),
     { titleBarStyle: 'hiddenInset' },
     'macOS reserves an inset titlebar region for renderer controls',
   );
-  assert.deepEqual(desktopWindowFrameOptions('win32'), { titleBarStyle: 'hidden', titleBarOverlay: { color: '#16161a', symbolColor: '#e6e6e8', height: 36 }, autoHideMenuBar: true }, 'Windows keeps native caption buttons over a dark overlay and hides the menu row');
+  assert.deepEqual(desktopWindowFrameOptions('win32'), { titleBarStyle: 'hidden', titleBarOverlay: { color: '#fffdf8', symbolColor: '#28241d', height: 52 }, autoHideMenuBar: true }, 'Windows starts with a matching light titlebar and native buttons');
+  assert.deepEqual(resolveTitlebarAppearance({ color: '#000000', symbolColor: '#fff6d2', height: 52 }, 1.1), { color: '#000000', symbolColor: '#fff6d2', height: 57 });
+  for (const invalid of [null, {}, { color: 'red', symbolColor: '#ffffff', height: 52 }, { color: '#000000', symbolColor: '#ffffff', height: NaN }, { color: '#000000', symbolColor: '#ffffff', height: 900 }]) assert.equal(resolveTitlebarAppearance(invalid, 1), null);
   assert.deepEqual(desktopWindowFrameOptions('linux'), {}, 'Linux keeps its native frame');
 
   const visibilityCalls: boolean[] = [];

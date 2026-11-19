@@ -7,8 +7,8 @@
 // R2 cloud objects are deliberately not moved: local deletion is reversible (it can still be retrieved when returning to the source).
 import { deleteMediaBlob } from './mediaBlobStore';
 import { listPacks } from '../plugins/store';
-import { listProjectDocIds, listProjects, loadProject, loadRawProject, purgeProject } from './projectStore';
-import { listVersions } from './versionStore';
+import { loadProject, purgeProject } from './projectStore';
+import { kvEntriesForCleanup } from './sharedKv';
 import { collectUploadSrcs, rawUploadSrcs } from './projectTransfer';
 
 const MEDIA_PREFIX = '/media/uploads/';
@@ -35,25 +35,33 @@ export async function listUploadFiles(): Promise<UploadFileInfo[]> {
  * ∪ Upload the LUT cube with the extension package installed (the reference is recorded in the shared extension storage, not in the project document. If it is missed, it will be accidentally killed).*/
 export async function collectAllUploadRefs(excludeId?: string): Promise<Set<string>> {
   const refs = new Set<string>();
-  for (const id of await listProjectDocIds()) {
-    if (id === excludeId) continue;
-    // Version snapshots reference assets the CURRENT document may have
-    // dropped: deleting a clip then cleaning up would otherwise delete the
-    // media that restoring a 5-minute-old snapshot still needs.
-    for (const version of await listVersions(id).catch(() => [])) {
-      for (const src of collectUploadSrcs(version.doc)) refs.add(src);
+  for (const [key, value] of Object.entries(await kvEntriesForCleanup())) {
+    if (excludeId && (key === `project:${excludeId}` || key === `local:project:${excludeId}`)) continue;
+    const remaining: unknown[] = [value];
+    const visited = new WeakSet<object>();
+    while (remaining.length) {
+      const part = remaining.pop();
+      if (typeof part === 'string' && part.startsWith(MEDIA_PREFIX)) {
+        const src = part.split(/[?#]/)[0]!;
+        if (/^\/media\/uploads\/[^/\\\x00-\x1f\x7f]+$/.test(src)) {
+          refs.add(src);
+          try {
+            const decoded = decodeURIComponent(src);
+            if (/^\/media\/uploads\/[^/\\\x00-\x1f\x7f]+$/.test(decoded)) refs.add(decoded);
+          } catch { /* A literal percent character is a valid file name. */ }
+        }
+      } else if (part && typeof part === 'object' && !visited.has(part)) {
+        visited.add(part);
+        if ('kind' in part && part.kind === 'quarantined-project-store-entry') {
+          throw new Error('存在未能读取的工程，无法安全清理素材。请先恢复该工程。');
+        }
+        remaining.push(...Object.values(part));
+      }
     }
-    const doc = await loadProject(id);
-    if (doc) {
-      for (const src of collectUploadSrcs(doc)) refs.add(src);
-      continue;
-    }
-    // Can't read ≠ No citation. The reason for the migration failure may simply be "This project was written by a newer version of the build"
-    // (startingDocument also returns null for version > CURRENT), it's not broken at all. treated as zero reference
-    // It will delete all the assets it is using, so it degenerates into scanning the path in the original bytes: it is better to keep more than to delete by mistake.
-    for (const src of rawUploadSrcs(await loadRawProject(id))) refs.add(src);
+    // Raw snapshots also protect versions, recoverable exports, and orphan documents.
+    for (const src of rawUploadSrcs(value)) refs.add(src);
   }
-  for (const pack of await listPacks().catch(() => [])) {
+  for (const pack of await listPacks({ strict: true })) {
     for (const url of Object.values(pack.cubeUrls ?? {})) {
       if (url.startsWith(MEDIA_PREFIX)) refs.add(url);
     }
@@ -97,22 +105,15 @@ export function orphanDocIdsToPurge(
   return docIds.filter((id) => !indexedIds.has(id));
 }
 
-/** Inventory only: orphan project records may be purged, but source uploads are
- * returned as confirmation-required candidates and are never deleted here. */
+/** Scanning is read-only. An incomplete index does not prove a document is disposable. */
 export async function scanUnreferenced(): Promise<CleanupScan> {
-  const indexed = new Set((await listProjects({ includeDeleted: true })).map((m) => m.id));
-  let orphanDocsPurged = 0;
-  for (const id of orphanDocIdsToPurge(indexed, await listProjectDocIds())) {
-    await purgeProject(id);
-    orphanDocsPurged += 1;
-  }
   const [files, refs] = await Promise.all([listUploadFiles(), collectAllUploadRefs()]);
   const sourceCandidates = unreferencedOf(files, refs).map((file) => ({
     ...file,
     kind: 'unreferenced-source' as const,
     autoDelete: false as const,
   }));
-  return { orphanDocsPurged, files: sourceCandidates, sourceCandidates };
+  return { orphanDocsPurged: 0, files: sourceCandidates, sourceCandidates };
 }
 
 /** Delete the project + cascade to delete its exclusive assets (reserved assets that are also referenced by other projects).*/

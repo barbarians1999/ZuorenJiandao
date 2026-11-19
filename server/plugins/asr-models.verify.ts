@@ -6,7 +6,10 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ASR_MODELS, asrModelEntry, asrModelFile, type AsrModelEntry } from '../../shared/asr-models';
-import { __resetAsrTasks, handleAsrModelsRequest, inspectAsrModel } from './asr-models';
+import {
+  __resetAsrTasks, asrGgmlCachePath, ensureGgmlAsrModelFile, handleAsrModelsRequest,
+  inspectAsrModel, legacyAsrGgmlCachePath,
+} from './asr-models';
 
 const server = createServer((req, res) => {
   const pathname = (req.url ?? '').split('?')[0] ?? '';
@@ -142,6 +145,37 @@ try {
   const complete = await inspectAsrModel(ggmlEntry, root);
   assert.equal(complete.downloaded, true, 'onnx + ggml present counts as downloaded');
   assert.equal(complete.bytes, expectedContent.length + ggmlBytes.length, 'bytes include the ggml file');
+
+  const legacyPath = legacyAsrGgmlCachePath(root, ggmlEntry.ggmlFile!.fileName);
+  const canonicalPath = asrGgmlCachePath(root, ggmlEntry.ggmlFile!.fileName);
+  await rm(canonicalPath, { force: true });
+  await mkdir(join(root, 'ggerganov', 'whisper.cpp'), { recursive: true });
+  await writeFile(legacyPath, ggmlBytes);
+  let legacyDownloadCalls = 0;
+  await ensureGgmlAsrModelFile(ggmlEntry.ggmlFile!, root, async () => {
+    legacyDownloadCalls += 1;
+    throw new Error('verified legacy cache should be reused');
+  });
+  assert.equal(legacyDownloadCalls, 0, 'verified file in the old wrong directory is migrated without redownloading');
+  assert.equal((await inspectAsrModel(ggmlEntry, root)).downloaded, true,
+    'a migrated GGML companion makes the base tier installable');
+
+  const freshRoot = join(root, 'fresh-download');
+  await mkdir(join(freshRoot, ggmlEntry.modelId), { recursive: true });
+  await writeFile(join(freshRoot, ggmlEntry.modelId, ggmlEntry.files[0]!.path), expectedContent);
+  let capturedDestination = '';
+  await ensureGgmlAsrModelFile(ggmlEntry.ggmlFile!, freshRoot, async (_target, destination, options) => {
+    capturedDestination = destination ?? '';
+    assert.equal(options?.expectedBytes, ggmlBytes.length);
+    assert.equal(options?.expectedSha256, ggmlEntry.ggmlFile!.sha256);
+    await mkdir(join(freshRoot, 'ggml'), { recursive: true });
+    await writeFile(capturedDestination, ggmlBytes);
+    return capturedDestination;
+  });
+  assert.equal(capturedDestination, asrGgmlCachePath(freshRoot, ggmlEntry.ggmlFile!.fileName),
+    'new GGML downloads target the canonical path checked by installation state');
+  assert.equal((await inspectAsrModel(ggmlEntry, freshRoot)).downloaded, true,
+    'a correctly placed GGML download installs the model tier');
 }
 
 console.log('asr-models.verify: mutation authorization and JSON contract OK');

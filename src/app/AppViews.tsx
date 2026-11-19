@@ -7,6 +7,7 @@ import type { ProjectMeta } from '../persist/projectStoreCoordinators';
 import { theme } from '../theme';
 import { emptyProjectDoc, navigateTo, type AppRoute } from './appShell';
 import { useDashboardActions } from './useDashboardActions';
+import type { ProjectQuickStart } from './projectQuickStart';
 
 const Editor = lazy(() => import('../Editor'));
 
@@ -23,6 +24,7 @@ export function AppSplash({ text }: { text: string }) {
 
 interface EditorLoaderProps {
   meta: ProjectMeta;
+  quickStart?: ProjectQuickStart;
   onHome: () => void;
   onRename: (name: string) => void;
 }
@@ -32,7 +34,7 @@ type EditorLoadState =
   | { kind: 'ready'; doc: ProjectDoc }
   | { kind: 'unreadable' };
 
-function EditorLoader({ meta, onHome, onRename }: EditorLoaderProps) {
+function EditorLoader({ meta, quickStart, onHome, onRename }: EditorLoaderProps) {
   const t = useT();
   const [load, setLoad] = useState<EditorLoadState>({ kind: 'loading' });
   const [attempt, setAttempt] = useState(0);
@@ -89,7 +91,7 @@ function EditorLoader({ meta, onHome, onRename }: EditorLoaderProps) {
   }
   return (
     <Suspense fallback={<AppSplash text={t('加载编辑器…')} />}>
-      <Editor initial={load.doc} project={meta} onHome={onHome} onRename={onRename} />
+      <Editor initial={load.doc} project={meta} quickStart={quickStart} onHome={onHome} onRename={onRename} />
     </Suspense>
   );
 }
@@ -111,6 +113,7 @@ export function EditorRoute({ route, projects, refresh }: EditorRouteProps) {
     <EditorLoader
       key={meta.id}
       meta={meta}
+      quickStart={route.quickStart}
       onHome={() => navigateTo('#/')}
       onRename={async (name) => { await renameProject(meta.id, name); refresh(); }}
     />

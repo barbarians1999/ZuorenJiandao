@@ -40,6 +40,7 @@ function emptyProject(args: Record<string, unknown>): unknown {
     selectedId: null,
     trackOrder: ['track_v1'],
     tracks: { track_v1: { kind: 'video' } },
+    interaction: { mainTrackId: 'track_v1', magnet: false, linkage: false, snapping: true },
   };
   return {
     version: CURRENT_PROJECT_VERSION,

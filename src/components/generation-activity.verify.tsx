@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { EN } from '../i18n/dict/en';
 
 const component = await readFile(new URL('./GenerationActivity.tsx', import.meta.url), 'utf8');
 const topBarButton = await readFile(new URL('./TopBarIconButton.tsx', import.meta.url), 'utf8');
@@ -47,9 +46,8 @@ const generationActivityKeys = [
 ] as const;
 
 for (const key of generationActivityKeys) {
-  assert.notEqual(EN[key], undefined, `英文词典应包含“${key}”`);
+  assert.ok(component.includes(`t('${key}')`), `界面缺少中文状态文案：${key}`);
 }
-
 assert.match(component, /t\('\{n\} 分钟前'/, '相对分钟数应通过 i18n 格式化');
 assert.match(component, /t\('\{n\} 小时前'/, '相对小时数应通过 i18n 格式化');
 assert.match(component, /t\('\{n\} 天前'/, '相对天数应通过 i18n 格式化');

@@ -3,24 +3,30 @@
 // Headless Lambda-style render: templates are compiled
 // at render time in headless Chrome exactly as the Player does, so audio muxes
 // natively and no template porting is needed.
-import { bundle } from '@remotion/bundler';
-import { makeCancelSignal, openBrowser, RenderInternals, selectComposition, renderMedia, renderStill } from '@remotion/renderer';
+import { openBrowser, RenderInternals, selectComposition, renderFrames, renderMedia, renderStill } from '@remotion/renderer';
 import path from 'node:path';
-import { cp, mkdir, rm, symlink } from 'node:fs/promises';
+import { cp, mkdir, readdir, rm, symlink } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
   h264FfmpegOverride,
   remotionHardwareAcceleration,
   resolveH264VideoBitrate,
-  resolveOffthreadVideoThreads,
-  resolveRenderConcurrency,
+  resolveRenderMemorySettings,
+  renderFfmpegOverride,
   withEncoderProfileFallback,
 } from './performance.mjs';
 import { renderDirectHardware } from './direct-hardware.mjs';
-import { assertMaterializedRenderSnapshot, normalizeH264Profile } from './render-contract.mjs';
+import { assertMaterializedRenderSnapshot, normalizeH264Profile, timelineStillOptions } from './render-contract.mjs';
 import { resolveRenderTimeout } from './render-timeout.mjs';
+import { browserExecutable, resolveRenderGlBackend, withAbortableCompositionSelection } from './render-browser.mjs';
+import { nativeOpaqueVideoSources, nativeVideoExperimentEnabled } from './native-video.mjs';
+import { tryDirectCutExport, inspectDirectCutExport } from './direct-cut.mjs';
+import { buildSparseOverlayPlan, inspectOverlayHybridExport, tryOverlayHybridExport } from './overlay-hybrid.mjs';
+import { binariesDirectory, currentRenderConcurrency, remotionFfmpegPath, remotionCancelSignal } from './render-runtime.mjs';
 
 export { assertMaterializedRenderSnapshot } from './render-contract.mjs';
+export { withAbortableCompositionSelection } from './render-browser.mjs';
+export { currentRenderConcurrency, remotionFfmpegPath };
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENTRY_POINT = path.join(REPO_ROOT, 'remotion', 'index.ts');
@@ -37,88 +43,18 @@ const renderTimeoutInMilliseconds = () => resolveRenderTimeout();
 let bundlePromise;
 
 // Desktop packaging version: There is no src/ source code and webpack at runtime, and the serve bundle is pre-packaged during the packaging period.
-// Point in via CC_REMOTION_BUNDLE at startup (writable directory - uploads symlink needs to be written in);
-// Headless browser equivalent CC_BROWSER_EXECUTABLE points to the chrome-headless-shell distributed with the package
-// (Default undefined = Remotion self-seeking/self-downloading, dev behavior remains unchanged).
-/** Renderer GL backend. Default angle (Metal on macOS, D3D on Windows);
- *  Linux prefers angle-egl (works without X11). CC_RENDER_GL overrides for
- *  diagnosis or GPU-less machines ('swangle' forces software). */
-const RENDER_GL_OVERRIDES = new Set(['angle', 'angle-egl', 'egl', 'vulkan', 'swangle', 'null']);
-function resolveRenderGlBackend() {
-  const override = process.env.CC_RENDER_GL;
-  if (override && RENDER_GL_OVERRIDES.has(override)) return override;
-  return process.platform === 'linux' ? 'angle-egl' : 'angle';
-}
-const browserExecutable = () => process.env.CC_BROWSER_EXECUTABLE || undefined;
-const binariesDirectory = () => process.env.CC_REMOTION_BINARIES_DIR || null;
-
-export function currentRenderConcurrency() {
-  return resolveRenderConcurrency();
-}
-
-export function remotionFfmpegPath() {
-  return RenderInternals.getExecutablePath({
-    type: 'ffmpeg',
-    indent: false,
-    logLevel: 'error',
-    binariesDirectory: binariesDirectory(),
-  });
-}
-
-const offthreadVideoThreads = () => resolveOffthreadVideoThreads();
-function remotionCancelSignal(signal) {
-  if (!signal) return undefined;
-  const cancellation = makeCancelSignal();
-  if (signal.aborted) cancellation.cancel();
-  else signal.addEventListener('abort', cancellation.cancel, { once: true });
-  return cancellation.cancelSignal;
-}
-/**
- * Own one browser across composition selection and the render which consumes it.
- * Closing that browser is the supported cancellation boundary for selectComposition.
- */
-export async function withAbortableCompositionSelection({
-  signal,
-  selectionOptions,
-  run,
-  openBrowserImpl = openBrowser,
-  selectCompositionImpl = selectComposition,
-}) {
-  signal?.throwIfAborted();
-  const browser = await openBrowserImpl('chrome', {
-    browserExecutable: browserExecutable(),
-    chromiumOptions: { gl: resolveRenderGlBackend() },
-  });
-  let closePromise;
-  const closeBrowser = () => closePromise ??= Promise.resolve(browser.close({ silent: true })).catch(() => undefined);
-  const onAbort = () => { void closeBrowser(); };
-  signal?.addEventListener('abort', onAbort, { once: true });
-  try {
-    signal?.throwIfAborted();
-    const composition = await selectCompositionImpl({
-      ...selectionOptions,
-      puppeteerInstance: browser,
-    });
-    signal?.throwIfAborted();
-    return await run(composition, browser);
-  } finally {
-    signal?.removeEventListener('abort', onAbort);
-    await closeBrowser();
-  }
-}
-
 function directHardwareRenderer(directBinaries, abortSignal) {
-  if (!directBinaries) return renderMedia;
-  // The custom ffmpeg override marks the hardware attempt; the software retry drops it
-  // but keeps binariesDirectory, which every attempt needs once the app ships as an asar.
-  return (attempt) => attempt.ffmpegOverride
-    ? renderDirectHardware({ render: renderMedia, options: attempt, binariesDirectory: directBinaries, signal: abortSignal })
+  // Both hardware and software H.264 need the same PCM clock: a software retry
+  // must not bring back compressed-audio priming shifts. Other codecs are unchanged.
+  const muxBinaries = directBinaries ?? path.dirname(remotionFfmpegPath());
+  return (attempt) => attempt.codec === 'h264'
+    ? renderDirectHardware({ render: renderMedia, options: attempt, binariesDirectory: muxBinaries, signal: abortSignal })
     : renderMedia(attempt);
 }
 
 /** Render with the selected probed engine, then make a truthful software retry. */
 async function renderMediaOptimized(options) {
-  const { abortSignal, h264Profile, vaapiDevice, ...renderOptions } = options;
+  const { abortSignal, h264Profile, vaapiDevice, offthreadVideoThreads: configuredOffthreadVideoThreads, ...renderOptions } = options;
   const profile = normalizeH264Profile(renderOptions.codec, h264Profile);
   const hardwareAcceleration = remotionHardwareAcceleration(renderOptions.codec, { encoder: profile?.id });
   const customOverride = profile?.hardware && hardwareAcceleration === 'disable'
@@ -133,12 +69,17 @@ async function renderMediaOptimized(options) {
       scale: renderOptions.scale ?? 1,
     })
     : null;
+  const memorySettings = resolveRenderMemorySettings();
+  const hardwareOverride = renderFfmpegOverride({ hardwareOverride: customOverride });
+  const softwareOverride = renderFfmpegOverride();
   const hardwareOptions = {
     ...renderOptions,
     concurrency: currentRenderConcurrency(),
-    offthreadVideoThreads: offthreadVideoThreads(),
+    offthreadVideoCacheSizeInBytes: renderOptions.offthreadVideoCacheSizeInBytes ?? memorySettings.offthreadVideoCacheSizeInBytes,
+    mediaCacheSizeInBytes: renderOptions.mediaCacheSizeInBytes ?? memorySettings.mediaCacheSizeInBytes,
+    offthreadVideoThreads: configuredOffthreadVideoThreads ?? memorySettings.offthreadVideoThreads,
     hardwareAcceleration,
-    ...(customOverride ? { ffmpegOverride: customOverride } : {}),
+    ffmpegOverride: hardwareOverride,
     // The packaged app cannot chmod or spawn the compositor inside app.asar, so every
     // attempt renders from the mirrored directory (CC_REMOTION_BINARIES_DIR); dev keeps null.
     binariesDirectory: binariesDirectory(),
@@ -148,11 +89,12 @@ async function renderMediaOptimized(options) {
   if (!profile) return { result: await render(hardwareOptions), encoder: undefined };
   return withEncoderProfileFallback({
     render,
+    signal: abortSignal,
     hardwareOptions,
     softwareOptions: {
       ...hardwareOptions,
       hardwareAcceleration: 'disable',
-      ffmpegOverride: undefined,
+      ffmpegOverride: softwareOverride,
       ...(automaticBitrate ? { videoBitrate: null } : {}),
     },
     hardwareProfile: profile,
@@ -161,8 +103,8 @@ async function renderMediaOptimized(options) {
         await rm(renderOptions.outputLocation, { force: true }).catch(() => {});
       }
     },
-    onFallback: () => {
-      console.warn(`[render] ${profile.label} failed; retrying ${renderOptions.codec} with software encoding`);
+    onFallback: (error) => {
+      console.warn(`[render] ${profile.label} failed; retrying ${renderOptions.codec} with software encoding; original error: ${error instanceof Error ? error.message : String(error)}`);
     },
   });
 }
@@ -172,8 +114,36 @@ async function renderMediaOptimized(options) {
 let uploadsDirProvider = () => UPLOAD_DIR;
 let linkedDir = null; // <serveUrl>/media/uploads symlink currently points to; reconnect when the directory changes
 
+async function nativeVideoInput(state, project, signal) {
+  if (!nativeVideoExperimentEnabled()) return { _nativeOpaqueVideoSources: [] };
+  const ffprobeExecutable = RenderInternals.getExecutablePath({ type: 'ffprobe', indent: false,
+    logLevel: 'error', binariesDirectory: binariesDirectory() });
+  return { _nativeOpaqueVideoSources: await nativeOpaqueVideoSources(state, project, {
+    uploadsDirectory: uploadsDirProvider(), assetsDirectory: ASSETS_DIR, ffprobeExecutable, signal,
+  }) };
+}
+
 /** @param {() => string} fn returns the absolute path of the current asset directory*/
 export function setUploadsDirProvider(fn) { uploadsDirProvider = fn; }
+
+/** Read-only eligibility for UI route selection; render rechecks the snapshot. */
+export async function inspectTimelineDirectExport(options) {
+  const uploadsDirectory = uploadsDirProvider();
+  const inspected = await inspectDirectCutExport({
+    ...options,
+    allowTextWindows: true,
+    uploadsDirectory,
+    assetsDirectory: ASSETS_DIR,
+  });
+  if (inspected) return inspected.plan.renderRoute ?? 'direct-cut';
+  const hybrid = await inspectOverlayHybridExport({
+    ...options,
+    scale: options.scale ?? 1,
+    uploadsDirectory,
+    assetsDirectory: ASSETS_DIR,
+  });
+  return hybrid ? (hybrid.plan.renderRoute ?? 'hybrid') : null;
+}
 
 async function buildServeUrl() {
   const serveUrl = await buildBundle(undefined);
@@ -188,6 +158,8 @@ async function buildServeUrl() {
 
 /** webpack hits the serve bundle + public override (not relink - that's a runtime responsibility).*/
 async function buildBundle(outDir) {
+  // Installed builds use the prebuilt bundle; webpack is a development dependency.
+  const { bundle } = await import('@remotion/bundler');
   const serveUrl = await bundle({
     entryPoint: ENTRY_POINT,
     // Product static at assets/ (same URL paths as before when under public/).
@@ -279,13 +251,87 @@ async function getServeUrl() {
  * @param {string} [args.vaapiDevice]
  * @param {(progress: number) => void} [args.onProgress]  0..1
  * @param {AbortSignal} [args.signal]
+ * @param {number} [args.offthreadVideoCacheSizeInBytes] Optional bounded render cache.
+ * @param {number} [args.mediaCacheSizeInBytes] Optional browser media cache.
+ * @param {number} [args.offthreadVideoThreads] Optional OffthreadVideo decoder limit.
+ * @param {string} [args.separateAudioTo] Internal diagnostic PCM sidecar; normal exports keep muxed audio.
  */
+async function renderOverlayPlates({ overlayState, plan, platesDir, onPhaseProgress, signal }) {
+  if (!plan.hasOverlays) {
+    return {
+      spans: [{ from: plan.rangeStart, to: plan.rangeEnd, sampleFrame: null }],
+      plateFiles: new Map(),
+    };
+  }
+  if (!plan.hasCaptions) {
+    const precomputed = buildSparseOverlayPlan(overlayState, plan.rangeStart, plan.rangeEnd, null);
+    if (!precomputed.framesToRender.length) {
+      return { spans: precomputed.spans, plateFiles: new Map() };
+    }
+  }
+  const serveUrl = await getServeUrl();
+  signal?.throwIfAborted();
+  const baseInputProps = { state: overlayState, transparent: true, ...await nativeVideoInput(overlayState, undefined, signal) };
+  const selectionInputProps = plan.hasCaptions
+    ? { ...baseInputProps, __collectOverlaySpans: { rangeStart: plan.rangeStart, rangeEnd: plan.rangeEnd } }
+    : baseInputProps;
+  const cancelSignal = remotionCancelSignal(signal);
+  return withAbortableCompositionSelection({
+    signal,
+    selectionOptions: {
+      serveUrl,
+      id: COMPOSITION_ID,
+      inputProps: selectionInputProps,
+      ...resolveRenderMemorySettings(),
+      binariesDirectory: binariesDirectory(),
+      browserExecutable: browserExecutable(),
+      timeoutInMilliseconds: renderTimeoutInMilliseconds(),
+    },
+    run: async (composition, browser) => {
+      const captionSummary = plan.hasCaptions ? composition.props?.__overlayCaptionInfo ?? null : null;
+      const { spans, framesToRender } = buildSparseOverlayPlan(overlayState, plan.rangeStart, plan.rangeEnd, captionSummary);
+      const plateFiles = new Map();
+      if (!framesToRender.length) return { spans, plateFiles };
+
+      const overlayConcurrency = framesToRender.length >= 20
+        ? Math.max(currentRenderConcurrency(), 6)
+        : currentRenderConcurrency();
+      await renderFrames({
+        serveUrl,
+        composition,
+        inputProps: baseInputProps,
+        frames: framesToRender,
+        outputDir: platesDir,
+        imageFormat: 'png',
+        imageSequencePattern: 'plate-[frame].[ext]',
+        muted: true,
+        concurrency: overlayConcurrency,
+        chromiumOptions: { gl: resolveRenderGlBackend() },
+        browserExecutable: browserExecutable(),
+        puppeteerInstance: browser,
+        binariesDirectory: binariesDirectory(),
+        cancelSignal,
+        timeoutInMilliseconds: renderTimeoutInMilliseconds(),
+        onStart: () => {},
+        onFrameUpdate: (rendered) => onPhaseProgress?.(rendered, framesToRender.length),
+      });
+      signal?.throwIfAborted();
+      for (const name of await readdir(platesDir)) {
+        const match = /^plate-(\d+)\.png$/i.exec(name);
+        if (match) plateFiles.set(Number(match[1]), path.join(platesDir, name));
+      }
+      return { spans, plateFiles };
+    },
+  });
+}
+
 export async function renderTimeline({
   state,
   project,
   timelineId,
   outputLocation,
   onProgress,
+  onProgressStage,
   codec = 'h264',
   frameRange,
   scale,
@@ -293,19 +339,68 @@ export async function renderTimeline({
   h264Profile,
   vaapiDevice,
   signal,
+  offthreadVideoCacheSizeInBytes,
+  mediaCacheSizeInBytes,
+  offthreadVideoThreads,
+  separateAudioTo,
+  directMediaBinaries,
+  disableFastExport = false,
 }) {
   if (!state || typeof state !== 'object' || !Array.isArray(state.items)) {
     throw new Error('renderTimeline: a valid TimelineState (with items[]) is required');
   }
   if (!outputLocation) throw new Error('renderTimeline: outputLocation is required');
+  if (offthreadVideoThreads !== undefined
+    && (!Number.isInteger(offthreadVideoThreads) || offthreadVideoThreads < 1 || offthreadVideoThreads > 8)) {
+    throw new Error('renderTimeline: offthreadVideoThreads must be an integer from 1 to 8');
+  }
   signal?.throwIfAborted();
   assertMaterializedRenderSnapshot(state, 'renderTimeline');
   if (project) assertMaterializedRenderSnapshot(project, 'renderTimeline', timelineId);
+  const direct = !disableFastExport && await tryDirectCutExport({
+    state, project, timelineId, outputLocation, onProgress, codec, frameRange, scale,
+    videoBitrate, h264Profile: directMediaBinaries?.profile ?? h264Profile, vaapiDevice, signal, separateAudioTo,
+    uploadsDirectory: uploadsDirProvider(), assetsDirectory: ASSETS_DIR,
+    allowTextWindows: true,
+    renderVisualRange: (range, file, guardedSignal) => renderTimeline({ state, project, timelineId,
+      outputLocation: file, codec: 'h264', frameRange: range, scale, videoBitrate,
+      h264Profile, vaapiDevice, signal: guardedSignal, offthreadVideoCacheSizeInBytes, mediaCacheSizeInBytes,
+      offthreadVideoThreads, disableFastExport: true }),
+    ffmpegExecutable: directMediaBinaries?.ffmpeg,
+    resolveMediaSource: directMediaBinaries?.resolveSource,
+    ffprobeExecutable: directMediaBinaries?.ffprobe ?? RenderInternals.getExecutablePath({ type: 'ffprobe', indent: false,
+      logLevel: 'error', binariesDirectory: binariesDirectory() }),
+  });
+  if (direct) return direct;
+  const hybridOverlay = !disableFastExport && await tryOverlayHybridExport({
+    state,
+    project,
+    timelineId,
+    outputLocation,
+    onProgress,
+    onProgressStage,
+    codec,
+    frameRange,
+    scale: scale ?? 1,
+    videoBitrate,
+    h264Profile: directMediaBinaries?.profile ?? h264Profile,
+    vaapiDevice,
+    signal,
+    separateAudioTo,
+    uploadsDirectory: uploadsDirProvider(),
+    assetsDirectory: ASSETS_DIR,
+    renderOverlayPlates,
+    ffmpegExecutable: directMediaBinaries?.ffmpeg,
+    resolveMediaSource: directMediaBinaries?.resolveSource,
+    ffprobeExecutable: directMediaBinaries?.ffprobe ?? RenderInternals.getExecutablePath({ type: 'ffprobe', indent: false,
+      logLevel: 'error', binariesDirectory: binariesDirectory() }),
+  });
+  if (hybridOverlay) return hybridOverlay;
   const cancelSignal = remotionCancelSignal(signal);
 
   const serveUrl = await getServeUrl();
   signal?.throwIfAborted();
-  const inputProps = { state, project, timelineId };
+  const inputProps = { state, project, timelineId, ...await nativeVideoInput(state, project, signal) };
   // Full-timeline mezzanine: ProRes 422 HQ (not 4444 alpha — that is clip/MG only).
   const proresOptions = codec === 'prores'
     ? { proResProfile: 'hq', imageFormat: 'png' }
@@ -329,6 +424,10 @@ export async function renderTimeline({
       outputLocation,
       h264Profile,
       vaapiDevice,
+      offthreadVideoCacheSizeInBytes,
+      mediaCacheSizeInBytes,
+      offthreadVideoThreads,
+      separateAudioTo,
       scale: scale && Number.isFinite(scale) && scale > 0 ? scale : 1,
       videoBitrate: codec === 'prores'
         ? undefined
@@ -383,7 +482,7 @@ export async function renderClip({
   const cancelSignal = remotionCancelSignal(signal);
   const serveUrl = await getServeUrl();
   signal?.throwIfAborted();
-  const inputProps = { state, transparent };
+  const inputProps = { state, transparent, ...await nativeVideoInput(state, undefined, signal) };
   await withAbortableCompositionSelection({
     signal,
     selectionOptions: {
@@ -420,9 +519,11 @@ export async function renderClip({
 /**
  * Render still frames of a timeline as small JPEGs (backs view_timeline_frames
  * — the agent "sees" its own draft edits). Returns [{frame, base64}].
+ * Internal visual audits may request fullResolution without changing MCP defaults.
  * @param {object} args
  * @param {import('../src/editor/types').TimelineState} args.state
  * @param {number[]} args.frames  frame numbers to render
+ * @param {boolean} [args.fullResolution] Render native composition pixels for visual audits.
  * @param {unknown} [args.puppeteerInstance] Reused headless browser (when rendering thumbnails in batches
  *   Every cold start of Chrome is too slow); the caller passes in openBrowser once and closes it after use.
  * @param {AbortSignal} [args.signal]
@@ -437,15 +538,17 @@ export async function renderTimelineStills({
   frames,
   puppeteerInstance,
   signal,
+  fullResolution = false,
 }) {
   if (!state || !Array.isArray(state.items)) throw new Error('renderTimelineStills: state.items required');
   if (!Array.isArray(frames) || !frames.length) throw new Error('renderTimelineStills: frames[] required');
+  if (typeof fullResolution !== 'boolean') throw new TypeError('fullResolution must be a boolean');
   signal?.throwIfAborted();
   assertMaterializedRenderSnapshot(state, 'renderTimelineStills');
   if (project) assertMaterializedRenderSnapshot(project, 'renderTimelineStills', timelineId);
   const serveUrl = await getServeUrl();
   signal?.throwIfAborted();
-  const inputProps = { state, project, timelineId };
+  const inputProps = { state, project, timelineId, ...await nativeVideoInput(state, project, signal) };
   // Reuse one browser for the batch when caller doesn't pass one — opening Chrome
   // per frame was the dominant cost of view_*_frames.
   const ownBrowser = !puppeteerInstance;
@@ -461,6 +564,7 @@ export async function renderTimelineStills({
     signal?.throwIfAborted();
     const composition = await selectComposition({
       serveUrl, id: COMPOSITION_ID, inputProps,
+      ...resolveRenderMemorySettings(),
       puppeteerInstance: browser,
       browserExecutable: browserExecutable(),
       binariesDirectory: binariesDirectory(),
@@ -474,13 +578,12 @@ export async function renderTimelineStills({
       const f = Math.max(0, Math.min(composition.durationInFrames - 1, Math.round(frame)));
       const { buffer } = await renderStill({
         serveUrl, composition, inputProps, frame: f,
-        imageFormat: 'jpeg', jpegQuality: 72,
-        // Slightly smaller cells when many frames → cheaper vision payload
-        scale: (list.length > 6 ? 480 : 640) / composition.width,
+        imageFormat: 'jpeg',
+        ...timelineStillOptions({ width: composition.width, frameCount: list.length, fullResolution }),
         chromiumOptions: { gl: resolveRenderGlBackend() },
         browserExecutable: browserExecutable(),
         binariesDirectory: binariesDirectory(),
-        offthreadVideoThreads: offthreadVideoThreads(),
+        ...resolveRenderMemorySettings(),
         output: null,
         puppeteerInstance: browser,
         timeoutInMilliseconds: renderTimeoutInMilliseconds(),

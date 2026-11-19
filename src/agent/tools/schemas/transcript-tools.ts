@@ -18,10 +18,10 @@ export const TRANSCRIPT_TOOL_SCHEMAS: AgentToolSchema[] = [
   },
   {
     name: 'transcribe_track',
-    description: 'Transcribe the audio/video clips on a track, attach normalized transcript data, and include word/speaker detail when the provider returns it. Uses the provider selected in Settings (AssemblyAI by default) unless provider is explicitly supplied. Required before find_transcript / clean_script / delete_text / captions when a clip has no transcript yet.',
+    description: 'Transcribe the audio/video clips on a track, attach normalized transcript data, and include word/speaker detail when the provider returns it. Runs locally with the installed subtitle recognition model; no API key or cloud provider. Required before find_transcript / clean_script / delete_text / captions when a clip has no transcript yet.',
     input_schema: { type: 'object', properties: {
       track: { type: 'string', description: 'Track alias or stable id whose audio to transcribe (default A1).' },
-      provider: { type: 'string', enum: ['assemblyai', 'local', 'openai', 'mistral', 'deepgram', 'groq', 'elevenlabs', 'cartesia'], description: 'Optional configured provider override. Omit to use the provider selected in Settings.' },
+      provider: { type: 'string', enum: ['local'], description: 'Local subtitle recognition only.' },
     } },
   },
   {
@@ -124,7 +124,7 @@ export const TRANSCRIPT_TOOL_SCHEMAS: AgentToolSchema[] = [
       + '- clear_edits: restore the clip to the raw transcript by clearing deleted words, silence caps, gap overrides, and play-order overrides (same as the Transcript panel 「还原全部」). Retimes the clip to the full transcript duration.\n'
       + '- set_play_order: reorder spoken playback via playOrder word-index array (same as dragging speech blocks in the Transcript panel). Pass playOrder:null or clearPlayOrder:true to restore chronological order. Retimes the clip.\n'
       + '- retry_transcription: force ASR to rerun for the clip and replace its transcript when transcription is stuck, failed, or needs refreshing.\n'
-      + '- translation_create: translate the full transcript to lang and create or replace a word-level translation variant sharing the source timeline.\n'
+      + '- translation_create: store externally supplied translated texts for each source word, without calling any AI service.\n'
       + '- translation_ensure: idempotently reuse an existing variant for lang or create it otherwise. Prefer this for ordinary translation requests.\n'
       + '- translation_list: list the source transcript and all translation variants with id/lang/word count.\n'
       + '- translation_read: read words from a translation variant selected by lang or targetLanguage.\n'
@@ -157,6 +157,7 @@ export const TRANSCRIPT_TOOL_SCHEMAS: AgentToolSchema[] = [
           description: 'set_play_order: when true, clear transcriptPlayOrder and restore chronological speech.',
         },
         lang: { type: 'string', description: 'translation_create/ensure: target language, such as English, Chinese, or Japanese; translation_read: variant language to read.' },
+        texts: { type: 'array', items: { type: 'string' }, description: 'translation_create: translated text for each source word, in source order. Compute translations in Codex first; the editor does not run a model.' },
         targetLanguage: { type: 'string', description: 'translation_read: alias of lang for selecting the translated language.' },
       },
       required: ['action'],
