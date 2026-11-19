@@ -396,7 +396,7 @@ export async function runLongVideoBenchmark({ root, media, states, report, previ
       ((report.resourceSamples ??= []) as unknown[]).push(attempt);
       try {
         let last = -1;
-        const guarded = <T>(run: (signal: AbortSignal) => Promise<T>) => withResourceGuard({
+        const guarded = <T,>(run: (signal: AbortSignal) => Promise<T>) => withResourceGuard({
           signal: AbortSignal.timeout(timeoutMs),
           sample: async () => { const disk = await statfs(root); return { freeMemoryBytes: freemem(), freeDiskBytes: disk.bavail * disk.bsize }; },
           onSample: async (sample: unknown) => { samples.push(sample); await persist(); },

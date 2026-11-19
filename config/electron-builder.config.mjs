@@ -72,11 +72,12 @@ const sqliteVecFilters = SQLITE_VEC_PACKAGES
   .map((packageSuffix) => `!node_modules/sqlite-vec-${packageSuffix}/**`);
 const hasMacSigningCertificate = Boolean(process.env.CSC_LINK || process.env.CSC_NAME);
 const isWindowsTarget = target.startsWith('win32-');
+const isMacTarget = target.startsWith('darwin-');
 const windowsArtifactName = 'ZuorenJiandao-Setup-${version}-${arch}.${ext}';
 
 export default {
   appId: 'org.zuoren.jiandao',
-  productName: isWindowsTarget ? '左人剪刀' : 'OpenChatCut',
+  productName: isWindowsTarget ? '左人剪刀' : isMacTarget ? 'ZuorenJiandao' : 'OpenChatCut',
   artifactName: isWindowsTarget
     ? windowsArtifactName
     : '${productName}-${version}-${arch}.${ext}',
@@ -137,7 +138,7 @@ export default {
   mac: {
     target: ['dmg', 'zip'],
     category: 'public.app-category.video',
-    icon: 'assets/branding/openchatcut-icon.icns',
+    icon: 'assets/branding/zuoren-jiandao-icon.icns',
     entitlements: 'desktop/entitlements.mac.plist',
     entitlementsInherit: 'desktop/entitlements.mac.plist',
     // Hardened runtime is required for Developer ID distribution. Ad-hoc local

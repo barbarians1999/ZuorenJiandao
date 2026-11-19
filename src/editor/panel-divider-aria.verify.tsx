@@ -29,7 +29,7 @@ try {
     vite.ssrLoadModule('/src/hooks/useEditorPanelLayout.ts'),
     vite.ssrLoadModule('/src/components/Divider.tsx'),
   ]);
-  function renderSplitters() {
+  function RenderSplitters() {
     const layout = useEditorPanelLayout();
     return createElement('div', null,
       createElement(Divider, { onResize() {}, ariaValue: layout.librarySize, ariaValueLabel: '媒体库宽度' }),
@@ -40,7 +40,7 @@ try {
     return [...markup.matchAll(/<div class="cc-panel-divider[^>]*aria-valuenow="([^"]+)" aria-valuemin="([^"]+)" aria-valuemax="([^"]+)" aria-valuetext="([^"]+)"/g)]
       .map((match) => ({ value: Number(match[1]), min: Number(match[2]), max: Number(match[3]), text: match[4] }));
   }
-  const initial = renderToStaticMarkup(createElement(renderSplitters));
+  const initial = renderToStaticMarkup(createElement(RenderSplitters));
   const initialValues = dividerValues(initial);
   assert.equal(initialValues.length, 2);
   assert.equal(initialValues[0]?.value, (406 / 1463) * 100);
@@ -56,7 +56,7 @@ try {
 
   storage.set('openchatcut.libraryRatio.ui-v3', JSON.stringify(0.7));
   storage.set('openchatcut.timelineRatio.ui-v2', JSON.stringify(0.6));
-  const largerTimeline = renderToStaticMarkup(createElement(renderSplitters));
+  const largerTimeline = renderToStaticMarkup(createElement(RenderSplitters));
   const largerValues = dividerValues(largerTimeline);
   assert.equal(largerValues[0]?.value, 70);
   assert.equal(largerValues[0]?.text, '媒体库宽度 70%');
@@ -65,14 +65,14 @@ try {
 
   storage.set('openchatcut.libraryRatio.ui-v3', JSON.stringify(-1));
   storage.set('openchatcut.timelineRatio.ui-v2', JSON.stringify(2));
-  const clamped = renderToStaticMarkup(createElement(renderSplitters));
+  const clamped = renderToStaticMarkup(createElement(RenderSplitters));
   const clampedValues = dividerValues(clamped);
   assert.equal(clampedValues[0]?.value, clampedValues[0]?.min);
   assert.equal(clampedValues[1]?.value, clampedValues[1]?.max);
 
   storage.set('openchatcut.libraryRatio.ui-v3', 'null');
   storage.set('openchatcut.timelineRatio.ui-v2', 'null');
-  const nonfinite = dividerValues(renderToStaticMarkup(createElement(renderSplitters)));
+  const nonfinite = dividerValues(renderToStaticMarkup(createElement(RenderSplitters)));
   assert.equal(nonfinite[0]?.value, initialValues[0]?.value);
   assert.equal(nonfinite[1]?.value, initialValues[1]?.value);
   console.log('editor splitter ARIA values, bounds, labels, and clamping verified');

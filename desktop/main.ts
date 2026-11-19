@@ -261,7 +261,8 @@ function registerDesktopHandlers(trustedOrigin: string): void {
     if (action === 'close') win.close();
     else if (action === 'minimize') win.minimize();
     else if (action === 'toggle-maximize') {
-      if (win.isMaximized()) win.unmaximize();
+      if (process.platform === 'darwin' && win.isFullScreen()) win.setFullScreen(false);
+      else if (win.isMaximized()) win.unmaximize();
       else win.maximize();
     } else if (action === 'apply-ui-scale') {
       applyResponsiveWindowScale(win);
@@ -309,6 +310,9 @@ function registerDesktopHandlers(trustedOrigin: string): void {
 
 async function boot(): Promise<void> {
   await app.whenReady();
+  if (process.platform === 'darwin') {
+    app.setName('左人剪刀');
+  }
   if (app.isPackaged) {
     const missing = missingRuntimeAssets(packagedRuntimeAssetChecks({
       resourcesPath: process.resourcesPath,
@@ -443,6 +447,9 @@ async function boot(): Promise<void> {
 }
 
 app.on('window-all-closed', () => app.quit());
+app.on('activate', () => {
+  if (process.platform === 'darwin' && mainWindow) focusExistingWindow(mainWindow);
+});
 
 const hasSingleInstanceLock = RUNTIME_SELF_TEST
   ? true

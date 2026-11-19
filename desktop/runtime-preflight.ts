@@ -63,11 +63,11 @@ export function missingRuntimeAssets(
 /** Shared by the asset preflight and the entry bundle's load failure. */
 export const RUNTIME_ASSET_ADVICE = [
   '可能原因：安装包遗漏文件、安装未完成，或杀毒软件隔离了文件。',
-  '请保留完整错误信息并反馈，使用修正版重新安装 OpenChatCut。',
+  '请保留完整错误信息并反馈，使用修正版重新安装 左人剪刀 (ZuorenJiandao)。',
   '此错误不代表一定是杀毒软件问题，不需要先关闭防护或添加白名单。',
   '',
   'Possible causes include missing packaged files, an incomplete installation,',
-  'or antivirus quarantine. Report the full error and Reinstall OpenChatCut',
+  'or antivirus quarantine. Report the full error and Reinstall ZuorenJiandao',
   'using a corrected installer. This error alone does not justify disabling',
   'security protections or adding antivirus exclusions.',
 ].join('\n');

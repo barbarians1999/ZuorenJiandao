@@ -104,7 +104,9 @@ assert.equal(stagedWindows.directories?.output, 'release/.staging-test', 'packag
 const windowsPortable = await configFor('win32-x64', 'portable');
 assert.deepEqual(windowsPortable.win?.target, ['nsis'], 'obsolete portable environment settings must not override installer-only packaging');
 assert.equal(windowsPortable.artifactName, 'ZuorenJiandao-Setup-${version}-${arch}.${ext}');
-assert.equal(arm64.productName, 'OpenChatCut', 'existing non-Windows packaging paths stay compatible');
+assert.equal(arm64.productName, 'ZuorenJiandao', 'macOS packages must use the ZuorenJiandao app name');
+assert.equal(x64.productName, 'ZuorenJiandao', 'macOS x64 packages must use the ZuorenJiandao app name');
+assert.equal(linux.productName, 'OpenChatCut', 'existing Linux packaging path stays compatible');
 assert.equal(
   windows.files?.includes('!node_modules/sqlite-vec-windows-x64/**'),
   false,
@@ -171,7 +173,7 @@ for (const blockmap of [
   'x64.zip.blockmap',
 ]) {
   assert.ok(
-    workflow.includes(`release-files/OpenChatCut-\${EXPECTED_VERSION}-${blockmap}`),
+    workflow.includes(`release-files/ZuorenJiandao-\${EXPECTED_VERSION}-${blockmap}`),
     `release gate must require ${blockmap}`,
   );
 }
@@ -184,7 +186,7 @@ assert.match(workflow, /release-files\/\*/, 'GitHub Release must publish install
 
 assert.doesNotMatch(
   workflow,
-  /find release -type d -name OpenChatCut\.app|(?:mac|win|linux)-unpacked\b/,
+  /find release -type d -name (?:OpenChatCut|ZuorenJiandao)\.app|(?:mac|win|linux)-unpacked\b/,
   'desktop smoke tests must never launch unpacked electron-builder output',
 );
 assert.equal(
@@ -205,23 +207,23 @@ assert.match(
 assert.match(workflow, /hdiutil attach[\s\S]*?"\$\{dmgs\[0\]\}"/, 'macOS smoke must mount the generated DMG');
 assert.match(
   workflow,
-  /"\$mounted_app\/Contents\/MacOS\/OpenChatCut"/,
+  /"\$mounted_app\/Contents\/MacOS\/ZuorenJiandao"/,
   'macOS smoke must launch the app from the mounted DMG',
 );
 assert.match(workflow, /unzip -tq "\$\{zips\[0\]\}"/, 'macOS smoke must validate the generated update ZIP');
 assert.match(
   workflow,
-  /OpenChatCut\.app\/Contents\/MacOS\/OpenChatCut/,
+  /ZuorenJiandao\.app\/Contents\/MacOS\/ZuorenJiandao/,
   'macOS update ZIP must contain the application executable',
 );
 assert.match(
   workflow,
-  /OpenChatCut\.app\/Contents\/Frameworks\/Electron Framework\.framework\/Versions\/A\/Electron Framework/,
+  /ZuorenJiandao\.app\/Contents\/Frameworks\/Electron Framework\.framework\/Versions\/A\/Electron Framework/,
   'macOS update ZIP must contain the Electron runtime',
 );
 assert.match(
   workflow,
-  /render_runtime="OpenChatCut\.app\/Contents\/Resources\/chrome-headless-shell\//,
+  /render_runtime="ZuorenJiandao\.app\/Contents\/Resources\/chrome-headless-shell\//,
   'macOS update ZIP must contain the packaged render runtime',
 );
 assert.match(

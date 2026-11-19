@@ -6,6 +6,15 @@ name: desktop
 
 on:
   workflow_dispatch:
+    inputs:
+      targets:
+        description: 'Packaging targets (mac builds both macOS arm64 & x64; all builds all 4 OS targets)'
+        required: false
+        type: choice
+        options:
+          - mac
+          - all
+        default: all
 
 permissions:
   contents: read
@@ -20,11 +29,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.18.0
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci --loglevel=error
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
         env:
           # onnxruntime-node@1.22.0 postinstall fails on ubuntu CI runners (NuGet
           # misses the win-x64 CUDA runtime). CI validates logic only, so skip it.
@@ -41,12 +53,19 @@ jobs:
             exit 1
           fi
       - run: npm run lint
-      - run: npm test
       - run: npm run verify:agent-skill
+      - run: npm run verify:i18n
+      - run: npm run verify:shortcuts
+      - run: pnpm exec tsx desktop/update-packaging.verify.ts
+      - run: pnpm exec tsx desktop/runtime-preflight.verify.ts
+      - run: pnpm exec tsx desktop/window-frame.verify.ts
+      - run: pnpm exec tsx desktop/window-scale.verify.ts
+      - run: node desktop/packaged-runtime-dependencies.verify.mjs
       - run: npm run build
 
   package:
     name: Package ${{ matrix.name }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.targets != 'mac' || startsWith(matrix.name, 'macOS-') }}
     needs: validate
     strategy:
       fail-fast: false
@@ -85,11 +104,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.18.0
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci --loglevel=error
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
         env:
           # onnxruntime-node@1.22.0 postinstall fails on linux CI runners; skip the
           # NuGet runtime download (real ORT bytes ship separately for packaging).
@@ -118,8 +140,43 @@ jobs:
         if: runner.os == 'Windows'
         run: npm run verify:model-persistence-restart
 
+      - name: Ensure CMake on macOS
+        if: runner.os == 'macOS'
+        run: command -v cmake >/dev/null 2>&1 || brew install cmake
+
       - name: Package
         run: npm run ${{ matrix.script }}
+
+      - name: Generate updater metadata for macOS and Linux
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          MATRIX_SCRIPT: ${{ matrix.script }}
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const crypto = require("node:crypto");
+            const version = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+            const os = process.env.RUNNER_OS;
+            const script = process.env.MATRIX_SCRIPT;
+            let artifact = null;
+            let metaName = null;
+            if (os === "macOS") {
+              const arch = script.includes("mac-x64") ? "x64" : "arm64";
+              artifact = fs.readdirSync("release").find((f) => f.endsWith(`-${arch}.zip`));
+              metaName = `latest-${arch}-mac.yml`;
+            } else if (os === "Linux") {
+              artifact = fs.readdirSync("release").find((f) => f.endsWith(".AppImage"));
+              metaName = "latest-x64-linux.yml";
+            }
+            if (!artifact || !metaName) throw new Error(`Missing release artifact for ${os}/${script}`);
+            const bytes = fs.readFileSync(path.join("release", artifact));
+            const sha512 = crypto.createHash("sha512").update(bytes).digest("base64");
+            const yml = `version: ${version}\nfiles:\n  - url: ${artifact}\n    sha512: ${sha512}\n    size: ${bytes.length}\npath: ${artifact}\nsha512: ${sha512}\nreleaseDate: \'${new Date().toISOString()}\'\n`;
+            fs.writeFileSync(path.join("release", metaName), yml, "utf8");
+            console.log(`Generated release/${metaName} for ${artifact} (${bytes.length} bytes)`);
+          '
 
       - name: Smoke test macOS distribution
         if: runner.os == 'macOS'
@@ -149,28 +206,28 @@ jobs:
 
           hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "${dmgs[0]}"
           mounted=true
-          mounted_app="$mount_dir/OpenChatCut.app"
-          test -x "$mounted_app/Contents/MacOS/OpenChatCut"
+          mounted_app="$mount_dir/ZuorenJiandao.app"
+          test -x "$mounted_app/Contents/MacOS/ZuorenJiandao"
           # The DMG and ZIP contain the same app; execute it from the writable ZIP below.
           hdiutil detach "$mount_dir"
           mounted=false
 
           unzip -tq "${zips[0]}"
-          test "$(unzip -Z1 "${zips[0]}" 'OpenChatCut.app/Contents/MacOS/OpenChatCut')" = \
-            'OpenChatCut.app/Contents/MacOS/OpenChatCut'
+          test "$(unzip -Z1 "${zips[0]}" 'ZuorenJiandao.app/Contents/MacOS/ZuorenJiandao')" = \
+            'ZuorenJiandao.app/Contents/MacOS/ZuorenJiandao'
           test "$(unzip -Z1 "${zips[0]}" \
-            'OpenChatCut.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework')" = \
-            'OpenChatCut.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework'
+            'ZuorenJiandao.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework')" = \
+            'ZuorenJiandao.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework'
           unzip -q "${zips[0]}" -d "$zip_dir"
-          zipped_app="$zip_dir/OpenChatCut.app"
-          test -x "$zipped_app/Contents/MacOS/OpenChatCut"
-          "$zipped_app/Contents/MacOS/OpenChatCut"
+          zipped_app="$zip_dir/ZuorenJiandao.app"
+          test -x "$zipped_app/Contents/MacOS/ZuorenJiandao"
+          "$zipped_app/Contents/MacOS/ZuorenJiandao"
           case "$(uname -m)" in
             arm64) runtime_arch='mac-arm64' ;;
             x86_64) runtime_arch='mac-x64' ;;
             *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
           esac
-          render_runtime="OpenChatCut.app/Contents/Resources/chrome-headless-shell/$runtime_arch/chrome-headless-shell-$runtime_arch/chrome-headless-shell"
+          render_runtime="ZuorenJiandao.app/Contents/Resources/chrome-headless-shell/$runtime_arch/chrome-headless-shell-$runtime_arch/chrome-headless-shell"
           test "$(unzip -Z1 "${zips[0]}" "$render_runtime")" = "$render_runtime"
           test -x "$zip_dir/$render_runtime"
 
@@ -345,8 +402,8 @@ jobs:
           test -f release-files/latest-x64-mac.yml
           test -f release-files/latest.yml
           test -f release-files/latest-x64-linux.yml
-          test -f "release-files/OpenChatCut-${EXPECTED_VERSION}-arm64.zip.blockmap"
-          test -f "release-files/OpenChatCut-${EXPECTED_VERSION}-x64.zip.blockmap"
+          test -f "release-files/ZuorenJiandao-${EXPECTED_VERSION}-arm64.zip.blockmap"
+          test -f "release-files/ZuorenJiandao-${EXPECTED_VERSION}-x64.zip.blockmap"
           test -f "release-files/ZuorenJiandao-Setup-${EXPECTED_VERSION}-x64.exe.blockmap"
           test -f "release-files/ZuorenJiandao-Setup-${EXPECTED_VERSION}-x64.exe"
 

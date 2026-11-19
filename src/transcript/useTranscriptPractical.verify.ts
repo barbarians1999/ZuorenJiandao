@@ -53,6 +53,7 @@ const tick = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); 
 const result: TranscriptResult = { text: '你好', words: [{ text: '你好', start: 0, end: 1000 }], utterances: [] };
 try {
   const { useTranscript } = await server.ssrLoadModule('/src/transcript/useTranscript.ts');
+  // oxlint-disable-next-line react-hooks/rules-of-hooks
   const render = () => { cursor = 0; return useTranscript(); };
   let hook = render();
   readiness = { state: 'missing', label: 'Base' };
