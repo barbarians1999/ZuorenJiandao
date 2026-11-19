@@ -1,8 +1,15 @@
+strictDepBuilds: false
 allowBuilds:
-  electron-winstaller: set this to true or false
-  esbuild: set this to true or false
-  ffmpeg-static: set this to true or false
-  koffi: set this to true or false
-  onnxruntime-node: set this to true or false
-  protobufjs: set this to true or false
-  sharp: set this to true or false
+  '@ffprobe-installer/darwin-arm64': true
+  '@ffprobe-installer/darwin-x64': true
+  '@ffprobe-installer/linux-x64': true
+  '@ffprobe-installer/win32-x64': true
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+  ffmpeg-static: true
+  fsevents: true
+  koffi: true
+  onnxruntime-node: true
+  protobufjs: false
+  sharp: true
