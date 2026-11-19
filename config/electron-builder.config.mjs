@@ -19,6 +19,7 @@
 // - macOS uses a pre-generated standard icns to avoid corrupt 48 px layers during conversion.
 //   Windows uses a multi-resolution ICO generated from the canonical Zuoren SVG.
 
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { verifyPackagedProductAssets, verifyPackagedRuntimeDependencies } from '../desktop/packaged-runtime-dependencies.mjs';
 
@@ -96,6 +97,8 @@ export default {
     'desktop-dist/preload.cjs',
     ...nativeInferenceWorkers,
     'package.json',
+    // Include @ffprobe-installer explicitly so hoisted transitive platform binaries are never skipped.
+    'node_modules/@ffprobe-installer/**',
     // Keep only the target compositor; renderer selects its package from process.platform at runtime.
     ...COMPOSITORS.filter((c) => c !== keep).map((c) => `!node_modules/@remotion/compositor-${c}/**`),
     // onnxruntime-node publishes every platform in one package; ship only this artifact's binary.
@@ -134,6 +137,12 @@ export default {
       : join(context.appOutDir, 'resources');
     verifyPackagedRuntimeDependencies(join(resources, 'app.asar'));
     verifyPackagedProductAssets(resources);
+    if (target in TARGET_COMPOSITOR) {
+      const ffprobeRel = `app.asar.unpacked/node_modules/@ffprobe-installer/${target}/${target.startsWith('win32-') ? 'ffprobe.exe' : 'ffprobe'}`;
+      if (!existsSync(join(resources, ffprobeRel))) {
+        throw new Error(`Missing unpacked ffprobe binary for ${target}: ${ffprobeRel}`);
+      }
+    }
   },
   mac: {
     target: ['dmg', 'zip'],
