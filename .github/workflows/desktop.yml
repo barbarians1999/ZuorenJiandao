@@ -163,30 +163,40 @@ jobs:
         env:
           MATRIX_SCRIPT: ${{ matrix.script }}
         run: |
-          node -e '
-            const fs = require("node:fs");
-            const path = require("node:path");
-            const crypto = require("node:crypto");
-            const version = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
-            const os = process.env.RUNNER_OS;
-            const script = process.env.MATRIX_SCRIPT;
-            let artifact = null;
-            let metaName = null;
-            if (os === "macOS") {
-              const arch = script.includes("mac-x64") ? "x64" : "arm64";
-              artifact = fs.readdirSync("release").find((f) => f.endsWith(`-${arch}.zip`));
-              metaName = `latest-${arch}-mac.yml`;
-            } else if (os === "Linux") {
-              artifact = fs.readdirSync("release").find((f) => f.endsWith(".AppImage"));
-              metaName = "latest-x64-linux.yml";
-            }
-            if (!artifact || !metaName) throw new Error(`Missing release artifact for ${os}/${script}`);
-            const bytes = fs.readFileSync(path.join("release", artifact));
-            const sha512 = crypto.createHash("sha512").update(bytes).digest("base64");
-            const yml = `version: ${version}\nfiles:\n  - url: ${artifact}\n    sha512: ${sha512}\n    size: ${bytes.length}\npath: ${artifact}\nsha512: ${sha512}\nreleaseDate: \'${new Date().toISOString()}\'\n`;
-            fs.writeFileSync(path.join("release", metaName), yml, "utf8");
-            console.log(`Generated release/${metaName} for ${artifact} (${bytes.length} bytes)`);
-          '
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const crypto = require("node:crypto");
+          const version = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+          const os = process.env.RUNNER_OS;
+          const script = process.env.MATRIX_SCRIPT;
+          let artifact = null;
+          let metaName = null;
+          if (os === "macOS") {
+            const arch = script.includes("mac-x64") ? "x64" : "arm64";
+            artifact = fs.readdirSync("release").find((f) => f.endsWith(".zip"));
+            metaName = `latest-${arch}-mac.yml`;
+          } else if (os === "Linux") {
+            artifact = fs.readdirSync("release").find((f) => f.endsWith(".AppImage"));
+            metaName = "latest-x64-linux.yml";
+          }
+          if (!artifact || !metaName) throw new Error(`Missing release artifact for ${os}/${script}`);
+          const bytes = fs.readFileSync(path.join("release", artifact));
+          const sha512 = crypto.createHash("sha512").update(bytes).digest("base64");
+          const yml = [
+            `version: ${version}`,
+            "files:",
+            `  - url: ${artifact}`,
+            `    sha512: ${sha512}`,
+            `    size: ${bytes.length}`,
+            `path: ${artifact}`,
+            `sha512: ${sha512}`,
+            `releaseDate: '${new Date().toISOString()}'`,
+            "",
+          ].join("\n");
+          fs.writeFileSync(path.join("release", metaName), yml, "utf8");
+          console.log(`Generated release/${metaName} for ${artifact} (${bytes.length} bytes)`);
+          NODE
 
       - name: Smoke test macOS distribution
         if: runner.os == 'macOS'
