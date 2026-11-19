@@ -150,6 +150,10 @@ jobs:
         if: runner.os == 'Windows'
         run: npm run verify:model-persistence-restart
 
+      - name: Provision Windows whisper-cli runtime
+        if: runner.os == 'Windows'
+        run: node scripts/sync-whisper-cli.mjs
+
       - name: Ensure CMake on macOS
         if: runner.os == 'macOS'
         run: command -v cmake >/dev/null 2>&1 || brew install cmake
