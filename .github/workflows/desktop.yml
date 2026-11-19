@@ -27,7 +27,48 @@ jobs:
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
     steps:
+      - id: targets
+        shell: bash
+        env:
+          INPUT_TARGETS: ${{ inputs.targets || 'all' }}
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const allTargets = [
+              {
+                name: "macOS-arm64",
+                os: "macos-latest",
+                script: "desktop:dist",
+                artifact: "release/*.dmg\nrelease/*.zip\nrelease/latest-arm64-mac.yml\nrelease/*.blockmap",
+              },
+              {
+                name: "macOS-x64",
+                os: "macos-15-intel",
+                script: "desktop:dist:mac-x64",
+                artifact: "release/*.dmg\nrelease/*.zip\nrelease/latest-x64-mac.yml\nrelease/*.blockmap",
+              },
+              {
+                name: "Windows-x64",
+                os: "windows-latest",
+                script: "desktop:dist:win",
+                artifact: "release/ZuorenJiandao-Setup-*.exe\nrelease/latest.yml\nrelease/*.blockmap",
+              },
+              {
+                name: "Linux-x64",
+                os: "ubuntu-latest",
+                script: "desktop:dist:linux",
+                artifact: "release/*.AppImage\nrelease/latest-x64-linux.yml\nrelease/*.blockmap",
+              },
+            ];
+            const isTag = (process.env.GITHUB_REF || "").startsWith("refs/tags/v");
+            const selected = !isTag && process.env.INPUT_TARGETS === "mac"
+              ? allTargets.filter((t) => t.name.startsWith("macOS-"))
+              : allTargets;
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify(selected)}\n`);
+          '
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
         with:
@@ -65,42 +106,11 @@ jobs:
 
   package:
     name: Package ${{ matrix.name }}
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.targets != 'mac' || startsWith(matrix.name, 'macOS-') }}
     needs: validate
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: macOS-arm64
-            os: macos-latest
-            script: desktop:dist
-            artifact: |
-              release/*.dmg
-              release/*.zip
-              release/latest-arm64-mac.yml
-              release/*.blockmap
-          - name: macOS-x64
-            os: macos-15-intel
-            script: desktop:dist:mac-x64
-            artifact: |
-              release/*.dmg
-              release/*.zip
-              release/latest-x64-mac.yml
-              release/*.blockmap
-          - name: Windows-x64
-            os: windows-latest
-            script: desktop:dist:win
-            artifact: |
-              release/ZuorenJiandao-Setup-*.exe
-              release/latest.yml
-              release/*.blockmap
-          - name: Linux-x64
-            os: ubuntu-latest
-            script: desktop:dist:linux
-            artifact: |
-              release/*.AppImage
-              release/latest-x64-linux.yml
-              release/*.blockmap
+        include: ${{ fromJson(needs.validate.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
