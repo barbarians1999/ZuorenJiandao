@@ -543,6 +543,41 @@ export function rotatePreviewTransform(
   return coerceKeyframeValue('rotation', startRotation + delta);
 }
 
+const OVERLAY_PREEMPT_KINDS = new Set<TimelineItem['kind']>([
+  'mosaic',
+  'text',
+  'solid',
+  'image',
+  'gif',
+  'svg',
+  'motion-graphic',
+]);
+
+/**
+ * Whether a selected item's preview bounding box should take pointer priority
+ * over unselected captions on the canvas (e.g., mosaic, text, stickers, PiP).
+ * An untransformed full-frame base video on the bottom track yields to captions
+ * so users can still click subtitles while inspecting the main video.
+ */
+export function shouldSelectedItemPreemptCaptions(
+  state: TimelineState,
+  candidate: PreviewCandidate,
+): boolean {
+  if (OVERLAY_PREEMPT_KINDS.has(candidate.item.kind)) return true;
+  const visualTracks = timelineTrackIds(state).filter((id) => trackKind(state, id) === 'video');
+  const bottomTrack = visualTracks.at(-1);
+  if (bottomTrack && candidate.item.track !== bottomTrack) return true;
+  const { transform, item } = candidate;
+  return (
+    Math.abs(transform.x) > 1e-3
+    || Math.abs(transform.y) > 1e-3
+    || Math.abs(transform.scaleX - 1) > 1e-3
+    || Math.abs(transform.scaleY - 1) > 1e-3
+    || Math.abs(transform.rotation) > 1e-3
+    || Boolean(item.transform?.crop)
+  );
+}
+
 /** Midpoints of the four edges in composition space (after transform). */
 export function previewEdgeMidpoints(
   corners: readonly [PreviewPoint, PreviewPoint, PreviewPoint, PreviewPoint],

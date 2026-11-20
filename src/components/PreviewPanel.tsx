@@ -449,7 +449,7 @@ export const PreviewPanel = memo(function PreviewPanel({
                 : mosaicEditing && onSetItemEffects
                   ? <PreviewMosaicOverlay state={state} playerRef={playerRef} onSetItemEffects={onSetItemEffects}
                       onBeginHistoryGesture={transformApi.onBeginHistoryGesture} onEndHistoryGesture={transformApi.onEndHistoryGesture} />
-                : <PreviewTransformOverlay state={state} playerRef={playerRef} {...transformApi} onSetItemMask={onSetItemMask} onSetCompositionMosaic={onSetCompositionMosaic} />
+                : <PreviewTransformOverlay state={state} playerRef={playerRef} captionActive={Boolean(activeCaptionSelection)} {...transformApi} onSetItemMask={onSetItemMask} onSetCompositionMosaic={onSetCompositionMosaic} />
             )}
             {!maskEditing && !mosaicEditing && !pickMode && !fullscreen && onUpdateCaptions && captionTrackEntries(state).map(({ id, captions }) => captions?.enabled ? (
               <CaptionPreviewEditor

@@ -13,19 +13,19 @@ const overlay: React.CSSProperties = {
 };
 const panel: React.CSSProperties = {
   width: 480, maxWidth: 'calc(100vw - 48px)', maxHeight: 'calc(100vh - 96px)',
-  display: 'flex', flexDirection: 'column',
-  background: theme.panel, border: `0.5px solid ${theme.borderLight}`, borderRadius: 6,
-  boxShadow: `0 24px 64px ${themeAlpha.shadow(0.5)}`, color: theme.text,
+  display: 'flex', flexDirection: 'column', overflow: 'hidden',
+  background: theme.panel, border: '1px solid transparent', borderRadius: 18,
+  boxShadow: `0 20px 56px ${themeAlpha.shadow(0.65)}`, color: theme.text,
 };
 const head: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 8, padding: '14px 16px',
-  borderBottom: `0.5px solid ${theme.border}`,
+  display: 'flex', alignItems: 'center', gap: 8, padding: '14px 18px',
+  borderBottom: `1px solid ${theme.border}`,
 };
-const title: React.CSSProperties = { fontSize: 13.5, fontWeight: 600 };
+const title: React.CSSProperties = { fontSize: 14, fontWeight: 650 };
 const sub: React.CSSProperties = { color: theme.textDim, fontSize: 12 };
 const miniBtn: React.CSSProperties = {
-  background: 'none', border: 'none', color: theme.textDim, cursor: 'pointer',
-  fontSize: 13, padding: '2px 6px', borderRadius: 5, marginLeft: 'auto',
+  background: theme.panelAlt, border: 'none', color: theme.textDim, cursor: 'pointer',
+  fontSize: 13, width: 28, height: 28, borderRadius: 999, marginLeft: 'auto', display: 'grid', placeItems: 'center',
 };
 const body: React.CSSProperties = { padding: '12px 16px', overflowY: 'auto' };
 const stateRow: React.CSSProperties = {
@@ -41,15 +41,15 @@ const warnLine: React.CSSProperties = { color: theme.gold, fontSize: 12.5, lineH
 const message: React.CSSProperties = { fontSize: 12.5, padding: '2px 0 6px' };
 const footer: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end',
-  padding: '12px 16px', borderTop: `0.5px solid ${theme.border}`,
+  padding: '12px 18px', borderTop: `1px solid ${theme.border}`,
 };
 const secondaryBtn: React.CSSProperties = {
-  background: 'transparent', border: `0.5px solid ${theme.border}`, color: theme.text,
-  cursor: 'pointer', fontSize: 12.5, padding: '6px 14px', borderRadius: 4,
+  background: theme.panelAlt, border: 'none', color: theme.text,
+  cursor: 'pointer', fontSize: 13, padding: '7px 16px', borderRadius: 999, fontWeight: 550,
 };
 const primaryBtn: React.CSSProperties = {
   background: theme.accent, border: 'none', color: theme.onAccent, cursor: 'pointer',
-  fontSize: 12.5, padding: '6px 14px', borderRadius: 4,
+  fontSize: 13, padding: '7px 18px', borderRadius: 999, fontWeight: 650,
 };
 const primaryBtnDisabled: React.CSSProperties = { ...primaryBtn, opacity: 0.5, cursor: 'default' };
 

@@ -25,6 +25,7 @@ import {
   previewEdgeMidpoints,
   previewPointerFromClient,
   rotatePreviewTransform,
+  shouldSelectedItemPreemptCaptions,
   uniformScaleAxesPreviewTransform,
   visiblePreviewCandidates,
   type ClickCycleState,
@@ -53,6 +54,8 @@ export interface PreviewTransformOverlayProps {
   onSetItemMask?: (id: string, mask: ClipMask | null) => void;
   /** Resize a composition mosaic region directly from preview edge handles. */
   onSetCompositionMosaic?: (id: string, patch: Partial<CompositionMosaic>) => void;
+  /** True when a caption cue is actively selected/edited on the canvas. */
+  captionActive?: boolean;
 }
 
 const DOUBLE_CLICK_MS = 320;
@@ -128,6 +131,7 @@ export function PreviewTransformOverlay({
   onItemPropChange,
   onSetItemMask,
   onSetCompositionMosaic,
+  captionActive = false,
 }: PreviewTransformOverlayProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [frame, setFrame] = useState(() => Math.round(playerRef.current?.getCurrentFrame() ?? 0));
@@ -184,6 +188,9 @@ export function PreviewTransformOverlay({
     () => selectedCandidate ? previewCandidateGeometry(state, selectedCandidate) : null,
     [selectedCandidate, state],
   );
+  const preemptCaptions = !captionActive
+    && !!selectedCandidate
+    && shouldSelectedItemPreemptCaptions(state, selectedCandidate);
 
   useEffect(() => {
     cycleRef.current = null;
@@ -381,19 +388,28 @@ export function PreviewTransformOverlay({
     let edge = modeFromHandle?.edge;
 
     if (!modeFromHandle) {
+      const hitSelectedTarget = event.target instanceof Element && Boolean(event.target.closest('[data-preview-selected-hit]'));
       const hits = hitPreviewCandidates(state, frame, pointComposition);
-      const cycled = cyclePreviewCandidate(cycleRef.current, pointUi, hits, CLICK_TOLERANCE);
-      if (!cycled) {
+      if (hitSelectedTarget && selectedCandidate && hits.some(({ item }) => item.id === selectedCandidate.item.id)) {
         cycleRef.current = null;
-        onSelectItem(null);
-        return;
+        candidate = selectedCandidate;
+        onSelectItem(candidate.item.id);
+        mode = 'move';
+        edge = undefined;
+      } else {
+        const cycled = cyclePreviewCandidate(cycleRef.current, pointUi, hits, CLICK_TOLERANCE);
+        if (!cycled) {
+          cycleRef.current = null;
+          onSelectItem(null);
+          return;
+        }
+        cycleRef.current = cycled.next;
+        candidate = hits.find(({ item }) => item.id === cycled.id) ?? null;
+        if (!candidate) return;
+        onSelectItem(candidate.item.id);
+        mode = 'move';
+        edge = undefined;
       }
-      cycleRef.current = cycled.next;
-      candidate = hits.find(({ item }) => item.id === cycled.id) ?? null;
-      if (!candidate) return;
-      onSelectItem(candidate.item.id);
-      mode = 'move';
-      edge = undefined;
     }
 
     if (!candidate) return;
@@ -507,14 +523,35 @@ export function PreviewTransformOverlay({
       onPointerCancel={onPointerCancel}
       onLostPointerCapture={() => finishGesture(true)}
     >
+      <div className="cc-preview-transform-backdrop" />
       {selection && rotateHandle && (
         <>
           <svg
             className="cc-preview-transform-outline"
+            style={preemptCaptions ? { zIndex: 5 } : undefined}
             viewBox={`0 0 ${state.width} ${state.height}`}
             preserveAspectRatio="none"
             aria-hidden="true"
           >
+            {preemptCaptions && (ellipseOutline ? (
+              <ellipse
+                data-preview-selected-hit={selectedCandidate!.item.id}
+                cx={ellipseOutline.cx}
+                cy={ellipseOutline.cy}
+                rx={ellipseOutline.rx}
+                ry={ellipseOutline.ry}
+                transform={`rotate(${ellipseOutline.angle} ${ellipseOutline.cx} ${ellipseOutline.cy})`}
+                fill="transparent"
+                style={{ pointerEvents: 'all', cursor: 'move' }}
+              />
+            ) : (
+              <polygon
+                data-preview-selected-hit={selectedCandidate!.item.id}
+                points={selection.corners.map((point) => `${point.x},${point.y}`).join(' ')}
+                fill="transparent"
+                style={{ pointerEvents: 'all', cursor: 'move' }}
+              />
+            ))}
             <polygon
               data-preview-selection={selectedCandidate!.item.id}
               points={selection.corners.map((point) => `${point.x},${point.y}`).join(' ')}
@@ -555,7 +592,7 @@ export function PreviewTransformOverlay({
               className={`cc-preview-transform-handle cc-preview-transform-scale cc-preview-transform-scale-${index}`}
               data-preview-handle={`scale-${index}`}
               aria-label={t('从角点 {n} 等比缩放片段', { n: index + 1 })}
-              style={percentPosition(point)}
+              style={{ ...percentPosition(point), ...(preemptCaptions ? { zIndex: 5 } : undefined) }}
             />
           ))}
           {edgeMidpoints && edgeHandles.map(({ edge, label, className }) => (
@@ -565,7 +602,7 @@ export function PreviewTransformOverlay({
               className={`cc-preview-transform-handle cc-preview-transform-crop ${className}`}
               data-preview-handle={`crop-${edge}`}
               aria-label={label}
-              style={percentPosition(edgeMidpoints[edge])}
+              style={{ ...percentPosition(edgeMidpoints[edge]), ...(preemptCaptions ? { zIndex: 5 } : undefined) }}
             />
           ))}
           <button
@@ -573,7 +610,7 @@ export function PreviewTransformOverlay({
             className="cc-preview-transform-handle cc-preview-transform-rotate"
             data-preview-handle="rotate"
             aria-label={t('旋转片段')}
-            style={percentPosition(rotateHandle.handle)}
+            style={{ ...percentPosition(rotateHandle.handle), ...(preemptCaptions ? { zIndex: 5 } : undefined) }}
           />
           {onItemPropChange
             && selectedCandidate

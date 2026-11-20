@@ -69,7 +69,7 @@ export function ShortcutsDialog({ onClose }: ShortcutsDialogProps) {
         style={{
           width: 'min(720px, 100%)', maxHeight: 'min(80vh, 640px)', overflow: 'hidden',
           display: 'flex', flexDirection: 'column',
-      background: theme.panel, border: `0.5px solid ${theme.borderLight}`, borderRadius: 6, boxShadow: `0 18px 48px ${themeAlpha.shadow(0.55)}`,
+          background: theme.panel, border: '1px solid transparent', borderRadius: 18, boxShadow: `0 20px 56px ${themeAlpha.shadow(0.65)}`,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: `0.5px solid ${theme.border}` }}>
@@ -100,7 +100,7 @@ export function ShortcutsDialog({ onClose }: ShortcutsDialogProps) {
                     const capturing = capturingId === a.id;
                     const conflicting = pending?.id === a.id;
                     return (
-            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 3, background: theme.panelAlt }}>
+            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 10, background: theme.panelAlt }}>
                         <span style={{ flex: 1, fontSize: 12.5 }}>{actionLabel(a)}</span>
                         {isCustomized(a.id) && !capturing && (
                           <button type="button" title={t('恢复默认')} onClick={() => resetBinding(a.id)}
@@ -116,7 +116,7 @@ export function ShortcutsDialog({ onClose }: ShortcutsDialogProps) {
                             fontSize: 11, fontFamily: 'Geist Mono, ui-monospace, SFMono-Regular, Menlo, monospace',
                             color: capturing ? theme.accent : theme.text,
                             background: theme.bg, border: `0.5px solid ${capturing ? theme.accent : theme.border}`,
-                            borderRadius: 6, padding: '2px 8px', whiteSpace: 'nowrap', cursor: 'pointer', minWidth: 90, textAlign: 'center',
+                            borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', cursor: 'pointer', minWidth: 90, textAlign: 'center',
                           }}
                         >
                           {capturing ? t('按下按键… (Esc)') : showKeys(a.keys)}

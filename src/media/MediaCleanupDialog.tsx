@@ -121,17 +121,17 @@ const overlay: React.CSSProperties = {
 };
 const panel: React.CSSProperties = {
   width: 560, maxWidth: 'calc(100vw - 48px)', maxHeight: 'calc(100vh - 96px)',
-  display: 'flex', flexDirection: 'column',
-    background: theme.panel, border: `0.5px solid ${theme.borderLight}`, borderRadius: 6,
-  boxShadow: `0 24px 64px ${themeAlpha.shadow(0.5)}`, color: theme.text,
+  display: 'flex', flexDirection: 'column', overflow: 'hidden',
+  background: theme.panel, border: '1px solid transparent', borderRadius: 18,
+  boxShadow: `0 20px 56px ${themeAlpha.shadow(0.65)}`, color: theme.text,
 };
-const hint: React.CSSProperties = { padding: '28px 12px', textAlign: 'center', color: theme.textDim, fontSize: 12.5 };
+const hint: React.CSSProperties = { padding: '28px 12px', textAlign: 'center', color: theme.textDim, fontSize: 13 };
 const row: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
+  display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 10, cursor: 'pointer',
 };
 const cell: React.CSSProperties = { color: theme.textDim, fontSize: 11.5, fontVariantNumeric: 'tabular-nums', flexShrink: 0, width: 64, textAlign: 'right' };
-const miniBtn: React.CSSProperties = { background: 'none', border: 'none', color: theme.textDim, cursor: 'pointer', fontSize: 13, padding: '2px 6px', borderRadius: 5 };
+const miniBtn: React.CSSProperties = { background: theme.panelAlt, border: 'none', color: theme.textDim, cursor: 'pointer', fontSize: 13, width: 28, height: 28, borderRadius: 999, display: 'grid', placeItems: 'center' };
 const dangerBtn: React.CSSProperties = {
   background: theme.accent, border: 'none', color: theme.onAccent, cursor: 'pointer',
-  fontSize: 12.5, padding: '6px 14px', borderRadius: 4, flexShrink: 0,
+  fontSize: 13, fontWeight: 650, padding: '7px 16px', borderRadius: 999, flexShrink: 0,
 };

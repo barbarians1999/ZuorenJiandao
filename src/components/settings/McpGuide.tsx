@@ -99,7 +99,7 @@ function ConnectButton({ client, onStatus }: { client: ClientSnippet['client']; 
       }}
       style={{
         flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 4,
-        padding: '4px 10px', border: '0.5px solid transparent', borderRadius: 5,
+        padding: '5px 12px', border: 'none', borderRadius: 999,
         background: state === 'error' ? theme.hover : `linear-gradient(135deg, ${theme.accent}, ${theme.accentDeep})`,
         boxShadow: state === 'error' ? 'none' : themeAlpha.shadow(0.25),
         color: state === 'error' ? theme.danger : theme.onAccent,
@@ -115,12 +115,12 @@ function ConnectButton({ client, onStatus }: { client: ClientSnippet['client']; 
 
 const cardStyle: React.CSSProperties = {
   display: 'flex', flexDirection: 'column', gap: 8,
-  background: theme.panelAlt, border: `0.5px solid ${theme.borderLight}`,
-  borderRadius: 8, padding: '10px 12px',
+  background: theme.panelAlt, border: 'none',
+  borderRadius: 12, padding: '12px 14px',
 };
 
 const endpointStyle: React.CSSProperties = {
-  margin: 0, padding: '6px 9px', border: `0.5px solid ${theme.borderLight}`, borderRadius: 4,
+  margin: 0, padding: '8px 11px', border: 'none', borderRadius: 10,
   background: theme.inset, color: theme.textMuted, fontSize: 11.5, lineHeight: 1.5,
   fontFamily: 'Geist Mono, ui-monospace, SFMono-Regular, Menlo, monospace',
   whiteSpace: 'nowrap', overflowX: 'auto', userSelect: 'text',
@@ -165,7 +165,7 @@ export function McpGuideDialog({ onClose }: { onClose: () => void }) {
               {t('Streamable HTTP · 从 Codex 等外部客户端操作剪辑')}
             </span>
           </div>
-          <button type="button" onClick={onClose} style={{ marginLeft: 'auto', padding: '3px 9px' }}>{t('关闭')}</button>
+          <button type="button" onClick={onClose} style={{ marginLeft: 'auto', padding: '5px 14px', borderRadius: 999 }}>{t('关闭')}</button>
         </div>
 
         <div style={cardStyle}>

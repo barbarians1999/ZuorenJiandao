@@ -181,4 +181,49 @@ for (const trackPatch of [{ locked: true }, { hidden: true }]) {
   assert.match(workspaceSource, /!isMosaicItem && activeTab === 'mosaic'/);
 }
 
+// Selected mosaic elevates its hit region above unselected caption hitboxes, while yielding when a caption is active or when an untransformed bottom-track video is selected.
+{
+  const mosaicItem: TimelineItem = {
+    id: 'mosaic-overlap',
+    track: 'V1',
+    startFrame: 0,
+    durationInFrames: 90,
+    kind: 'mosaic',
+    name: '独立马赛克',
+    mosaic: { shape: 'rectangle', centerX: 0.5, centerY: 0.85, width: 0.3, height: 0.14, strength: 60, feather: 0, opacity: 1 },
+  };
+  const mosaicState: TimelineState = {
+    ...stateOf(),
+    width: 1920,
+    height: 1080,
+    trackOrder: ['V1'],
+    tracks: { V1: { kind: 'video' } },
+    selectedId: 'mosaic-overlap',
+    selectedIds: ['mosaic-overlap'],
+    items: [mosaicItem],
+  };
+  const mosaicMarkup = renderToStaticMarkup(<PreviewTransformOverlay state={mosaicState} {...props} />);
+  assert.match(mosaicMarkup, /data-preview-selected-hit="mosaic-overlap"/, '选中马赛克时必须渲染高优先级命中区域');
+  assert.match(mosaicMarkup, /z-index:5/, '选中马赛克命中框与手柄必须高于未选中字幕命中层(z-index:4)');
+
+  const yieldedMarkup = renderToStaticMarkup(<PreviewTransformOverlay state={mosaicState} captionActive {...props} />);
+  assert.doesNotMatch(yieldedMarkup, /data-preview-selected-hit=/, '正在编辑字幕时不应抢占字幕命中区');
+
+  const baseVideo: TimelineItem = {
+    id: 'base-video',
+    track: 'V1',
+    startFrame: 0,
+    durationInFrames: 90,
+    kind: 'video',
+    name: '底片',
+    src: '/media/base.mp4',
+    width: 1920,
+    height: 1080,
+  };
+  const baseMarkup = renderToStaticMarkup(
+    <PreviewTransformOverlay state={{ ...mosaicState, selectedId: 'base-video', selectedIds: ['base-video'], items: [baseVideo] }} {...props} />,
+  );
+  assert.doesNotMatch(baseMarkup, /data-preview-selected-hit=/, '底轨未变换主视频不得遮挡字幕命中区');
+}
+
 console.log('preview-transform-overlay.verify: ok (语义/皮肤/四角/四边裁切/旋转/锁定隐藏/帧范围)');

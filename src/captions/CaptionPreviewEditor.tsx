@@ -408,7 +408,7 @@ export function CaptionPreviewEditor({ trackId, state, captions, playerRef, onUp
   };
 
   return (
-    <div ref={rootRef} style={{ position: 'absolute', inset: 0, zIndex: 4, pointerEvents: 'none', overflow: 'visible' }}>
+    <div ref={rootRef} style={{ position: 'absolute', inset: 0, zIndex: selected || editing || drag !== null || widthDrag !== null ? 6 : 4, pointerEvents: 'none', overflow: 'visible' }}>
       <div style={{ ...block, pointerEvents: 'none' }}>
         <div style={{ position: 'relative', pointerEvents: 'auto', width: 'fit-content', maxWidth: '100%', transform: drag ? `translate(${drag.dx}px, ${drag.dy}px)` : undefined }}>
           {editing ? (

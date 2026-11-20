@@ -9,7 +9,7 @@ import { Icon } from '../icons';
 import { SliderRow } from './InspectorKeyframeControls';
 import type { FadePatch } from './InspectorTypes';
 import { PreviewFidelityStatus } from './PreviewFidelityStatus';
-import { resolveTextStyle, TEXT_STYLE_PRESETS } from '../../editor/textStyles';
+import { resolveTextStyle } from '../../editor/textStyles';
 import {
   formatFontSizeScale,
   TEXT_DESIGN_PX_DEFAULT,
@@ -196,13 +196,6 @@ export function TextControl({ item, mixed, onPropChange }: { item: TimelineItem;
   );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div>
-        <div className="cc-insp-muted" style={{ marginBottom: 6 }}>{t('标题模板')}</div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {TEXT_STYLE_PRESETS.map((preset) => <button key={preset.id} type="button" className="cc-insp-btn"
-            aria-pressed={p.textStylePreset === preset.id} onClick={() => onPropChange('textStylePreset', preset.id)}>{t(preset.label)}</button>)}
-        </div>
-      </div>
       <label className="cc-insp-mg-field">
         <span>{t('文字内容')}</span>
         <textarea value={mixed?.('text') ? '' : style.text} placeholder={mixed?.('text') ? '—' : undefined} onChange={(e) => onPropChange('text', e.target.value)} rows={2}

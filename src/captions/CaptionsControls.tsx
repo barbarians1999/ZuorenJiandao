@@ -48,7 +48,7 @@ interface CaptionsControlsProps {
 
 // Independent caption workspace: style, rhythm, manual captions and translation are all edited here.
 export function CaptionsControls({
-  projectId, timelineId, captionTrackId, draftKey, captions, sourceVariants = [], items, fps, reviewRequest, onSeekMs, onCreateManual, focusManualLane, onManualFocused, getPlayheadMs, onUpdate, onLiveUpdate, onRemove,
+  projectId, timelineId, captionTrackId, draftKey, captions, sourceVariants = [], items, fps, reviewRequest, onSeekMs, onCreateManual, focusManualLane, onManualFocused, getPlayheadMs, onUpdate, onLiveUpdate,
   showList = true, showStyleDetails = true, playheadMs, playing, selectedCaptions, captionActivationRequest, onCaptionActivationConsumed,
   onSelectCaption, onSelectCaptionRange,
 }: CaptionsControlsProps) {
@@ -81,41 +81,15 @@ export function CaptionsControls({
 
       {captions && (
         <div className="cc-cap-body">
-          {/* Show / Hide - most visible */}
-          <div className="cc-cap-row main">
-            <label className="cc-cap-toggle">
-              <input
-                type="checkbox"
-                checked={captions.enabled}
-                onChange={(e) => onUpdate({ enabled: e.target.checked })}
-              />
-              <span>{captions.enabled ? t('预览中显示字幕') : t('字幕已隐藏')}</span>
-            </label>
-            <div className="cc-cap-row-actions">
-              {!captions.enabled && (
-                <button type="button" className="cc-cap-btn sm" onClick={() => onUpdate({ enabled: true })}>
-                  {t('显示')}
-                </button>
-              )}
-              {captions.enabled && (
-                <button type="button" className="cc-cap-btn sm" onClick={() => onUpdate({ enabled: false })}>
-                  {t('隐藏')}
-                </button>
-              )}
-              {onRemove && (
-                <button
-                  type="button"
-                  className="cc-cap-btn sm ghost"
-                  title={t('从工程里移除字幕')}
-                  onClick={onRemove}
-                >
-                  {t('移除')}
-                </button>
-              )}
-            </div>
-          </div>
           {!captions.enabled && (
-            <p className="cc-cap-hint warn">{t('字幕已关闭，预览/导出都不会烧录。再点「显示」或勾选即可恢复。')}</p>
+            <div className="cc-cap-row main">
+              <p className="cc-cap-hint warn" style={{ margin: 0, flex: 1 }}>
+                {t('字幕已关闭，预览/导出都不会烧录。')}
+              </p>
+              <button type="button" className="cc-cap-btn sm" onClick={() => onUpdate({ enabled: true })}>
+                {t('恢复显示')}
+              </button>
+            </div>
           )}
 
           {showList && <CaptionCueEditor projectId={projectId} timelineId={timelineId} captionTrackId={captionTrackId} draftKey={draftKey} captions={captions} items={items} fps={fps} reviewRequest={reviewRequest}

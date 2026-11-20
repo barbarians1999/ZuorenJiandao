@@ -14,6 +14,7 @@ import {
   previewCandidateGeometry,
   rotatePreviewTransform,
   scalePreviewTransform,
+  shouldSelectedItemPreemptCaptions,
   uniformScaleAxesPreviewTransform,
   visiblePreviewCandidates,
   type PreviewPoint,
@@ -448,6 +449,37 @@ assert.match(
   );
   assert.ok(Math.abs((resizedMosaic.centerX - resizedMosaic.width / 2) - 0.3) < 1e-9, '马赛克拖动右边时左边必须固定');
   assert.ok(Math.abs(resizedMosaic.width - 0.6) < 1e-9);
+}
+
+// Selected mosaic / overlay items must preempt unselected captions; untransformed bottom-track base video yields to captions.
+{
+  const baseVideo: TimelineItem = {
+    id: 'base-v1', track: 'V1', startFrame: 0, durationInFrames: 90,
+    kind: 'video', name: '底片', src: '/media/base.mp4', width: 1920, height: 1080,
+  };
+  const upperVideo: TimelineItem = {
+    ...baseVideo, id: 'pip-v2', track: 'V2',
+  };
+  const scaledBaseVideo: TimelineItem = {
+    ...baseVideo, id: 'scaled-v1', transform: { scale: 0.6 },
+  };
+  const mosaicItem: TimelineItem = {
+    id: 'mosaic-v1', track: 'V1', startFrame: 0, durationInFrames: 90,
+    kind: 'mosaic', name: '独立马赛克',
+    mosaic: { shape: 'rectangle', centerX: 0.5, centerY: 0.85, width: 0.3, height: 0.12, strength: 60, feather: 0, opacity: 1 },
+  };
+  const state = stateOf({
+    width: 1920,
+    height: 1080,
+    trackOrder: ['V2', 'V1', 'A1'],
+    items: [baseVideo, upperVideo, scaledBaseVideo, mosaicItem],
+  });
+  const candidates = visiblePreviewCandidates(state, 0);
+  const byId = (id: string) => candidates.find((c) => c.item.id === id)!;
+  assert.equal(shouldSelectedItemPreemptCaptions(state, byId('base-v1')), false, '未变换的底轨主视频应允许直接点击上方字幕');
+  assert.equal(shouldSelectedItemPreemptCaptions(state, byId('scaled-v1')), true, '缩放/移位后的画中画视频选中后应优先响应自身拖拽');
+  assert.equal(shouldSelectedItemPreemptCaptions(state, byId('pip-v2')), true, '上轨视频选中后应优先响应自身拖拽');
+  assert.equal(shouldSelectedItemPreemptCaptions(state, byId('mosaic-v1')), true, '选中马赛克后即使与字幕位置重叠也必须优先拖拽马赛克');
 }
 
 console.log('previewTransform.verify: ok (候选/画框/关键帧/命中/循环/移动/缩放/旋转/方向键微移)');

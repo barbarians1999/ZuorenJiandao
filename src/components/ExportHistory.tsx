@@ -109,22 +109,22 @@ const backdrop: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
 };
 const card: React.CSSProperties = {
-  width: 420, maxWidth: '100%', maxHeight: '80vh', display: 'flex', flexDirection: 'column',
-    background: theme.panel, color: theme.text, border: `0.5px solid ${theme.border}`, borderRadius: 6,
-  boxShadow: `0 20px 60px ${themeAlpha.shadow(0.5)}`,
+  width: 440, maxWidth: '100%', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+  background: theme.panel, color: theme.text, border: '1px solid transparent', borderRadius: 18,
+  boxShadow: `0 20px 56px ${themeAlpha.shadow(0.65)}`,
 };
 const row: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 9, background: theme.panelAlt,
-    border: `0.5px solid ${theme.border}`, borderRadius: 4, padding: '7px 10px',
+  display: 'flex', alignItems: 'center', gap: 10, background: theme.panelAlt,
+  border: 'none', borderRadius: 12, padding: '9px 12px',
 };
-const emptyState: React.CSSProperties = { padding: '24px 0', textAlign: 'center', fontSize: 12.5, color: theme.textDim };
-const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: theme.textDim, cursor: 'pointer', padding: 3, lineHeight: 0 };
+const emptyState: React.CSSProperties = { padding: '24px 0', textAlign: 'center', fontSize: 13, color: theme.textDim };
+const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: theme.textDim, cursor: 'pointer', padding: 4, lineHeight: 0, borderRadius: 999 };
 const ghostBtn: React.CSSProperties = {
-  background: 'none', border: `0.5px solid ${theme.border}`, color: theme.text,
-    borderRadius: 4, padding: '5px 12px', fontSize: 12.5, whiteSpace: 'nowrap',
+  background: theme.panelAlt, border: 'none', color: theme.text,
+  borderRadius: 999, padding: '6px 14px', fontSize: 12.5, fontWeight: 550, whiteSpace: 'nowrap',
 };
 const folderBtn: React.CSSProperties = {
   height: 28, flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 5,
-  padding: '0 9px', border: `0.5px solid ${theme.border}`, borderRadius: 4,
-  background: 'transparent', color: theme.textDim, cursor: 'pointer', fontSize: 11.5,
+  padding: '0 10px', border: 'none', borderRadius: 999,
+  background: theme.hover, color: theme.text, cursor: 'pointer', fontSize: 12,
 };

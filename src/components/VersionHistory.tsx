@@ -109,25 +109,25 @@ const backdrop: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
 };
 const card: React.CSSProperties = {
-  width: 420, maxWidth: '100%', maxHeight: '80vh', display: 'flex', flexDirection: 'column',
-    background: theme.panel, color: theme.text, border: `0.5px solid ${theme.border}`, borderRadius: 6,
-  boxShadow: `0 20px 60px ${themeAlpha.shadow(0.5)}`,
+  width: 440, maxWidth: '100%', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+  background: theme.panel, color: theme.text, border: '1px solid transparent', borderRadius: 18,
+  boxShadow: `0 20px 56px ${themeAlpha.shadow(0.65)}`,
 };
 const row: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 9, background: theme.panelAlt,
-    border: `0.5px solid ${theme.border}`, borderRadius: 4, padding: '7px 10px',
+  display: 'flex', alignItems: 'center', gap: 10, background: theme.panelAlt,
+  border: 'none', borderRadius: 12, padding: '9px 12px',
 };
-const emptyState: React.CSSProperties = { padding: '24px 0', textAlign: 'center', fontSize: 12.5, color: theme.textDim };
-const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: theme.textDim, cursor: 'pointer', padding: 3, lineHeight: 0 };
+const emptyState: React.CSSProperties = { padding: '24px 0', textAlign: 'center', fontSize: 13, color: theme.textDim };
+const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: theme.textDim, cursor: 'pointer', padding: 4, lineHeight: 0, borderRadius: 999 };
 const ghostBtn: React.CSSProperties = {
-  background: 'none', border: `0.5px solid ${theme.border}`, color: theme.text,
-    borderRadius: 4, padding: '5px 12px', fontSize: 12.5, cursor: 'pointer', whiteSpace: 'nowrap',
+  background: theme.hover, border: 'none', color: theme.text,
+  borderRadius: 999, padding: '6px 14px', fontSize: 12.5, fontWeight: 550, cursor: 'pointer', whiteSpace: 'nowrap',
 };
 const primaryBtn: React.CSSProperties = {
-  background: theme.accent, border: 'none', color: theme.onAccent, borderRadius: 4,
-  padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+  background: theme.accent, border: 'none', color: theme.onAccent, borderRadius: 999,
+  padding: '7px 18px', fontSize: 13, fontWeight: 650, cursor: 'pointer',
 };
 const textInput: React.CSSProperties = {
-  flex: 1, background: theme.bg, color: theme.text, border: `0.5px solid ${theme.borderLight}`,
-  borderRadius: 6, padding: '7px 9px', fontSize: 13, outline: 'none', boxSizing: 'border-box',
+  flex: 1, background: 'var(--cc-inset)', color: theme.text, border: '1px solid transparent',
+  borderRadius: 10, padding: '8px 12px', fontSize: 13, outline: 'none', boxSizing: 'border-box',
 };
