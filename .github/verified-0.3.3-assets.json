@@ -1,0 +1,46 @@
+{
+  "ZuorenJiandao-Setup-0.3.3-x64.exe": {
+    "size": 580217010,
+    "sha256": "a2b9445fdf33997e6d2f0c8c5b1cfd99e7c1b97b73b2a11979df37bf8c0529fb"
+  },
+  "ZuorenJiandao-Setup-0.3.3-x64.exe.blockmap": {
+    "size": 570802,
+    "sha256": "c51c34daa35fea226418a0251b68fdb96442975aa0a1b5ab5b97bcf98839ecab"
+  },
+  "latest.yml": {
+    "size": 363,
+    "sha256": "60bedab7b3d1025868cf9820b40d792044d7765fd05e86cf76541c2aa0da6463"
+  },
+  "ZuorenJiandao-0.3.3-arm64.dmg": {
+    "size": 555650594,
+    "sha256": "d774ed14c06f7c7f5c564e836a95f315d44a7213fb7fc46eb3839833beaf8973"
+  },
+  "ZuorenJiandao-0.3.3-arm64.dmg.blockmap": {
+    "size": 577075,
+    "sha256": "f17ae1fef34df05e0b75f55134979762bfc794f7c8f762794314ad384fb364f3"
+  },
+  "ZuorenJiandao-0.3.3-arm64.zip": {
+    "size": 583388259,
+    "sha256": "96e51d51addd4427c1ffcff45c872aef92576c1d959114270b9b1d403fd8146b"
+  },
+  "ZuorenJiandao-0.3.3-arm64.zip.blockmap": {
+    "size": 598178,
+    "sha256": "5f0131ab438bb5bfa7a4e8544c4b80bba23a6f516d26c1cba7b6b0739a8ae2c0"
+  },
+  "latest-arm64-mac.yml": {
+    "size": 355,
+    "sha256": "3cdcf6257d3e89ead74f0a57e4c21696d22ad8e5039760e42da08fbe4794f0f6"
+  },
+  "OpenChatCut-0.3.3-x86_64.AppImage": {
+    "size": 434968645,
+    "sha256": "9ae99f61b0d7ccf6f003f6bd12924b7d009969840e64257f0cc7b781c1cd1cc4"
+  },
+  "latest-x64-linux.yml": {
+    "size": 363,
+    "sha256": "da4881bc44ee0a235c61a851b02a5d5b6bc37e952eced75d573e28b85c6a9645"
+  },
+  "SHA256SUMS.txt": {
+    "size": 962,
+    "sha256": "ea6f48fff390d4c9cce6b4d634d1ae1ea7f4e23564fb43926848d6f721bb1efc"
+  }
+}

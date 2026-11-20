@@ -25,6 +25,18 @@ jobs:
       RUN_ID: ${{ inputs.run_id }}
       TAG_NAME: ${{ inputs.tag }}
     steps:
+      - uses: actions/checkout@v7
+      - name: Verify source run and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=4412bad45f87c933722ca3f7384bd79a51b5e2bf
+          test "$RUN_ID" = 44788013388
+          test "$TAG_NAME" = v0.3.3
+          test "$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha,conclusion --jq '.headSha + " " + .conclusion')" = "$expected success"
+          tag_object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG_NAME" --jq '.object.sha')"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" --jq '.object.sha')" = "$expected"
+
       - name: Download completed desktop artifacts
         uses: actions/download-artifact@v7
         with:
@@ -34,46 +46,6 @@ jobs:
           path: release-files
           merge-multiple: true
 
-      - name: Generate SHA-256 checksums
-        working-directory: release-files
+      - name: Upload only the verified missing assets
         shell: bash
-        run: |
-          set -euo pipefail
-          ls -lh
-          sha256sum ./* > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
-      - name: Create or update release and verify digests
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG_NAME" \
-              --repo "$GITHUB_REPOSITORY" \
-              --verify-tag \
-              --generate-notes \
-              --draft
-          fi
-
-          gh release upload "$TAG_NAME" \
-            release-files/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-
-          release_json="$(gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,url,assets)"
-          jq -r '.assets[] | [.name, (.digest // ""), .size] | @tsv' <<<"$release_json"
-
-          for f in release-files/*; do
-            name="${f##*/}"
-            local_hash="sha256:$(sha256sum "$f" | cut -d ' ' -f1)"
-            remote_hash="$(jq -r --arg n "$name" '.assets[] | select(.name == $n) | (.digest // "")' <<<"$release_json")"
-            if [[ "$local_hash" != "$remote_hash" ]]; then
-              echo "Digest mismatch for $name: local=$local_hash remote=$remote_hash" >&2
-              exit 1
-            fi
-          done
-
-          if [[ "$(jq -r '.isDraft' <<<"$release_json")" == "true" ]]; then
-            gh release edit "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
-          fi
-          gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json url,isDraft,tagName,assets --jq '{url, isDraft, tagName, assets: [.assets[] | {name, size}]}'
+        run: bash .github/upload-verified-0.3.3.sh
