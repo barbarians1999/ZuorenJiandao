@@ -15,6 +15,7 @@ const unsupportedCheck: DesktopUpdateState = {
   currentVersion: '0.1.9',
 };
 let checkState = failedCheck;
+let desktopCheckCalls = 0;
 let fetchCalls = 0;
 const updates = {
   getState: async () => {
@@ -22,6 +23,7 @@ const updates = {
     return { phase: 'idle', source: 'auto', currentVersion: '0.1.8' } as const;
   },
   check: async () => {
+    desktopCheckCalls += 1;
     onState?.(checkState);
     return checkState;
   },
@@ -60,10 +62,14 @@ assert.equal(
   'idle',
   'disabled automatic checks must stay idle',
 );
+assert.equal(desktopCheckCalls, 0);
+assert.equal(fetchCalls, 0);
 
 checkState = unsupportedCheck;
 await updateModule.requestUpstreamUpdateCheck('manual');
-assert.equal(updateModule.getUpstreamUpdateState().phase, 'idle');
-assert.equal(fetchCalls, 0, 'internal builds must not query the upstream GitHub API');
+assert.equal(desktopCheckCalls, 1);
+assert.equal(fetchCalls, 1, 'unsupported desktop builds use the project release check');
+assert.equal(updateModule.getUpstreamUpdateState().phase, 'available');
+assert.equal(updateModule.hasDesktopUpdateSupport(), false);
 
-console.log('upstreamUpdateDesktop.verify: disabled automatic and manual upstream checks stay offline');
+console.log('upstreamUpdateDesktop.verify: manual fallback works and automatic check stays offline');

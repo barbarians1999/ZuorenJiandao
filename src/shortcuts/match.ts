@@ -133,7 +133,7 @@ export function isShortcutImeComposing(event: Pick<KeyboardEvent, 'isComposing' 
 }
 
 export function shouldIgnoreShortcutRepeat(actionId: string, event: Pick<KeyboardEvent, 'repeat'>): boolean {
-  return actionId === 'toggle-picture' && event.repeat;
+  return event.repeat && (actionId === 'toggle-picture' || actionId === 'marker-add' || actionId === 'marker-shortcut-add-and-open');
 }
 
 /**

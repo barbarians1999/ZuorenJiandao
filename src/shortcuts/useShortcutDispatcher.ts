@@ -35,6 +35,7 @@ export function useShortcutDispatcher(
       if (!id) return;
       if (!shortcutAllowedForSurface(id, shortcutSurfaceFromTarget(e.target))) return;
       if (shouldIgnoreShortcutRepeat(id, e)) return;
+      if (id === 'marker-add' && document.querySelector('[aria-modal="true"]')) return;
 
       // Tab in non-typing: ask-ai; don't steal tab in inputs
       if (id === 'ask-ai' && isTypingTarget(e.target)) return;

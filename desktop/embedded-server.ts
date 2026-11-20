@@ -19,7 +19,8 @@ export interface EmbeddedServer {
 }
 
 async function seedFromEnvLocal(): Promise<void> {
-  const text = await readFile(resolve(process.cwd(), '.env.local'), 'utf8').catch(() => '');
+  const path = runtimeProfile().keystorePath;
+  const text = await readFile(path, 'utf8').catch(() => readFile(resolve(process.cwd(), '.env.local'), 'utf8').catch(() => ''));
   seedKeystore(parseEnvText(text));
 }
 

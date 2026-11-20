@@ -78,6 +78,9 @@ assert.strictEqual(isShortcutImeComposing({ isComposing: true, keyCode: 86 }), t
 assert.strictEqual(isShortcutImeComposing({ isComposing: false, keyCode: 229 }), true);
 assert.strictEqual(isShortcutImeComposing({ isComposing: false, keyCode: 86 }), false);
 assert.strictEqual(shouldIgnoreShortcutRepeat('toggle-picture', { repeat: true }), true);
+assert.strictEqual(matchShortcut(keyN({ key: 'm' }), catalog, { held: new Set(), isMac: false }), 'marker-add');
+assert.strictEqual(matchShortcut({ ...keyN({ key: 'm' }), target: typingTarget }, catalog, { held: new Set(), isMac: false }), null);
+assert.strictEqual(shouldIgnoreShortcutRepeat('marker-add', { repeat: true }), true);
 assert.strictEqual(shouldIgnoreShortcutRepeat('shuttle-fwd', { repeat: true }), false, 'J/K/L repeats remain available');
 assert.strictEqual(
   matchShortcut(keyN({ key: ' ' }), catalog, { held: new Set(), isMac: true }),

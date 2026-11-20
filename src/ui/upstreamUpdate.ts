@@ -2,11 +2,9 @@ import type {
   DesktopUpdateOperation,
   DesktopUpdateState,
 } from '../../shared/desktop-update';
+import { PROJECT_LATEST_RELEASE_ROUTE, PROJECT_LATEST_RELEASE_URL } from '../../shared/project-repository';
 
-export const UPSTREAM_LATEST_RELEASE_URL = 'https://api.github.com/repos/0xsline/OpenChatCut/releases/latest';
-export const UPSTREAM_RELEASES_URL = 'https://github.com/0xsline/OpenChatCut/releases/latest';
-/** Internal Windows builds do not contact the upstream update service. */
-export const UPSTREAM_UPDATE_ENABLED = false;
+export const AUTOMATIC_UPDATE_CHECK_ENABLED = false;
 
 export const CURRENT_APP_VERSION =
   typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
@@ -107,8 +105,8 @@ export async function queryLatestUpstreamRelease(
   fetcher: Fetcher = fetch,
   signal?: AbortSignal,
 ): Promise<UpstreamReleaseResult> {
-  const response = await fetcher(UPSTREAM_LATEST_RELEASE_URL, { signal });
-  if (!response.ok) throw new Error(`Upstream release check failed (${response.status})`);
+  const response = await fetcher(PROJECT_LATEST_RELEASE_ROUTE, { signal });
+  if (!response.ok) throw new Error(`Project release check failed (${response.status})`);
   const payload = await response.json() as { tag_name?: unknown };
   if (typeof payload.tag_name !== 'string' || !parseVersion(payload.tag_name)) {
     throw new Error('Upstream did not return a valid release version');
@@ -241,7 +239,7 @@ async function requestWebUpdateCheck(source: CheckSource): Promise<void> {
 }
 
 export async function requestUpstreamUpdateCheck(source: CheckSource = 'manual'): Promise<void> {
-  if (!UPSTREAM_UPDATE_ENABLED) return;
+  if (source === 'auto' && !AUTOMATIC_UPDATE_CHECK_ENABLED) return;
   const desktop = hasDesktopUpdateSupport() ? ensureDesktopUpdateSubscription() : null;
   if (!desktop) return requestWebUpdateCheck(source);
 
@@ -262,7 +260,6 @@ export async function requestUpstreamUpdateCheck(source: CheckSource = 'manual')
 }
 
 export async function requestUpstreamUpdateDownload(): Promise<void> {
-  if (!UPSTREAM_UPDATE_ENABLED) return;
   const desktop = hasDesktopUpdateSupport() ? ensureDesktopUpdateSubscription() : null;
   if (!desktop) {
     openUpstreamReleasePage();
@@ -283,7 +280,6 @@ export async function requestUpstreamUpdateDownload(): Promise<void> {
 }
 
 export async function requestUpstreamUpdateInstall(): Promise<void> {
-  if (!UPSTREAM_UPDATE_ENABLED) return;
   const desktop = hasDesktopUpdateSupport() ? ensureDesktopUpdateSubscription() : null;
   if (!desktop) return;
   try {
@@ -301,13 +297,12 @@ export async function requestUpstreamUpdateInstall(): Promise<void> {
 }
 
 export function openUpstreamReleasePage(): void {
-  if (!UPSTREAM_UPDATE_ENABLED) return;
   if (typeof window === 'undefined') return;
-  window.open(UPSTREAM_RELEASES_URL, '_blank', 'noopener,noreferrer');
+  window.open(PROJECT_LATEST_RELEASE_URL, '_blank', 'noopener,noreferrer');
 }
 
 export function startAutomaticUpstreamUpdateCheck(): void {
-  if (!UPSTREAM_UPDATE_ENABLED) return;
+  if (!AUTOMATIC_UPDATE_CHECK_ENABLED) return;
   if (autoCheckStarted) return;
   autoCheckStarted = true;
   void requestUpstreamUpdateCheck('auto');

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { PROJECT_LATEST_RELEASE_ROUTE } from '../../shared/project-repository';
 import { resolveUpstreamUpdateAction } from './upstreamUpdateAction';
 import { formatDisplayVersion, mapDesktopUpdateState, queryLatestUpstreamRelease } from './upstreamUpdate';
 
@@ -21,7 +22,7 @@ for (const sample of samples) {
       headers: { 'content-type': 'application/json' },
     });
   });
-  assert.equal(requestedUrl, 'https://api.github.com/repos/0xsline/OpenChatCut/releases/latest');
+  assert.equal(requestedUrl, PROJECT_LATEST_RELEASE_ROUTE);
   assert.equal(result.latestVersion, sample.tag);
   assert.equal(result.updateAvailable, sample.available, `${sample.current} compared with ${sample.tag}`);
 }
@@ -75,4 +76,4 @@ assert.deepEqual(mapDesktopUpdateState({
   source: 'auto',
 }), { phase: 'idle', visible: false });
 
-console.log('upstreamUpdate.verify: official release comparison passed');
+console.log('upstreamUpdate.verify: project release comparison passed');

@@ -9,7 +9,9 @@ if (existsSync(moduleUrl)) {
   const calls: string[] = [];
   focusExistingWindow({
     isMinimized: () => true,
+    isVisible: () => true,
     restore: () => calls.push('restore'),
+    show: () => calls.push('show'),
     focus: () => calls.push('focus'),
   });
   assert.deepEqual(calls, ['restore', 'focus'], 'a minimized primary window restores before focus');
@@ -17,10 +19,22 @@ if (existsSync(moduleUrl)) {
   calls.length = 0;
   focusExistingWindow({
     isMinimized: () => false,
+    isVisible: () => true,
     restore: () => calls.push('restore'),
+    show: () => calls.push('show'),
     focus: () => calls.push('focus'),
   });
   assert.deepEqual(calls, ['focus'], 'a visible primary window only receives focus');
+
+  calls.length = 0;
+  focusExistingWindow({
+    isMinimized: () => false,
+    isVisible: () => false,
+    restore: () => calls.push('restore'),
+    show: () => calls.push('show'),
+    focus: () => calls.push('focus'),
+  });
+  assert.deepEqual(calls, ['show', 'focus'], 'a window hidden in the tray is shown again');
 }
 
 const mainSource = readFileSync(new URL('./main.ts', import.meta.url), 'utf8');

@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
+import { DESKTOP_CLOSE_BEHAVIOR_KEY } from '../../shared/desktop-close-behavior.ts';
 import { keyStatus, setKeys } from '../keystore.ts';
 import {
   checkMediaDir,
@@ -35,7 +36,7 @@ const ISOLATED_R2_SETTINGS = [
 ] as const;
 
 export const EDITOR_SETTINGS_KEYS = new Set([
-  'OPENCHATCUT_DATA_DIR', 'MEDIA_DIR', 'UI_SCALE', 'LOCAL_ASR_MODEL',
+  'OPENCHATCUT_DATA_DIR', 'MEDIA_DIR', 'UI_SCALE', 'LOCAL_ASR_MODEL', DESKTOP_CLOSE_BEHAVIOR_KEY,
   'AUTO_TRANSCRIBE_INGEST', 'TRANSCRIPTION_LANGUAGE', 'TRANSCRIPTION_DIARIZATION', 'UI_LOCALE',
 ]);
 

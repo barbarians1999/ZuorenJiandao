@@ -14,6 +14,7 @@ export { mergeEnvText } from "./env-text.ts";
 import { planLegacyLlmMigration } from "./keystore-legacy.ts";
 export { planLegacyLlmMigration } from "./keystore-legacy.ts";
 import { isIsolatedDevProfile, runtimeProfile } from "./runtime-profile.ts";
+import { DESKTOP_CLOSE_BEHAVIOR_KEY, isDesktopCloseBehavior } from "../shared/desktop-close-behavior.ts";
 import {
   LLM_PROVIDER_PRESETS,
   llmProviderConfigNames,
@@ -197,6 +198,7 @@ export const KEY_NAMES = [
   "AUTO_TRANSCRIBE_INGEST",
   "UI_SCALE",
   "UI_SCALE_BASE",
+  DESKTOP_CLOSE_BEHAVIOR_KEY,
   "UI_LOCALE",
   "OPENCHATCUT_SKILLS_DIR",
 ] as const;
@@ -237,6 +239,7 @@ export const NON_SECRET_NAMES: ReadonlySet<string> = new Set([
   "AUTO_TRANSCRIBE_INGEST",
   "UI_SCALE",
   "UI_SCALE_BASE",
+  DESKTOP_CLOSE_BEHAVIOR_KEY,
   "UI_LOCALE",
   "ELEVENLABS_SOUND_MODEL",
   "DOUBAO_TTS_RESOURCE_ID",
@@ -279,6 +282,9 @@ const envSeeded = new Set<string>(); // which keys came from .env.local / proces
 
 function normalizeStoredValue(name: string, raw: unknown, loading = false): string {
   const value = String(raw ?? "").trim();
+  if (name === DESKTOP_CLOSE_BEHAVIOR_KEY && value && !isDesktopCloseBehavior(value)) {
+    throw new Error('关闭窗口选项无效');
+  }
   return name === MODEL_CAPABILITY_OVERRIDES_KEY && value
     ? serializeModelCapabilityOverrides(parseModelCapabilityOverrides(decodePersistedEnvValue(value), {
       ignoreUnavailableProviders: loading,

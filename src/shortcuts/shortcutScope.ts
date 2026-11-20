@@ -21,6 +21,7 @@ const PROJECT_SHORTCUTS = new Set([
 
 export function shortcutAllowedForSurface(actionId: string, surface: ShortcutSurface): boolean {
   if (PROJECT_SHORTCUTS.has(actionId)) return true;
+  if (actionId === 'marker-add') return surface === 'timeline' || surface === 'preview' || surface === 'other';
   if (surface === 'preview') return PREVIEW_SHORTCUTS.has(actionId);
   return surface === 'timeline';
 }

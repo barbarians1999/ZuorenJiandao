@@ -24,6 +24,7 @@ import { normalizeMediaPlugin } from './normalize-media.ts';
 import { probeMediaPlugin } from './probe-media.ts';
 import { subtitleExportPlugin } from './subtitles.ts';
 import { settingsPlugin } from './settings.ts';
+import { projectReleasePlugin } from './project-release.ts';
 import { skillFilesPlugin } from './skill-files.ts';
 import { externalAgentPlugin } from './external-agent.ts';
 import { installSystemProxy } from '../net.ts';
@@ -36,7 +37,7 @@ export function serverPlugins(options: { projectStoreHttp?: boolean } = {}): Plu
     requestShapeGatePlugin(), crossOriginIsolationPlugin(), removedAiRoutesPlugin(),
     storageLifecyclePlugin(), skillFilesPlugin(),
     projectStorePlugin({ http: options.projectStoreHttp }), extensionStorePlugin(),
-    externalAgentPlugin(), settingsPlugin(), exportStagePlugin(), exportPlugin(),
+    externalAgentPlugin(), settingsPlugin(), projectReleasePlugin(), exportStagePlugin(), exportPlugin(),
     exportDestinationPlugin(), exportQaPlugin(), uploadMultipartPlugin(), uploadPlugin(),
     mobileUploadPlugin(), extractAudioPlugin(), hfProxyPlugin(), asrModelsPlugin(),
     modelPacksPlugin(), extractFramesPlugin(), sceneDetectionPlugin(), autoGradePlugin(),

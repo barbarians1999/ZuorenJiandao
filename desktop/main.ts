@@ -52,6 +52,7 @@ import {
 } from './runtime-preflight.ts';
 import { ffmpegBin } from '../server/media-binaries.ts';
 import { focusExistingWindow } from './single-instance.ts';
+import { installMainWindowCloseBehavior } from './window-close.ts';
 import { requestProfileScopedSingleInstanceLock } from './runtime-profile.ts';
 import { applyDesktopWindowFrame, desktopWindowFrameOptions, resolveTitlebarAppearance } from './window-frame.ts';
 import { applyResponsiveWindowScale, DESKTOP_UI_SCALE_MAX, DESKTOP_UI_SCALE_MIN, installResponsiveWindowScale, parseUserUiScale } from './window-scale.ts';
@@ -395,7 +396,7 @@ async function boot(): Promise<void> {
     modelCachePath(app.getPath('home')),
     hardware,
   );
-  app.once('before-quit', () => desktopInference.dispose());
+  app.once('will-quit', () => desktopInference.dispose());
   console.log(`[desktop] ${devOrigin ? 'live source' : 'embedded server'} at ${origin}`);
 
   // A UI_SCALE saved before the shipped base changed is rebased once, so the window
@@ -427,6 +428,7 @@ async function boot(): Promise<void> {
   installResponsiveWindowScale(win);
   const uninstallRendererRecovery = installWindowsRendererRecovery(win);
   mainWindow = win;
+  if (!SMOKE) installMainWindowCloseBehavior(win, join(DIST_DIR, 'zuoren-jiandao-icon.png'));
   win.once('closed', () => {
     uninstallRendererRecovery();
     mainWindow = null;

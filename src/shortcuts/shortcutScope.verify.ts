@@ -18,6 +18,12 @@ for (const action of ['undo', 'redo', 'save-version', 'keyboard-shortcuts', 'ask
 
 assert.equal(shortcutAllowedForSurface('split', 'timeline'), true);
 assert.equal(shortcutAllowedForSurface('copy', 'timeline'), true);
+for (const surface of ['timeline', 'preview', 'other'] as const) {
+  assert.equal(shortcutAllowedForSurface('marker-add', surface), true);
+}
+for (const surface of ['media-pool', 'agent-chat', 'agent-input', 'inspector'] as const) {
+  assert.equal(shortcutAllowedForSurface('marker-add', surface), false);
+}
 assert.equal(shortcutAllowedForSurface('select-before-playhead', 'other'), true);
 assert.equal(shortcutAllowedForSurface('select-after-playhead', 'inspector'), true);
 for (const action of ['seek-back', 'seek-fwd', 'prev-edit', 'next-edit']) {

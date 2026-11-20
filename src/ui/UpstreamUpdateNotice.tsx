@@ -4,7 +4,7 @@ import {
   dismissUpstreamUpdate,
   getUpstreamUpdateState,
   hasDesktopUpdateSupport,
-  UPSTREAM_UPDATE_ENABLED,
+  AUTOMATIC_UPDATE_CHECK_ENABLED,
   startAutomaticUpstreamUpdateCheck,
   subscribeUpstreamUpdate,
 } from './upstreamUpdate';
@@ -25,7 +25,7 @@ export function UpstreamUpdateNotice() {
 
   useEffect(() => { startAutomaticUpstreamUpdateCheck(); }, []);
 
-  if (!UPSTREAM_UPDATE_ENABLED) return null;
+  if (!AUTOMATIC_UPDATE_CHECK_ENABLED) return null;
   if (!update.visible) return null;
 
   const desktopUpdate = hasDesktopUpdateSupport();

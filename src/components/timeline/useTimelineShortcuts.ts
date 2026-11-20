@@ -256,7 +256,13 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
       },
       gotoMarker: (dir) => gotoMarker(dir),
       addMarker: (open) => {
-        const id = commands.addMarker(playheadRef.current);
+        const frame = playheadRef.current;
+        const existing = (state.markers ?? []).find((marker) => marker.scope === 'project' && marker.fromFrame === frame);
+        if (existing) {
+          if (open) setEditMarker(existing.id);
+          return;
+        }
+        const id = commands.addMarker(frame);
         if (open) setEditMarker(id);
       },
       modifyMarkerAtPlayhead: () => {

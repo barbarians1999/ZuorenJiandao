@@ -1,8 +1,14 @@
-import { lazy, Suspense, useEffect, useState, type CSSProperties } from 'react';
+import { lazy, Suspense, useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { DESKTOP_CLOSE_BEHAVIOR_KEY } from '../../../shared/desktop-close-behavior';
+import { PROJECT_REPOSITORY_URL } from '../../../shared/project-repository';
 import { theme, themeAlpha } from '../../theme';
 import { useT } from '../../i18n/locale';
 import { Icon } from '../icons';
-import { CURRENT_APP_VERSION, formatDisplayVersion } from '../../ui/upstreamUpdate';
+import {
+  CURRENT_APP_VERSION, formatDisplayVersion, getUpstreamUpdateState, hasDesktopUpdateSupport,
+  requestUpstreamUpdateCheck, subscribeUpstreamUpdate,
+} from '../../ui/upstreamUpdate';
+import { resolveUpstreamUpdateAction, runUpstreamUpdateCommand, upstreamUpdateMessage } from '../../ui/upstreamUpdateAction';
 import { setAutoTranscribeIngest } from '../../transcript/provider';
 import { loadMcpGuideDialog } from './mcpGuideLoader';
 import { LocalCaptionSettings } from './LocalCaptionSettings';
@@ -26,6 +32,41 @@ const closeBtnStyle: CSSProperties = {
 };
 const McpGuideDialog = lazy(() => loadMcpGuideDialog().then((module) => ({ default: module.McpGuideDialog })));
 type SettingsSnapshot = { models?: Record<string, string>; dataDir?: string; mediaDir?: string; restartRequired?: boolean };
+
+function AboutSettings() {
+  const t = useT();
+  const update = useSyncExternalStore(subscribeUpstreamUpdate, getUpstreamUpdateState, getUpstreamUpdateState);
+  const desktopUpdate = hasDesktopUpdateSupport();
+  const action = resolveUpstreamUpdateAction(update, desktopUpdate);
+  const busy = update.phase === 'checking' || update.phase === 'downloading' || update.phase === 'installing';
+
+  return (
+    <section aria-label={t('关于')} style={{ display: 'grid', gap: 16 }}>
+      <div>
+        <h2 style={{ margin: '0 0 4px', fontSize: 18 }}>{t('左人剪刀')}</h2>
+        <span style={{ color: theme.textDim, fontSize: 13 }}>
+          {t('当前版本 {version}', { version: formatDisplayVersion(CURRENT_APP_VERSION) })}
+        </span>
+      </div>
+      <a href={PROJECT_REPOSITORY_URL} target="_blank" rel="noopener noreferrer"
+        style={{ color: theme.accent, width: 'fit-content' }}>{t('GitHub 仓库')}</a>
+      <div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <button type="button" disabled={busy} onClick={() => void requestUpstreamUpdateCheck()}
+            style={{ ...buttonStyle, opacity: busy ? 0.65 : 1, cursor: busy ? 'default' : 'pointer' }}>
+            {update.phase === 'checking' ? t('检查中…') : t('检查更新')}
+          </button>
+          {action.command !== 'none' && action.command !== 'check' && (
+            <button type="button" style={buttonStyle} onClick={() => runUpstreamUpdateCommand(action.command)}>{action.label}</button>
+          )}
+        </div>
+        <div role="status" style={{ marginTop: 8, color: update.phase === 'error' ? theme.danger : theme.textDim, fontSize: 13 }}>
+          {update.phase !== 'idle' && update.phase !== 'checking' ? upstreamUpdateMessage(update, desktopUpdate) : ''}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export function SettingsDialog({ onClose, initialVendor }: { onClose: () => void; initialVendor?: string }) {
   const t = useT();
@@ -86,13 +127,14 @@ export function SettingsDialog({ onClose, initialVendor }: { onClose: () => void
         <header style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '14px 18px', borderBottom: `1px solid ${theme.border}` }}>
           <span style={{ color: theme.accent, display: 'inline-flex' }}><Icon name="sliders" size={16} /></span>
           <b>{t('设置')}</b>
-          <span style={{ marginLeft: 'auto', color: theme.textDim, fontSize: 13 }}>{formatDisplayVersion(CURRENT_APP_VERSION)}</span>
-          <button aria-label={t('关闭')} onClick={close} style={closeBtnStyle}><Icon name="x" size={14} /></button>
+          <button aria-label={t('关闭')} onClick={close} style={{ ...closeBtnStyle, marginLeft: 'auto' }}><Icon name="x" size={14} /></button>
         </header>
-        <nav style={{ display: 'flex', gap: 6, padding: '10px 18px', borderBottom: `1px solid ${theme.border}` }}>
-          {['常规', '本地工具', '外部控制'].map((name) => (
+        <nav style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '10px 18px', borderBottom: `1px solid ${theme.border}` }}>
+          {['常规', '本地工具', '外部控制', '关于'].map((name) => (
             <button
               key={name}
+              type="button"
+              aria-pressed={page === name}
               onClick={() => setPage(name)}
               style={{
                 ...buttonStyle,
@@ -132,6 +174,17 @@ export function SettingsDialog({ onClose, initialVendor }: { onClose: () => void
               </span>
             </label>
             <label style={{ display: 'grid', gap: 6 }}><span>{t('界面缩放')}</span><select value={value('UI_SCALE') || '1'} onChange={(event) => stage('UI_SCALE', event.target.value)} style={inputStyle}>{['0.8','0.85','1','1.15','1.25','1.5'].map((scale) => <option key={scale} value={scale}>{Math.round(Number(scale) * 100)}%</option>)}</select></label>
+            {typeof window !== 'undefined' && window.openChatCutDesktop && (
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span>{t('关闭窗口时')}</span>
+                <select value={value(DESKTOP_CLOSE_BEHAVIOR_KEY) || 'ask'}
+                  onChange={(event) => stage(DESKTOP_CLOSE_BEHAVIOR_KEY, event.target.value)} style={inputStyle}>
+                  <option value="ask">{t('每次询问')}</option>
+                  <option value="quit">{t('彻底关闭')}</option>
+                  <option value="background">{t('隐藏后台')}</option>
+                </select>
+              </label>
+            )}
             <label style={{ display: 'grid', gap: 6 }}><span>{t('导入后自动转写')}</span><select value={value('AUTO_TRANSCRIBE_INGEST') || 'local'} onChange={(event) => stage('AUTO_TRANSCRIBE_INGEST', event.target.value)} style={inputStyle}><option value="local">{t('仅使用本地字幕识别')}</option><option value="off">{t('关闭')}</option></select></label>
           </div>}
           {page === '本地工具' && <div style={{ display: 'grid', gap: 22 }}>
@@ -140,11 +193,12 @@ export function SettingsDialog({ onClose, initialVendor }: { onClose: () => void
             <SemanticModelPackPane />
           </div>}
           {page === '外部控制' && <section><p>{t('在 Codex 中下达剪辑命令，通过 MCP 操作当前工程。软件本身不运行聊天模型，也无需填写 AI API 密钥。')}</p><button style={buttonStyle} onClick={() => setShowGuide(true)}>{t('打开外部控制连接指南')}</button></section>}
+          {page === '关于' && <AboutSettings />}
         </div>
         <footer style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '12px 18px', borderTop: `1px solid ${theme.border}` }}>
           <span role={error ? 'alert' : 'status'} style={{ color: error ? theme.danger : theme.textDim, flex: 1, fontSize: 13 }}>{error || message}</span>
           <button onClick={close} style={buttonStyle}>{t('关闭')}</button>
-          <button disabled={!dirty || busy} onClick={() => void save()} style={{ ...buttonStyle, background: theme.accent, color: theme.onAccent, fontWeight: 650, opacity: !dirty || busy ? 0.5 : 1, cursor: !dirty || busy ? 'default' : 'pointer' }}>{t(busy ? '保存中…' : '保存')}</button>
+          {(page !== '关于' || dirty) && <button disabled={!dirty || busy} onClick={() => void save()} style={{ ...buttonStyle, background: theme.accent, color: theme.onAccent, fontWeight: 650, opacity: !dirty || busy ? 0.5 : 1, cursor: !dirty || busy ? 'default' : 'pointer' }}>{t(busy ? '保存中…' : '保存')}</button>}
         </footer>
       </section>
     </div>
