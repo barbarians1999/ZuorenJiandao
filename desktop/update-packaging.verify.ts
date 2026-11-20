@@ -161,24 +161,18 @@ assert.match(
 );
 
 const workflow = await readFile(new URL('../.github/workflows/desktop.yml', import.meta.url), 'utf8');
-for (const metadata of ['latest-arm64-mac.yml', 'latest-x64-mac.yml', 'latest.yml', 'latest-x64-linux.yml']) {
+for (const metadata of ['latest-arm64-mac.yml', 'latest.yml', 'latest-x64-linux.yml']) {
   assert.ok(workflow.includes(`release/${metadata}`), `desktop jobs must upload ${metadata}`);
 }
 assert.doesNotMatch(workflow, /release\/\*\.yml/, 'debug YAML must not leak into release artifacts');
 assert.match(workflow, /EXPECTED_VERSION="\$\{GITHUB_REF_NAME#v\}"/, 'release gate must derive its package version');
 assert.match(workflow, /release\/\*\.blockmap/, 'desktop jobs must upload differential download metadata');
-assert.match(workflow, /-name '\*\.zip'.* = 2/, 'release aggregation must retain both macOS update archives');
-for (const blockmap of [
-  'arm64.zip.blockmap',
-  'x64.zip.blockmap',
-]) {
-  assert.ok(
-    workflow.includes(`release-files/ZuorenJiandao-\${EXPECTED_VERSION}-${blockmap}`),
-    `release gate must require ${blockmap}`,
-  );
-}
+assert.match(workflow, /-name '\*\.zip'.* = 1/, 'release aggregation must retain the macOS arm64 update archive');
+assert.ok(
+  workflow.includes('release-files/ZuorenJiandao-${EXPECTED_VERSION}-arm64.zip.blockmap'),
+  'release gate must require arm64.zip.blockmap',
+);
 assert.match(workflow, /test -f release-files\/latest-arm64-mac\.yml/);
-assert.match(workflow, /test -f release-files\/latest-x64-mac\.yml/);
 assert.match(workflow, /test -f release-files\/latest\.yml/);
 assert.ok(workflow.includes('release-files/ZuorenJiandao-Setup-${EXPECTED_VERSION}-x64.exe.blockmap'));
 assert.match(workflow, /test -f release-files\/latest-x64-linux\.yml/);

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       targets:
-        description: 'Packaging targets (mac builds both macOS arm64 & x64; all builds all 4 OS targets)'
+        description: 'Packaging targets (mac builds macOS arm64; all builds macOS arm64, Windows x64, and Linux x64)'
         required: false
         type: choice
         options:
@@ -43,12 +43,6 @@ jobs:
                 os: "macos-latest",
                 script: "desktop:dist",
                 artifact: "release/*.dmg\nrelease/*.zip\nrelease/latest-arm64-mac.yml\nrelease/*.blockmap",
-              },
-              {
-                name: "macOS-x64",
-                os: "macos-15-intel",
-                script: "desktop:dist:mac-x64",
-                artifact: "release/*.dmg\nrelease/*.zip\nrelease/latest-x64-mac.yml\nrelease/*.blockmap",
               },
               {
                 name: "Windows-x64",
@@ -419,15 +413,13 @@ jobs:
         run: |
           set -euo pipefail
           EXPECTED_VERSION="${GITHUB_REF_NAME#v}"
-          test "$(find release-files -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' \) | wc -l | tr -d ' ')" = 4
-          test "$(find release-files -type f -name '*.zip' | wc -l | tr -d ' ')" = 2
-          test "$(find release-files -type f -name '*.yml' | wc -l | tr -d ' ')" = 4
+          test "$(find release-files -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' \) | wc -l | tr -d ' ')" = 3
+          test "$(find release-files -type f -name '*.zip' | wc -l | tr -d ' ')" = 1
+          test "$(find release-files -type f -name '*.yml' | wc -l | tr -d ' ')" = 3
           test -f release-files/latest-arm64-mac.yml
-          test -f release-files/latest-x64-mac.yml
           test -f release-files/latest.yml
           test -f release-files/latest-x64-linux.yml
           test -f "release-files/ZuorenJiandao-${EXPECTED_VERSION}-arm64.zip.blockmap"
-          test -f "release-files/ZuorenJiandao-${EXPECTED_VERSION}-x64.zip.blockmap"
           test -f "release-files/ZuorenJiandao-Setup-${EXPECTED_VERSION}-x64.exe.blockmap"
           test -f "release-files/ZuorenJiandao-Setup-${EXPECTED_VERSION}-x64.exe"
 
