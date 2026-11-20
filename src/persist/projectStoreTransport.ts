@@ -43,8 +43,9 @@ export function installBrowserProjectOwnership(ownership: BrowserProjectOwnershi
   resolveBrowserProjectOwnershipWaiters(ownership.projectId, ownership);
 }
 
-export function browserProjectOwnership(projectId: string): BrowserProjectOwnership | undefined {
-  return browserOwnerships.get(projectId);
+export function browserProjectOwnership(projectId: string, ownerId?: string): BrowserProjectOwnership | undefined {
+  const ownership = browserOwnerships.get(projectId);
+  return ownerId === undefined || ownership?.ownerId === ownerId ? ownership : undefined;
 }
 
 export function waitForBrowserProjectOwnership(

@@ -150,7 +150,7 @@ async function pollEditor(
     const query = new URLSearchParams({
       projectId,
       editorId: binding.editorInstanceId,
-      baseRevision: browserProjectOwnership(projectId)?.baseRevision ?? binding.baseRevision,
+      baseRevision: browserProjectOwnership(projectId, binding.editorInstanceId)?.baseRevision ?? binding.baseRevision,
     });
     const response = await fetch(`/api/external-agent/poll?${query}`, {
       headers: editorBridgeHeaders(false, ownership.registrationCapability),
@@ -237,7 +237,7 @@ async function runBridgeAttempt(
     ownership = await registerEditorBridge(
       projectId, editorInstanceId, runtime.binding().baseRevision,
       controller.signal,
-      browserProjectOwnership(projectId)?.registrationCapability,
+      browserProjectOwnership(projectId, editorInstanceId)?.registrationCapability,
     );
     installBrowserProjectOwnership(ownership);
     onError(null);
@@ -255,11 +255,11 @@ async function runBridgeAttempt(
     controller.abort();
     signal.removeEventListener('abort', cancel);
     cancellations.abortAll(controller.signal.reason);
+    if (ownership) clearBrowserProjectOwnership(ownership);
     await unregisterEditorBridge(
       projectId, editorInstanceId,
       ownership?.registrationCapability,
     );
-    if (ownership) clearBrowserProjectOwnership(ownership);
   }
 }
 
@@ -380,7 +380,7 @@ function useExternalPolling(
       void unregisterEditorBridge(
         projectId,
         readiness.editorInstanceId,
-        browserProjectOwnership(projectId)?.registrationCapability,
+        browserProjectOwnership(projectId, readiness.editorInstanceId)?.registrationCapability,
       );
     };
     window.addEventListener('pagehide', close);

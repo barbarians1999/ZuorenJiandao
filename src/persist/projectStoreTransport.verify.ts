@@ -211,6 +211,10 @@ try {
     'a save started during editor registration must resume with installed ownership');
   assert.deepEqual(await waitForBrowserProjectOwnership('project-race', 1), installedOwnership,
     'an existing ownership must be returned without waiting');
+  assert.equal(browserProjectOwnership('project-race', 'next-editor'), undefined,
+    'reopening a project must not reuse the previous editor session capability');
+  assert.equal(browserProjectOwnership('project-race', installedOwnership.ownerId), installedOwnership,
+    'the owning editor can still renew its own registration');
   const advanced = advanceBrowserProjectOwnership(installedOwnership, 'v7-next');
   assert.equal(advanced?.baseRevision, 'v7-next',
     'ownership advances with the authoritative base revision');
