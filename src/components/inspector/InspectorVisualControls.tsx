@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import './InspectorVisualControls.css';
 import './clip-region-controls.css';
 import { theme } from '../../theme';
@@ -22,6 +22,31 @@ export { BackgroundFillControl } from './BackgroundFillControl';
 const SHADER_FX_SET = new Set<string>(SHADER_FX_IDS);
 const LUT_FX_SET = new Set<string>(LUT_IDS);
 const compactNumber = (value: number) => String(Number(value.toFixed(2)));
+
+function EffectParamRange({
+  label,
+  min,
+  max,
+  step,
+  value,
+  display,
+  onChange,
+}: {
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  display: string;
+  onChange: (next: number) => void;
+}) {
+  return (
+    <label style={{ display: 'block', fontSize: 11, color: theme.textDim }}>
+      <div style={{ marginBottom: 4 }}>{label} <span style={{ opacity: 0.7 }}>{display}</span></div>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: '100%' }} />
+    </label>
+  );
+}
 
 // small uppercase-ish divider label between control groups.
 export function SectionLabel({
@@ -66,7 +91,6 @@ export function FilterControl({ item, mixed, onChange, autoGrade }: {
           <div className="cc-auto-grade-head">
             <div>
               <strong>{t('自动校色')}</strong>
-              <span>{t('保守型技术修正')}</span>
             </div>
             <button
               type="button"
@@ -77,11 +101,9 @@ export function FilterControl({ item, mixed, onChange, autoGrade }: {
               {autoGrade.busy ? t('分析中…') : t('分析选中片段')}
             </button>
           </div>
-          <div className="cc-auto-grade-note">
-            {autoGrade.targetCount === 0
-              ? t('请选择已导入媒体池的视频、图片或 GIF 片段')
-              : t('本机抽样分析，仅做小幅亮度、对比和饱和度修正，不添加创意 LUT。')}
-          </div>
+          {autoGrade.targetCount === 0 && (
+            <div className="cc-auto-grade-note">{t('请先选中视频或图片片段')}</div>
+          )}
           {autoGrade.previewCount > 0 && (
             <div className="cc-auto-grade-result">
               <div>
@@ -182,9 +204,7 @@ export function MaskControl({ item, mixed, onChange, onReset, kf }: {
         </button>)}
       </div>
       {mixed?.type && <p className="cc-region-note">{t('所选片段的蒙版不同，点击形状统一应用。')}</p>}
-      <p className="cc-region-note">{t('在预览画面拖动蒙版内部移动，拉动四角或四边调整大小。右侧参数用于精确调整；位置和羽化支持关键帧。')}</p>
       {item.mask && rows.map(row)}
-      <p className="cc-region-note">{t('坐标相对于画布；羽化相对于画布短边')}</p>
     </div>
   );
 }
@@ -260,10 +280,16 @@ export function EffectsControl({ item, onChange, previewStatus }: { item: Timeli
               }
               const value = typeof raw === 'number' ? raw : p.default;
               return (
-                <label key={p.key} style={{ display: 'block', fontSize: 11, color: theme.textDim }}>
-                  <div style={{ marginBottom: 4 }}>{t(p.label)} <span style={{ opacity: 0.7 }}>{fmt(p.step, value)}</span></div>
-                  <input type="range" min={p.min} max={p.max} step={p.step ?? 0.01} value={value} onChange={(e) => setParam(effect, p.key, Number(e.target.value))} style={{ width: '100%' }} />
-                </label>
+                <EffectParamRange
+                  key={p.key}
+                  label={t(p.label)}
+                  min={p.min}
+                  max={p.max}
+                  step={p.step ?? 0.01}
+                  value={value}
+                  display={fmt(p.step, value)}
+                  onChange={(next) => setParam(effect, p.key, next)}
+                />
               );
             })}
           </div>

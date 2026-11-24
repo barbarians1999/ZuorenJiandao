@@ -73,12 +73,11 @@ const sqliteVecFilters = SQLITE_VEC_PACKAGES
   .map((packageSuffix) => `!node_modules/sqlite-vec-${packageSuffix}/**`);
 const hasMacSigningCertificate = Boolean(process.env.CSC_LINK || process.env.CSC_NAME);
 const isWindowsTarget = target.startsWith('win32-');
-const isMacTarget = target.startsWith('darwin-');
 const windowsArtifactName = 'ZuorenJiandao-Setup-${version}-${arch}.${ext}';
 
 export default {
   appId: 'org.zuoren.jiandao',
-  productName: isWindowsTarget ? '左人剪刀' : isMacTarget ? 'ZuorenJiandao' : 'OpenChatCut',
+  productName: isWindowsTarget ? '左人剪刀' : 'ZuorenJiandao',
   artifactName: isWindowsTarget
     ? windowsArtifactName
     : '${productName}-${version}-${arch}.${ext}',
@@ -105,6 +104,14 @@ export default {
     ...onnxRuntimeFilters,
     // sqlite-vec (semantic vectors): ship only the target platform's vec0 extension.
     ...sqliteVecFilters,
+    // Browser-only WASM/JS, sourcemaps, and TypeScript declarations are bundled by Vite and unneeded inside app.asar.
+    '!node_modules/onnxruntime-web/**',
+    '!node_modules/**/node_modules/onnxruntime-web/**',
+    '!node_modules/@huggingface/transformers/dist/transformers.web*',
+    '!node_modules/**/*.map',
+    '!node_modules/**/*.d.ts',
+    '!node_modules/**/*.d.mts',
+    '!node_modules/**/*.d.cts',
   ],
   asar: true,
   // Real files next to the archive (app.asar.unpacked): executables and shared libraries
@@ -172,7 +179,7 @@ export default {
   },
   linux: {
     target: ['AppImage'],
-    icon: 'public/openchatcut-icon.png',
+    icon: 'public/zuoren-jiandao-icon.png',
     category: 'AudioVideo',
     // Keep the executable name stable for release/linux-unpacked/openchatcut and CI smoke tests.
     executableName: 'openchatcut',

@@ -6,8 +6,36 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { windowsPackagePlan, windowsUpdateMetadata, verifyWindowsPackage } from './package-windows.mjs';
 import { assertDeliverySpace, copyDeliveryMetadata, planPackageCleanup } from './package-current.mjs';
 import { isChromeRuntimeAsset } from '../desktop/prepare-target.mts';
-import yaml from 'js-yaml';
 import { createHash } from 'node:crypto';
+
+function parseSimpleUpdateYaml(text) {
+  const result = { files: [] };
+  let currentFile = null;
+  for (const rawLine of text.split(/\r?\n/)) {
+    if (!rawLine.trim()) continue;
+    const itemMatch = /^\s*-\s+url:\s*(.+)$/.exec(rawLine);
+    if (itemMatch) {
+      currentFile = { url: itemMatch[1].trim() };
+      result.files.push(currentFile);
+      continue;
+    }
+    if (currentFile && /^\s{4,}[a-zA-Z0-9_]+:/.test(rawLine)) {
+      const idx = rawLine.indexOf(':');
+      const key = rawLine.slice(0, idx).trim();
+      const rawVal = rawLine.slice(idx + 1).trim();
+      currentFile[key] = key === 'size' ? Number(rawVal) : rawVal;
+      continue;
+    }
+    currentFile = null;
+    const idx = rawLine.indexOf(':');
+    if (idx > 0) {
+      const key = rawLine.slice(0, idx).trim();
+      const rawVal = rawLine.slice(idx + 1).trim().replace(/^'(.*)'$/, '$1');
+      if (key !== 'files') result[key] = rawVal;
+    }
+  }
+  return result;
+}
 
 const plan = windowsPackagePlan({ node: 'node.exe', electronDist: '' });
 assert.equal(windowsPackagePlan({ node: 'node.exe', installedPnpm: true })[0].env.npm_config_user_agent, 'pnpm');
@@ -34,7 +62,7 @@ for (const step of offlinePlan) {
 const configSource = await readFile(new URL('../config/electron-builder.config.mjs', import.meta.url), 'utf8');
 const workflowSource = await readFile(new URL('../.github/workflows/desktop.yml', import.meta.url), 'utf8');
 assert.match(configSource, /appId:\s*'org\.zuoren\.jiandao'/);
-assert.match(configSource, /productName:\s*isWindowsTarget \? '左人剪刀' : 'OpenChatCut'/);
+assert.match(configSource, /productName:\s*isWindowsTarget \? '左人剪刀' : 'ZuorenJiandao'/);
 assert.match(configSource, /icon:\s*'assets\/branding\/zuoren-jiandao-icon\.ico'/);
 assert.match(configSource, /installerIcon:\s*'assets\/branding\/zuoren-jiandao-icon\.ico'/);
 assert.match(configSource, /uninstallerIcon:\s*'assets\/branding\/zuoren-jiandao-icon\.ico'/);
@@ -94,7 +122,7 @@ try {
   await unlink(link);
   assert.equal((await planPackageCleanup(source,['setup.exe','win-unpacked'])).length,2);
 } finally {await rm(deliveryFixture,{recursive:true,force:true});}
-const metadata = yaml.load(windowsUpdateMetadata('0.2.20', 'ZuorenJiandao-Setup-0.2.20-x64.exe', bytes, '2026-10-04T00:00:00.000Z'));
+const metadata = parseSimpleUpdateYaml(windowsUpdateMetadata('0.2.20', 'ZuorenJiandao-Setup-0.2.20-x64.exe', bytes, '2026-10-04T00:00:00.000Z'));
 assert.equal(metadata.files[0].sha512, createHash('sha512').update(bytes).digest('base64'));
 assert.equal(metadata.files[0].size, bytes.length);
 assert.equal(metadata.path, metadata.files[0].url);

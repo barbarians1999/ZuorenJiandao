@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import type { PlayerRef, CallbackListener, EventTypes as PlayerEventTypes } from '@remotion/player';
 import type { TimelineItem } from './types';
 import { attachPlayheadMediaSync, shouldPaintPlayheadTimecode } from '../components/timeline/usePlayheadPaint';
+import { createFrameCoalescer } from '../components/timeline/frameCoalescer';
 import { animationAuditionWindow, animationPreviewSavedFrame, releaseAnimationPreviewPosition,
   startAnimationAudition, type AuditionPlayer, type AuditionResult } from './animationAudition';
 
@@ -81,10 +82,14 @@ function setup(playing = false) {
 {
   const p = setup(); const trial = p.trial();
   let desired = 153;
-  const detach = attachPlayheadMediaSync(p.player, () => desired, () => {});
+  let flushMetadata = () => {};
+  const frames = createFrameCoalescer<void>((callback) => { flushMetadata = callback; return 1; }, () => {});
+  const detach = attachPlayheadMediaSync(p.player, () => desired, () => {}, frames);
   p.player.container.dispatchEvent(new Event('loadedmetadata'));
+  flushMetadata();
   assert.equal(trial.isActive(), true); assert.equal(p.player.playing, true);
   desired = 160; p.player.container.dispatchEvent(new Event('loadedmetadata'));
+  flushMetadata();
   assert.equal(trial.isActive(), true); assert.equal(p.player.frame, 160);
   p.player.advance(180); await Promise.resolve(); detach();
   assert.equal(p.player.frame, 45); assert.equal(p.player.count(), 0);

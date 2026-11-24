@@ -55,7 +55,7 @@ export async function collectAllUploadRefs(excludeId?: string): Promise<Set<stri
         if ('kind' in part && part.kind === 'quarantined-project-store-entry') {
           throw new Error('存在未能读取的工程，无法安全清理素材。请先恢复该工程。');
         }
-        remaining.push(...Object.values(part));
+        for (const child of Object.values(part)) remaining.push(child);
       }
     }
     // Raw snapshots also protect versions, recoverable exports, and orphan documents.
@@ -117,16 +117,21 @@ export async function scanUnreferenced(): Promise<CleanupScan> {
 }
 
 /** Delete the project + cascade to delete its exclusive assets (reserved assets that are also referenced by other projects).*/
-export async function purgeProjectCascade(id: string): Promise<{ filesDeleted: number }> {
+export async function purgeProjectCascade(id: string): Promise<{ filesDeleted: number; mediaCleanupSkipped?: boolean }> {
   const doc = await loadProject(id);
   const own = doc ? collectUploadSrcs(doc) : [];
   await purgeProject(id);
   let filesDeleted = 0;
   if (own.length) {
-    const refs = await collectAllUploadRefs();
-    for (const src of own) {
-      if (refs.has(src)) continue;
-      if (await deleteUploadFile(src.slice(MEDIA_PREFIX.length))) filesDeleted += 1;
+    try {
+      const refs = await collectAllUploadRefs();
+      for (const src of own) {
+        if (refs.has(src)) continue;
+        if (await deleteUploadFile(src.slice(MEDIA_PREFIX.length))) filesDeleted += 1;
+      }
+    } catch (error) {
+      console.warn('[mediaCleanup] post-purge asset cleanup skipped:', error);
+      return { filesDeleted, mediaCleanupSkipped: true };
     }
   }
   return { filesDeleted };

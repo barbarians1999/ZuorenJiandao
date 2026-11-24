@@ -45,16 +45,25 @@ export async function runDesktopSmokeProbe(
   if (previewPhase === 'write' || previewPhase === 'read') {
     if (previewPhase === 'write') await win.webContents.executeJavaScript(`
       (() => {
+        const select = document.querySelector('select[aria-label="\u9884\u89c8\u753b\u8d28"]');
+        if (select instanceof HTMLSelectElement) {
+          Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, 'proxy');
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          return;
+        }
         const button = [...document.querySelectorAll('button')].find((entry) => entry.textContent?.trim() === '\u6d41\u7545');
-        if (!button) throw new Error('Preview source button missing');
+        if (!button) throw new Error('Preview source control missing');
         button.click();
       })()
     `);
     const deadline = Date.now() + 10_000;
     while (!await win.webContents.executeJavaScript(`
       localStorage.getItem('cc.previewSource.v1') === 'proxy' &&
-      [...document.querySelectorAll('button')].some((entry) =>
-        entry.textContent?.trim() === '\u6d41\u7545' && entry.getAttribute('aria-pressed') === 'true')
+      (
+        document.querySelector('select[aria-label="\u9884\u89c8\u753b\u8d28"]')?.value === 'proxy' ||
+        [...document.querySelectorAll('button')].some((entry) =>
+          entry.textContent?.trim() === '\u6d41\u7545' && entry.getAttribute('aria-pressed') === 'true')
+      )
     `)) {
       if (Date.now() > deadline) throw new Error(`Preview setting ${previewPhase} failed`);
       await new Promise((done) => setTimeout(done, 100));

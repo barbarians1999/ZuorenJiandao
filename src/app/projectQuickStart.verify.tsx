@@ -70,11 +70,10 @@ assert.match(cueSource, /if \(!target\) \{[\s\S]*setPendingActivationReveal\(\{ 
 assert.match(cueSource, /target\.scrollIntoView\(\{ block: 'center', inline: 'nearest' \}\);[\s\S]*onCaptionActivationConsumed\?\.\(request\.nonce\)/, 'activation is acknowledged only after the rendered row scrolls into view');
 const { LibraryNavigation } = await vite.ssrLoadModule('/src/library/LibraryNavigation.tsx');
 const navigation = renderToStaticMarkup(createElement(LibraryNavigation, { active: '字幕', onSelect() {} }));
-assert.match(navigation, /字幕/);
-assert.match(navigation, /插入文字/);
+assert.match(navigation, /字幕与文字/);
 assert.match(navigation, /我的素材/);
 assert.match(navigation, /音效/);
-assert.doesNotMatch(navigation, /文本与字幕|>文字稿<|背景音乐/);
+assert.doesNotMatch(navigation, /文本与字幕|>文字稿<|背景音乐|插入文字/);
 const { TextWorkspace } = await vite.ssrLoadModule('/src/library/TextWorkspace.tsx');
 const noop = () => undefined;
 const textProps = {

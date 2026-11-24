@@ -40,16 +40,16 @@ interface EffectCardSpec {
 }
 
 const SUB_TABS: ReadonlyArray<{ id: EffectsSubTab; label: string }> = [
+  { id: 'shapes', label: '形状与马赛克' },
   { id: 'fx', label: '画面特效' },
   { id: 'lut', label: '滤镜 LUT' },
   { id: 'transition', label: '转场' },
   { id: 'zoom', label: '推拉缩放' },
-  { id: 'shapes', label: '形状与马赛克' },
 ];
 
 export function EffectsBrowser({
   selectedItem = null,
-  defaultSubTab = 'fx',
+  defaultSubTab = 'shapes',
   onAddSolid,
   onAddShape,
   onAddMosaic,
@@ -215,10 +215,6 @@ export function EffectsBrowser({
             {t(tab.label)}
           </button>
         ))}
-      </div>
-
-      <div style={{ fontSize: 10.5, color: theme.textDim, opacity: 0.85, marginBottom: 8, lineHeight: 1.45 }}>
-        {t('所有画面特效、LUT、转场与遮罩马赛克均处于字幕轨下方，不会遮挡或染色上方字幕。')}
       </div>
 
       {subTab === 'fx' && (

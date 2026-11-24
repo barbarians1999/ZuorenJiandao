@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useMusicAnalysisCards } from '../audio/intelligence/useMusicAnalysisCards';
 import { useT } from '../i18n/locale';
-import type { MediaAsset, MediaFolder } from '../editor/types';
+import type { ClipMask, MediaAsset, MediaFolder } from '../editor/types';
 import { isFontAsset } from '../../shared/desktop-fonts';
 import { usePersistedState } from '../hooks/usePersistedState';
 import { useFocusReturn } from '../hooks/useFocusReturn';
@@ -9,7 +9,7 @@ import { useMediaPoolRelink } from './useMediaPoolRelink';
 import { folderPath } from './mediaPoolFormat';
 import { MediaPoolToolbar, type MediaToolbarMenu } from './MediaPoolToolbar';
 import type { SemanticMatch } from './semantic-search/types';
-import { filterMediaAssets, type MediaSortKey, type MediaTypeFilter } from './mediaPoolFilter';
+import { filterMediaAssets, type MediaSortKey, type MediaTypeFilter, type MediaUsageFilter } from './mediaPoolFilter';
 import { MobileUploadDialog } from './MobileUploadDialog';
 import type { MediaPoolIngestProps } from './MediaPoolIngestProps';
 import { MissingMediaBanner, MusicModelsNotice, RelinkAllDialog } from './MediaPoolOverlays';
@@ -47,6 +47,9 @@ interface MediaPoolPanelProps extends MediaPoolIngestProps {
   folders: MediaFolder[];
   fps: number;
   usedAssetIds: ReadonlySet<string>;
+  onTimelineAssetIds?: ReadonlySet<string>;
+  previewAssetId?: string | null;
+  onPreviewAsset?: (asset: MediaAsset | null) => void;
   offlineAssetIds: ReadonlySet<string>;
   directoryImport: UseDirectoryImportState;
   directoryImportError: string | null;
@@ -62,8 +65,8 @@ interface MediaPoolPanelProps extends MediaPoolIngestProps {
   onRemoveAsset?: (id: string) => void;
   onRemoveAssets?: (ids: string[]) => void;
   onPasteAssets?: (assets: MediaAsset[], folderId?: string) => void;
-  /** Add a solid-color clip. */
-  onAddSolid?: () => void;
+  /** Add a solid-color or matte clip. */
+  onAddSolid?: (preset?: { name?: string; color?: string; mask?: ClipMask }) => void;
   onAddShape?: (shape: 'rectangle' | 'ellipse') => void;
   onAddMosaic?: () => void;
   /** Start (or retry) ASR for one asset from the pool UI. */
@@ -72,7 +75,7 @@ interface MediaPoolPanelProps extends MediaPoolIngestProps {
 
 export function MediaPoolPanel({
   initialType = 'all', purpose, importRequested = false, onImportRequestHandled,
-  semanticScopeId, assets: projectAssets, folders, fps, usedAssetIds, offlineAssetIds, onAssetLoadError,
+  semanticScopeId, assets: projectAssets, folders, fps, usedAssetIds, onTimelineAssetIds, previewAssetId, onPreviewAsset, offlineAssetIds, onAssetLoadError,
   onImport, onImportMobile, directoryImport, directoryImportError, onAddAsset: addAssetToTimeline, onAddAssetsToTimeline: addAssetsToTimeline, onCreateFolder, onRenameFolder,
   onDeleteFolder, onMoveAssets, onRenameAsset, onRenameAssets, onSetFavorite, onSetAssetsFavorite, onRemoveAsset, onRemoveAssets, onPasteAssets, onRelinkAsset, onAddSolid, onAddShape, onAddMosaic, onTranscribe,
 }: MediaPoolPanelProps) {
@@ -89,13 +92,21 @@ export function MediaPoolPanel({
   })), [assets, fps, markedRanges]);
   const sourceAsset = assets.find((asset) => asset.id === sourceAssetId && (asset.kind === 'video' || asset.kind === 'audio'));
   const onAddAsset = useCallback((asset: MediaAsset) => {
-    try { addAssetToTimeline(asset, resolveMediaSourceRange(asset, sourceRanges[asset.id])); setError(null); }
+    try {
+      onPreviewAsset?.(null);
+      addAssetToTimeline(asset, resolveMediaSourceRange(asset, sourceRanges[asset.id]));
+      setError(null);
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-  }, [addAssetToTimeline, sourceRanges]);
+  }, [addAssetToTimeline, onPreviewAsset, sourceRanges]);
   const onAddAssetsToTimeline = useMemo(() => addAssetsToTimeline ? (targets: MediaAsset[]) => {
-    try { addAssetsToTimeline(targets, sourceRanges); setError(null); }
+    try {
+      onPreviewAsset?.(null);
+      addAssetsToTimeline(targets, sourceRanges);
+      setError(null);
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-  } : undefined, [addAssetsToTimeline, sourceRanges]);
+  } : undefined, [addAssetsToTimeline, onPreviewAsset, sourceRanges]);
   const fileImport = useMediaPoolFileImport({ onImport, onMoveAssets, onCreateFolder, setError, t });
   const {
     inputRef, busy, setBusy, uploadRatio, canPickDirectory,
@@ -113,6 +124,7 @@ export function MediaPoolPanel({
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<MediaSortKey>('newest');
   const [type, setType] = useState<MediaTypeFilter>(initialType);
+  const [usage, setUsage] = useState<MediaUsageFilter>('all');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [view, setView] = usePersistedState<'grid' | 'list'>('cc.mediaView', 'grid');
   const [menu, setMenu] = useState<MediaToolbarMenu>(null);
@@ -129,6 +141,11 @@ export function MediaPoolPanel({
   const [assetClipboard, setAssetClipboard] = useState<MediaAsset[]>([]);
   const [blankMenuPos, setBlankMenuPos] = useState<{ top: number; left: number } | null>(null);
   const { folderMenuId, folderMenuPos, closeFolderMenu, openFolderMenu } = useMediaPoolFolderMenu(closeAssetMenu, setBlankMenuPos);
+  const handlePreviewAsset = useCallback((asset: MediaAsset | null) => {
+    closeAssetMenu();
+    closeFolderMenu();
+    onPreviewAsset?.(asset);
+  }, [closeAssetMenu, closeFolderMenu, onPreviewAsset]);
   const [promptState, setPromptState] = useState<MediaPromptState | null>(null);
   const [promptValue, setPromptValue] = useState('');
   const [deleteState, setDeleteState] = useState<MediaFolderDeleteState | null>(null);
@@ -159,8 +176,9 @@ export function MediaPoolPanel({
   }, [assetMenu]);
   const currentFolder = folders.find((folder) => folder.id === currentFolderId);
   const childFolders = folders.filter((folder) => folder.parentId === currentFolderId);
+  const timelineUsageAssetIds = onTimelineAssetIds ?? usedAssetIds;
   const { query: q, visible } = filterMediaAssets({
-    assets, query, semanticResults, currentFolderId, type, favoritesOnly, sort,
+    assets, query, semanticResults, currentFolderId, type, usage, usedAssetIds: timelineUsageAssetIds, favoritesOnly, sort,
   });
   const selectedAssets = assets.filter((asset) => selected.has(asset.id));
   const openPrompt = (next: MediaPromptState) => { setPromptValue(next.initialValue); setPromptState(next); };
@@ -274,7 +292,12 @@ export function MediaPoolPanel({
     ? folders.find((folder) => folder.id === currentFolder.parentId)
     : undefined;
   const gridEntries = useMemo<MediaGridEntry[]>(() => [
-    ...(showFolders && !currentFolderId && onAddSolid ? [{ kind: 'solid' as const }] : []),
+    ...(showFolders && !currentFolderId && onAddSolid ? [
+      { kind: 'solid' as const },
+      { kind: 'black-matte' as const },
+      { kind: 'white-matte' as const },
+      { kind: 'mask-matte' as const },
+    ] : []),
     ...(showFolders && !currentFolderId && onAddShape ? [
       { kind: 'shape-rectangle' as const },
       { kind: 'shape-ellipse' as const },
@@ -353,6 +376,7 @@ export function MediaPoolPanel({
         query={query}
         sort={sort}
         type={type}
+        usage={usage}
         favoritesOnly={favoritesOnly}
         view={view}
         menu={menu}
@@ -367,7 +391,7 @@ export function MediaPoolPanel({
         onWatchFolder={canWatchDirectory ? () => void startWatch() : undefined} onStopWatch={() => void stopWatch()}
         watchingFolder={activeWatch?.directoryName ?? null} watchBusy={watchBusy}
         onMobileUpload={(restoreFocus) => { modalFocus.remember(restoreFocus); setMobileUploadOpen(true); }}
-        onAddSolid={() => onAddSolid?.()}
+        onAddSolid={onAddSolid}
         onAddShape={onAddShape}
         onAddMosaic={onAddMosaic}
         onCreateFolder={createFolder}
@@ -375,6 +399,7 @@ export function MediaPoolPanel({
         onMenuChange={setMenu}
         onSortChange={setSort}
         onTypeChange={setType}
+        onUsageChange={setUsage}
         onFavoritesChange={() => setFavoritesOnly((value) => !value)}
       />
 
@@ -407,13 +432,16 @@ export function MediaPoolPanel({
         selected={selected}
         missing={missing}
         usedAssetIds={usedAssetIds}
+        onTimelineAssetIds={onTimelineAssetIds}
         musicAnalysis={musicAnalysis}
         assetMenu={assetMenu}
         canRelink={!!onRelinkAsset}
         dragPurpose={purpose}
         sourceRanges={sourceRanges}
         sourcePreviewOpen={!!sourceAsset}
-        onOpenSourceRange={(id) => { closeAssetMenu(); setSourceAssetId(id); setSelected(new Set([id])); }}
+        previewAssetId={previewAssetId}
+        onPreviewAsset={handlePreviewAsset}
+        onOpenSourceRange={(id) => { closeAssetMenu(); onPreviewAsset?.(null); setSourceAssetId(id); setSelected(new Set([id])); }}
         onOpenFolder={openFolder}
         onOpenParent={openParent}
         onDropTransfer={(transfer, folderId) => void handleDrop(transfer, folderId)}

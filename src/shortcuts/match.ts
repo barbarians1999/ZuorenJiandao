@@ -39,8 +39,8 @@ export function normalizeKey(key: string): string {
   if (k === '=' || k === 'equal') return '=';
   if (k === '+' || k === 'add') return '+';
   if (k === '-' || k === 'subtract' || k === 'minus') return '-';
-  if (k === '【') return '[';
-  if (k === '】') return ']';
+  if (k === '【' || k === '{') return '[';
+  if (k === '】' || k === '}') return ']';
   if (k.startsWith('arrow')) return k; // arrowleft …
   return k;
 }
@@ -48,7 +48,7 @@ export function normalizeKey(key: string): string {
 function eventShortcutKey(e: Pick<KeyboardEvent, 'key' | 'code' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>): string {
   const normalized = normalizeKey(e.key);
   if (normalized === 'process' || normalized === 'unidentified') {
-    if (!e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    if (!e.altKey && !e.ctrlKey && !e.metaKey) {
       return CODE_KEY_FALLBACK[e.code] ?? normalized;
     }
   }
@@ -149,7 +149,7 @@ export function matchShortcut(
     // allow repeat only for seek/nudge — caller can filter; we still match
   }
   const key = eventShortcutKey(e);
-  const codeFallback = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey ? CODE_KEY_FALLBACK[e.code] : undefined;
+  const codeFallback = !e.altKey && !e.ctrlKey && !e.metaKey ? CODE_KEY_FALLBACK[e.code] : undefined;
   if (['shift', 'control', 'alt', 'meta'].includes(key)) return null;
 
   const typing = isTypingTarget(e.target);

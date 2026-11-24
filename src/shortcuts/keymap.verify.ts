@@ -5,7 +5,7 @@ import assert from 'node:assert';
 import { SHORTCUT_CATALOG } from './catalog';
 import {
   effectiveCatalog, effectiveMatchingCatalog, setBinding, resetBinding, resetAllBindings, isCustomized, customizedCount,
-  chordFromEvent, findConflicts,
+  chordFromEvent, findConflicts, getShortcutPreset, setShortcutPreset, presetCatalog, getCustomPresetBase,
 } from './keymap';
 import { matchShortcut } from './match';
 
@@ -66,4 +66,49 @@ assert.equal(matchShortcut(groupKey, effectiveMatchingCatalog(), context), null)
 assert.equal(matchShortcut({ ...groupKey, altKey: true }, effectiveMatchingCatalog(), context), 'group');
 
 resetAllBindings();
+assert.equal(getShortcutPreset(), 'jianying', 'default preset is jianying');
+assert.equal(keysOf('interaction-mode-selection'), 'A', 'jianying selection mode is A');
+assert.equal(keysOf('split'), 'Mod + B / C / Enter', 'jianying split default');
+
+// ── Premiere Pro preset switch + conflict-free catalog ──
+const premiereCat = presetCatalog('premiere');
+for (const action of premiereCat) {
+  assert.deepEqual(
+    findConflicts(premiereCat, action.id, action.keys).map((c) => c.id),
+    [],
+    `premiere preset must stay conflict-free for ${action.id} (${action.keys})`,
+  );
+}
+setShortcutPreset('premiere');
+assert.equal(getShortcutPreset(), 'premiere');
+assert.equal(keysOf('interaction-mode-selection'), 'V', 'premiere selection mode is V');
+assert.equal(keysOf('interaction-mode-blade'), 'C', 'premiere razor blade is C');
+assert.equal(keysOf('split'), 'Mod + K', 'premiere split is Mod + K');
+assert.equal(keysOf('toggle-picture'), 'Shift + E', 'premiere toggle-picture is Shift + E');
+assert.equal(keysOf('select-track-after-playhead'), 'A / Shift + ]', 'premiere track-select-right is A');
+assert.equal(keysOf('select-track-before-playhead'), 'Shift + A / Shift + [', 'premiere track-select-left is Shift+A');
+assert.equal(keysOf('interaction-mode-trim'), 'B', 'premiere ripple edit is B');
+assert.equal(keysOf('interaction-mode-slip'), 'Y', 'premiere slip tool is Y');
+
+setShortcutPreset('custom');
+assert.equal(getCustomPresetBase(), 'premiere', 'first custom profile starts from the currently active preset');
+assert.equal(keysOf('interaction-mode-selection'), 'V');
+setShortcutPreset('premiere');
+
+// Editing a binding while in Premiere switches into custom based on Premiere and preserves PR keys + custom overrides across preset switches.
+setBinding('undo', 'Mod + Shift + U');
+assert.equal(getShortcutPreset(), 'custom');
+assert.equal(getCustomPresetBase(), 'premiere');
+assert.equal(keysOf('undo'), 'Mod + Shift + U');
+assert.equal(keysOf('interaction-mode-selection'), 'V');
+setShortcutPreset('jianying');
+assert.equal(keysOf('interaction-mode-selection'), 'A');
+assert.equal(keysOf('undo'), 'Mod + Z');
+setShortcutPreset('custom');
+assert.equal(keysOf('undo'), 'Mod + Shift + U');
+assert.equal(keysOf('interaction-mode-selection'), 'V');
+
+resetAllBindings();
+assert.equal(getShortcutPreset(), 'jianying');
+assert.equal(customizedCount(), 0);
 console.log('keymap.verify.ts OK');

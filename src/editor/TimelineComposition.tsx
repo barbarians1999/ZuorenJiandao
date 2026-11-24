@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AbsoluteFill, Sequence, getRemotionEnvironment, useCurrentFrame } from 'remotion';
 import { CaptionsLayer } from '../captions/CaptionsLayer';
 import { GlTransition } from '../gl/GlTransition';
@@ -15,8 +15,8 @@ import { isBackgroundFillActive } from './backgroundFill';
 import { ClipWrapper } from './TimelineClipWrapper';
 import { GlTransitionVisibility } from './GlTransitionVisibility';
 import { updateReadyGlWindows } from './glTransitionVisibilityState';
-import { AudioClip, PlayerAudioLayers, BackgroundFillLayer, ContinuousVideoAudio, MediaFill, SharedVideoVisualGroup, VisualClipSurface } from './TimelineMediaLayer';
-import { compositionPlan } from './compositionPlan';
+import { AudioClip, PlayerAudioLayers, BackgroundFillLayer, ContinuousVideoAudio, MediaFill, PreviewAudioEnabled, SharedVideoVisualGroup, VisualClipSurface } from './TimelineMediaLayer';
+import { compositionPlan, previewLayerWindow, previewVideoMounts, type PreviewLayerRange } from './compositionPlan';
 import { compositionBackground } from './compositionBackground';
 import { hasPrivacyMosaic } from './mosaic';
 import { ItemLayer, SolidLayer, TextLayer, WatermarkLayer } from './TimelineGraphicLayers';
@@ -93,6 +93,7 @@ export type TimelineCompositionProps = Record<string, unknown> & {
   selectedItemId?: string | null;
   hiddenCaptionKeys?: Record<string, string | null>;
   onSelectedPreviewStatus?: SelectedPreviewStatusListener;
+  previewAudioEnabled?: boolean;
 };
 
 function SelectedPreviewStatusReporter({ status, listener }: {
@@ -116,7 +117,7 @@ function SelectedPreviewStatusReporter({ status, listener }: {
 
 interface PlayerPictureLayersProps {
   pictureLayers: ReturnType<typeof compositionPlan>['pictureLayers'];
-  renderVisualLayer: (group: TimelineItem[]) => ReactNode;
+  renderVisualLayer: (group: TimelineItem[], retainedFor?: number) => ReactNode;
   renderTransition: (w: ReturnType<typeof compositionPlan>['glWindows'][number]) => ReactNode;
   state: TimelineState;
   extendBefore: Map<string, number>;
@@ -139,77 +140,47 @@ function PlayerPictureLayers({
 }: PlayerPictureLayersProps) {
   const currentFrame = useCurrentFrame();
 
-  const { activeVisualIds, activeTransitionKeys } = useMemo(() => {
-    const activeVisual = new Set<string>();
-    const activeTransitions = new Set<string>();
-
-    interface VisualCandidate {
-      id: string;
-      from: number;
-      to: number;
-    }
-
-    const currentVisuals: VisualCandidate[] = [];
-    const upcomingVisuals: VisualCandidate[] = [];
-    const recentVisuals: VisualCandidate[] = [];
-
+  const { visualRanges, transitionRanges } = useMemo(() => {
+    const visualRanges: PreviewLayerRange[] = [];
+    const transitionRanges: PreviewLayerRange[] = [];
     for (const layer of pictureLayers) {
       if (layer.kind === 'visual') {
-        const items = layer.items;
-        const first = items[0];
-        const last = items.at(-1);
+        const first = layer.items[0];
+        const last = layer.items.at(-1);
         if (!first || !last) continue;
-
-        const eb = extendBefore.get(first.id) ?? 0;
-        const ea = extendAfter.get(last.id) ?? 0;
-        const from = first.startFrame - eb;
-        const to = last.startFrame + last.durationInFrames + ea;
-        const id = first.id;
-
-        const isSelected = selectedItemId ? items.some((it) => it.id === selectedItemId) : false;
-        if (isSelected) {
-          activeVisual.add(id);
-          continue;
-        }
-
-        if (currentFrame >= from && currentFrame < to) {
-          currentVisuals.push({ id, from, to });
-        } else if (from > currentFrame && from <= currentFrame + premountFrames) {
-          upcomingVisuals.push({ id, from, to });
-        } else if (to <= currentFrame && currentFrame < to + 5) {
-          recentVisuals.push({ id, from, to });
-        }
+        visualRanges.push({
+          key: first.id,
+          from: first.startFrame - (extendBefore.get(first.id) ?? 0),
+          to: last.startFrame + last.durationInFrames + (extendAfter.get(last.id) ?? 0),
+          selected: layer.items.some((item) => item.id === selectedItemId),
+          decoderSource: layer.retainDecoder ? first.src : undefined,
+        });
       } else if (layer.kind === 'transition') {
         const w = layer.window;
-        const isSelected = selectedItemId
-          ? (w.incoming.id === selectedItemId || w.outgoing.id === selectedItemId)
-          : false;
-        const isCurrent = currentFrame >= w.from && currentFrame < w.from + w.L;
-        const isUpcoming = w.from > currentFrame && w.from <= currentFrame + premountFrames;
-        const isRecent = (w.from + w.L) <= currentFrame && currentFrame < (w.from + w.L + 5);
-
-        if (isSelected || isCurrent || isUpcoming || isRecent) {
-          activeTransitions.add(w.key);
-        }
+        transitionRanges.push({
+          key: w.key, from: w.from, to: w.from + w.L,
+          selected: w.incoming.id === selectedItemId || w.outgoing.id === selectedItemId,
+        });
       }
     }
-
-    for (const v of currentVisuals) {
-      activeVisual.add(v.id);
-    }
-
-    upcomingVisuals.sort((a, b) => a.from - b.from);
-    for (let i = 0; i < Math.min(2, upcomingVisuals.length); i++) {
-      activeVisual.add(upcomingVisuals[i]!.id);
-    }
-
-    recentVisuals.sort((a, b) => b.to - a.to);
-    if (recentVisuals.length > 0) {
-      activeVisual.add(recentVisuals[0]!.id);
-    }
-
-    return { activeVisualIds: activeVisual, activeTransitionKeys: activeTransitions };
-  }, [pictureLayers, currentFrame, premountFrames, selectedItemId, extendBefore, extendAfter]);
+    return { visualRanges, transitionRanges };
+  }, [pictureLayers, selectedItemId, extendBefore, extendAfter]);
+  const activeVisualIds = previewLayerWindow(visualRanges, currentFrame, premountFrames);
+  const activeTransitionKeys = previewLayerWindow(transitionRanges, currentFrame, premountFrames, 1);
+  const [lastMounts, setLastMounts] = useState<{
+    ranges: readonly PreviewLayerRange[];
+    mounted: ReadonlySet<string>;
+    visitedSources: ReadonlySet<string>;
+  }>();
+  const history = lastMounts?.ranges === visualRanges ? lastMounts : undefined;
+  const retentionFrames = 4 * premountFrames;
+  const { mounted, retained, visitedSources } = previewVideoMounts(
+    visualRanges, activeVisualIds, currentFrame, premountFrames, retentionFrames, history,
+  );
+  if (!history || history.visitedSources !== visitedSources
+    || history.mounted.size !== mounted.size || [...mounted].some((key) => !history.mounted.has(key))) {
+    setLastMounts({ ranges: visualRanges, mounted, visitedSources });
+  }
 
   let picture: ReactNode[] = [];
   for (const layer of pictureLayers) {
@@ -232,8 +203,8 @@ function PlayerPictureLayers({
       ];
     } else if (layer.kind === 'visual') {
       const first = layer.items[0];
-      if (first && activeVisualIds.has(first.id)) {
-        picture.push(renderVisualLayer(layer.items));
+      if (first && (activeVisualIds.has(first.id) || retained === first.id)) {
+        picture.push(renderVisualLayer(layer.items, retained === first.id ? retentionFrames : undefined));
       }
     } else if (layer.kind === 'transition') {
       if (activeTransitionKeys.has(layer.window.key)) {
@@ -255,6 +226,7 @@ function PlayerPictureLayers({
 }
 
 function TimelineContent({ state, project, transparent, browserRenderer = false, selectedItemId, hiddenCaptionKeys, onSelectedPreviewStatus, sequenceLimits, forceMuted = false }: TimelineCompositionProps) {
+  const audioEnabled = useContext(PreviewAudioEnabled);
   const [readyGlWindows, setReadyGlWindows] = useState<Set<string>>(() => new Set());
   const setGlWindowReady = useCallback((key: string, ready: boolean) => {
     setReadyGlWindows((current) => updateReadyGlWindows(current, key, ready));
@@ -267,6 +239,7 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
   }
   const environment = getRemotionEnvironment();
   const premountFrames = environment.isRendering ? 0 : Math.round(state.fps);
+  const postmountFrames = environment.isPlayer ? premountFrames : 0;
   const plan = useMemo(() => compositionPlan(state, {
     mode: environment.isPlayer ? 'player' : 'render',
     selectedItemId, forceMuted, registeredEffects: ALL_FX,
@@ -278,11 +251,12 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
     pictureLayers,
   } = plan;
 
-  const renderVisualLayer = (group: TimelineItem[]) => {
+  const renderVisualLayer = (group: TimelineItem[], retainedFor?: number) => {
         const item = group[0]!;
         if (group.length > 1) return <SharedVideoVisualGroup
           key={`sv:${item.id}`} group={group} fit={fit} muted={isMuted(item.track)}
-          canvasW={state.width} canvasH={state.height} premountFor={premountFrames}
+          canvasW={state.width} canvasH={state.height}
+          premountFor={retainedFor ?? premountFrames} postmountFor={retainedFor ?? postmountFrames}
           browserRenderer={browserRenderer}
         />;
         const eb = extendBefore.get(item.id) ?? 0;
@@ -327,8 +301,8 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
             key={item.id}
             from={item.startFrame - eb}
             durationInFrames={item.durationInFrames + eb + ea}
-            premountFor={premountFrames}
-            postmountFor={environment.isPlayer ? 5 : 0}
+            premountFor={retainedFor ?? premountFrames}
+            postmountFor={retainedFor ?? postmountFrames}
             styleWhilePremounted={environment.isPlayer ? { opacity: 0 } : undefined}
             styleWhilePostmounted={environment.isPlayer ? { opacity: 0, pointerEvents: 'none' } : undefined}
             name={item.name}
@@ -348,7 +322,7 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
           from={w.from}
           durationInFrames={w.L}
           premountFor={premountFrames}
-          postmountFor={environment.isPlayer ? 5 : 0}
+          postmountFor={postmountFrames}
           styleWhilePremounted={environment.isPlayer ? { opacity: 0 } : undefined}
           styleWhilePostmounted={environment.isPlayer ? { opacity: 0, pointerEvents: 'none' } : undefined}
           name={`tr:${w.type}`}
@@ -406,7 +380,7 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
       ) : (
         picture
       )}
-      {environment.isPlayer ? <PlayerAudioLayers items={audio} timelineItems={state.items} assets={project?.assets ?? state.assets}
+      {audioEnabled && (environment.isPlayer ? <PlayerAudioLayers items={audio} timelineItems={state.items} assets={project?.assets ?? state.assets}
         transitions={state.transitions} fps={state.fps} premountFor={premountFrames} browserRenderer={browserRenderer}
         isMuted={isMuted} gainAt={gainAt} /> : audio.map((item) => (
         <AudioClip
@@ -421,8 +395,8 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
           premountFor={premountFrames}
           browserRenderer={browserRenderer}
         />
-      ))}
-      {videoAudioGroups.map((group) => (
+      )))}
+      {audioEnabled && videoAudioGroups.map((group) => (
         <ContinuousVideoAudio
           key={`audio:${group[0]!.id}`}
           items={group}
@@ -463,7 +437,11 @@ export function TimelineComposition(props: TimelineCompositionProps) {
   const readinessState = props.project ? { ...props.state, assets: props.project.assets } : props.state;
   return (
     <TimelineReadinessGate key={timelineReadinessKey(readinessState, dependencies)} state={readinessState} dependencies={dependencies}>
-      {() => <TimelineContent {...props} timelineId={timelineId} />}
+      {() => (
+        <PreviewAudioEnabled.Provider value={!getRemotionEnvironment().isPlayer || props.previewAudioEnabled !== false}>
+          <TimelineContent {...props} timelineId={timelineId} />
+        </PreviewAudioEnabled.Provider>
+      )}
     </TimelineReadinessGate>
   );
 }

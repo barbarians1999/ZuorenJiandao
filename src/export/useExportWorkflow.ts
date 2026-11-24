@@ -34,6 +34,7 @@ import type {
   ExportEngineReason,
   ExportProgress,
   ExportQaUiState,
+  ExportRenderDiagnostics,
   RenderEngine,
   Translate,
   UseExportWorkflowOptions,
@@ -128,6 +129,7 @@ function snapshotWorkflowOptions(options: UseExportWorkflowOptions): UseExportWo
 const EMPTY_WORKFLOW = {
   busy: null,
   clock: 0,
+  diagnostics: null,
   engineInfo: null,
   engineReason: null,
   error: null,
@@ -138,6 +140,7 @@ const EMPTY_WORKFLOW = {
 } satisfies {
   busy: string | null;
   clock: number;
+  diagnostics: ExportRenderDiagnostics | null;
   engineInfo: ExportEngineInfo | null;
   engineReason: ExportEngineReason;
   error: string | null;
@@ -321,6 +324,7 @@ export function useExportWorkflow(options: UseExportWorkflowOptions, exportJobs:
     cancelJob: (jobId: string) => { exportJobs.cancel(jobId); },
     clearTerminal: () => { exportJobs.clearTerminal(); },
     clock: state.busy ? Math.max(state.clock, liveClock) : (state.clock || liveClock),
+    diagnostics: state.diagnostics,
     error: state.error ?? setupError,
     failure: state.failure,
     jobs: jobSnapshot.jobs,

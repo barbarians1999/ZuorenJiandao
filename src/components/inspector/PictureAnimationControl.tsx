@@ -1,10 +1,11 @@
-import { useId, useState, type KeyboardEvent } from 'react';
+import { useId, useRef, useState, type KeyboardEvent } from 'react';
 import type { TimelineItem } from '../../editor/types';
 import { PICTURE_ANIMATIONS, resolvePictureAnimation } from '../../editor/clipAnimation';
 import { TITLE_ANIMATIONS, resolveTextStyle } from '../../editor/textStyles';
 import { useT } from '../../i18n/locale';
 import type { AnimationAuditionPreview } from './useAnimationAudition';
 import { useHistoryGesture } from './historyGesture';
+import { useInspectorWheel } from './useInspectorWheel';
 import './picture-animation.css';
 
 const GROUPS = ['全部', '常用', '位移', '缩放', '旋转与柔焦'] as const;
@@ -33,6 +34,18 @@ export function PictureAnimationControl({ item, mixed, fps, onChange }: {
   const key = isText ? side : side === 'entrance' ? 'visualEntrance' : 'visualExit';
   const framesKey = `${key}Frames`;
   const frames = motion[`${side}Frames`];
+  const maxFrames = Math.max(1, Math.min(300, item.durationInFrames - 1));
+  const durationDisabled = !mixed(key) && motion[side] === 'none';
+  const clampedFrames = Math.min(frames, maxFrames);
+  const numberRef = useRef<HTMLInputElement>(null);
+  useInspectorWheel(numberRef, {
+    value: frames / fps,
+    min: 1 / fps,
+    max: 300 / fps,
+    step: 1 / fps,
+    disabled: durationDisabled || mixed(framesKey),
+    onChange: (seconds) => onChange(framesKey, Math.max(1, Math.min(300, Math.round(seconds * fps)))),
+  });
   const current = options.find((option) => option.id === motion[side]);
   const shown = isText || group === '全部' ? options : options.filter((option) => option.id === 'none' || groupFor(option.id) === group);
   const apply = (value: string) => onChange(key, value);
@@ -72,15 +85,14 @@ export function PictureAnimationControl({ item, mixed, fps, onChange }: {
       </div>
       {mixed(key) && <p className="cc-insp-muted">{t('所选片段的动画不同；点击卡片可统一应用。')}</p>}
       <label className="cc-insp-mg-field"><span>{t('动画时长（秒）')}{mixed(framesKey) ? '（不同）' : ''}</span>
-        <input type="range" min={1} max={Math.max(1, Math.min(300, item.durationInFrames - 1))} step={1}
-          aria-label={t('动画时长')} disabled={!mixed(key) && motion[side] === 'none'}
-          value={Math.min(frames, Math.max(1, item.durationInFrames - 1))}
+        <input type="range" min={1} max={maxFrames} step={1}
+          aria-label={t('动画时长')} disabled={durationDisabled}
+          value={clampedFrames}
           onChange={(event) => onChange(framesKey, Number(event.target.value))} {...gesture} />
-        <input type="number" min={1 / fps} max={300 / fps} step={1 / fps}
-          disabled={!mixed(key) && motion[side] === 'none'} value={mixed(framesKey) ? '' : frames / fps}
+        <input ref={numberRef} type="number" min={1 / fps} max={300 / fps} step={1 / fps}
+          disabled={durationDisabled} value={mixed(framesKey) ? '' : frames / fps}
           onChange={(event) => { const seconds = Number(event.target.value); if (event.target.value !== '' && Number.isFinite(seconds)) onChange(framesKey, Math.max(1, Math.min(300, Math.round(seconds * fps)))); }} {...gesture} />
       </label>
     </div>
-    <div className="cc-insp-muted">{t('点击即应用到选中片段，入场与出场分别设置；声音保持原样。')}</div>
   </div>;
 }

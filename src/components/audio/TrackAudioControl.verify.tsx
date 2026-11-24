@@ -33,15 +33,14 @@ const view = TrackAudioControlView({
 const buttons = (label: string) => {
   const result = find(view, (type, props) => type === 'button' && (() => {
     const contents = renderToStaticMarkup(props.children as ReactNode);
-    return contents.includes(`<strong style="display:block">${label}</strong>`)
-      || contents.startsWith(`${label} ·`);
+    return contents === label || contents.startsWith(`${label} ·`);
   })());
   assert.ok(result, label);
   return result;
 };
 (buttons('普通音频').onClick as () => void)();
 (buttons('人声').onClick as () => void)();
-(buttons('配乐（说话时压低）').onClick as () => void)();
+(buttons('配乐压低').onClick as () => void)();
 (buttons('常用').onClick as () => void)();
 assert.deepEqual(updates, [
   { role: null }, { role: 'anchor' }, { role: 'follower' }, { audioRouting: { duckDepthDb: -12 } },
@@ -57,7 +56,7 @@ assert.equal(gain.val, 3);
 const follower = renderToStaticMarkup(view);
 assert.match(follower, /配乐压低多少/);
 assert.match(follower, /aria-pressed="true" title="-18 dB"/);
-assert.match(follower, /作用于这个轨道的所有片段/);
+assert.doesNotMatch(follower, /作用于这个轨道的所有片段/);
 const ordinary = renderToStaticMarkup(<TrackAudioControlView config={{}} translate={(text) => text} onChange={() => undefined} />);
 assert.doesNotMatch(ordinary, /配乐压低多少/);
 assert.match(ordinary, /aria-pressed="true"/);

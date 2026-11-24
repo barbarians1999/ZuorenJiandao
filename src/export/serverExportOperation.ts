@@ -51,6 +51,7 @@ import type {
 export { isServerRenderError, ServerRenderError } from './serverExportRenderOperation';
 
 function updateActualEngine(context: ServerExportContext, completed: ExportJobResult): void {
+  if (completed.diagnostics) context.setDiagnostics?.(completed.diagnostics);
   if (!completed.encoder) return;
   context.setEngineInfo(completed.encoder);
   if (completed.encoderFallbackReason) context.setEngineReason(completed.encoderFallbackReason);

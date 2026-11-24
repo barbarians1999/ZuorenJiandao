@@ -21,7 +21,7 @@ function prepareTimelineTemplates(state: TimelineState): Promise<void> {
   })).then(() => undefined);
 }
 
-/** Preload fonts and motion-graphic templates; preview tolerates missing fonts while export fails closed. */
+/** Preview can paint with fallback fonts while they load. Templates and export still require readiness. */
 export function prepareTimelineReadiness(
   states: readonly TimelineState[],
   deps: TimelineReadinessDeps = {},
@@ -29,10 +29,9 @@ export function prepareTimelineReadiness(
   const isRendering = deps.isRendering ?? getRemotionEnvironment().isRendering;
   const loadFonts = deps.loadFonts ?? loadTimelineFonts;
   const prepareTemplates = deps.prepareTemplates ?? prepareTimelineTemplates;
-  return Promise.all(
-    states.flatMap((entry) => [
-      loadFonts(entry, { tolerateErrors: !isRendering }),
-      prepareTemplates(entry),
-    ]),
-  ).then(() => undefined);
+  const fonts = Promise.all(states.map((entry) => loadFonts(entry, { tolerateErrors: !isRendering })));
+  const templates = Promise.all(states.map(prepareTemplates));
+  if (isRendering) return Promise.all([fonts, templates]).then(() => undefined);
+  void fonts.catch((error: unknown) => console.warn('[TimelineReadinessGate] font preload degraded in preview:', error));
+  return templates.then(() => undefined);
 }

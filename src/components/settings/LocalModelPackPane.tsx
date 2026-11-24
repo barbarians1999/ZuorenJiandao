@@ -79,7 +79,7 @@ interface LocalModelPackPaneProps {
   description?: string;
 }
 
-export function LocalModelPackPane({ packIds, title = '本地智能模型', description = '模型不会自动安装。安装后，节拍与音乐语义分析只在本机运行。' }: LocalModelPackPaneProps) {
+export function LocalModelPackPane({ packIds, title = '本地智能模型', description = '模型不会自动安装。安装后，节拍分析只在本机运行。' }: LocalModelPackPaneProps) {
   const t = useT();
   const { packs, loadError, refresh } = usePackCatalog();
   const actions = usePackActions(refresh);

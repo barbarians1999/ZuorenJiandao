@@ -42,6 +42,7 @@ function openDb(): Promise<IDBDatabase> {
       resolve(db);
     };
     request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error('IndexedDB open blocked'));
   }).catch((error) => {
     dbPromise = undefined;
     throw error;
@@ -73,6 +74,7 @@ export async function localSet(key: string, value: unknown): Promise<void> {
     transaction.objectStore(STORE).put(value, key);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB transaction aborted'));
   });
 }
 
@@ -89,6 +91,7 @@ export async function localDel(key: string): Promise<void> {
     transaction.objectStore(STORE).delete(key);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB transaction aborted'));
   });
 }
 

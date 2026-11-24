@@ -4,6 +4,7 @@ import {
   attachPlayheadMediaSync,
 } from './usePlayheadPaint';
 import {
+  createTimelineScrubSeek,
   playheadScrubGrabOffsetPx,
   seekTimelineFromPointer,
   timelinePointerStartKind,
@@ -14,6 +15,7 @@ import {
   snapTimelineSeekFrame,
 } from './timelineSeek';
 import { playheadAnchoredTimelineScrollLeft } from '../../editor/timelineZoom';
+import { createFrameCoalescer } from './frameCoalescer';
 
 const geometry = {
   contentLeft: 100,
@@ -71,6 +73,48 @@ assert.deepEqual(
   'pointer seeking must still paint when the preview player is not mounted',
 );
 
+{
+  let nextId = 0;
+  const callbacks = new Map<number, () => void>();
+  const runFrame = () => {
+    const scheduled = [...callbacks.values()];
+    callbacks.clear();
+    for (const callback of scheduled) callback();
+  };
+  let frame = 0;
+  let playing = true;
+  let pauses = 0;
+  const seeks: number[] = [];
+  let painted = 0;
+  const paint = (next: number) => { painted = next; };
+  const scrub = createTimelineScrubSeek(() => ({
+    getCurrentFrame: () => frame,
+    isPlaying: () => playing,
+    pause: () => { playing = false; pauses += 1; },
+    seekTo: (next) => { frame = next; seeks.push(next); },
+  }), (callback) => { callbacks.set(++nextId, callback); return nextId; }, (id) => callbacks.delete(id));
+
+  for (let i = 0; i < 80; i++) scrub.move(Math.round(10 + i / 25), paint);
+  assert.equal(painted, 13, 'the timeline paints the latest target before the Player moves');
+  assert.equal(pauses, 1);
+  assert.equal(callbacks.size, 1);
+  assert.deepEqual(seeks, []);
+  runFrame();
+  assert.deepEqual(seeks, [13], 'only the newest target reaches the Player on refresh');
+  scrub.move(13, paint);
+  runFrame();
+  assert.deepEqual(seeks, [13], 'the same frame does not send another seek');
+  scrub.move(15, paint);
+  scrub.commit(16, paint);
+  runFrame();
+  assert.deepEqual(seeks, [13, 16], 'release commits the exact frame and discards the queued move');
+  scrub.move(19, paint);
+  scrub.cancel(paint);
+  runFrame();
+  assert.equal(painted, 16, 'a cancelled gesture restores the last Player frame');
+  assert.deepEqual(seeks, [13, 16]);
+}
+
 type FrameListener = (event: { detail: { frame: number } }) => void;
 
 class MetadataContainer extends EventTarget {
@@ -126,22 +170,34 @@ class SyncPlayer {
 
 const firstContainer = new MetadataContainer();
 const firstPlayer = new SyncPlayer(firstContainer);
+let flushMetadata = () => {};
+const metadataFrame = () => createFrameCoalescer<void>((callback) => {
+  flushMetadata = callback;
+  return 1;
+}, () => { flushMetadata = () => {}; });
 let desiredFirstFrame = 150;
 const detachFirstSync = attachPlayheadMediaSync(
   firstPlayer,
   () => desiredFirstFrame,
   (event) => { desiredFirstFrame = event.detail.frame; },
+  metadataFrame(),
 );
 firstContainer.dispatchFromDescendant();
-assert.equal(firstContainer.captureEnabled, true, 'descendant media metadata must use capture');
-assert.deepEqual(firstPlayer.seeks, [150], 'media metadata must reassert the restored preview frame');
-firstPlayer.emitFrame(210);
 firstContainer.dispatchFromDescendant();
+assert.deepEqual(firstPlayer.seeks, [], 'a metadata burst waits for the next paint');
+flushMetadata();
+assert.equal(firstContainer.captureEnabled, true, 'descendant media metadata must use capture');
+assert.deepEqual(firstPlayer.seeks, [150], 'one seek reasserts the restored frame for the whole metadata burst');
+firstContainer.dispatchFromDescendant();
+firstPlayer.emitFrame(210);
+flushMetadata();
 assert.deepEqual(firstPlayer.seeks, [150, 210], 'late metadata must preserve a newer frameupdate');
 
+firstContainer.dispatchFromDescendant();
 detachFirstSync();
 firstPlayer.emitFrame(225);
 firstContainer.dispatchFromDescendant();
+flushMetadata();
 assert.deepEqual(firstPlayer.seeks, [150, 210], 'detached players must be inert');
 
 const secondContainer = new MetadataContainer();
@@ -151,8 +207,10 @@ const detachSecondSync = attachPlayheadMediaSync(
   secondPlayer,
   () => desiredSecondFrame,
   (event) => { desiredSecondFrame = event.detail.frame; },
+  metadataFrame(),
 );
 secondContainer.dispatchFromDescendant();
+flushMetadata();
 assert.deepEqual(secondPlayer.seeks, [240], 'replacement players must synchronize independently');
 detachSecondSync();
 assert.doesNotThrow(() => attachPlayheadMediaSync(
@@ -167,6 +225,8 @@ assert.match(timelineSource, /className="cc-playhead-line-grip"/);
 assert.match(timelineSource, /pointerEvents:\s*editMode === 'blade' \? 'none' : 'auto'/);
 const controllerSource = readFileSync(new URL('./useTimelineController.ts', import.meta.url), 'utf8');
 assert.match(controllerSource, /\.cc-playhead-grip,\s*\.cc-playhead-line-grip/);
+assert.match(controllerSource, /onScrubActiveChangeRef\.current\?\./);
+assert.match(controllerSource, /\},\s*\[projectId,\s*timelineId,\s*scrubSeek\]\);/);
 assert.match(controllerSource, /onHoverPreviewFrameChange\?\.\(frame\)/);
 assert.match(timelineSource, /className="cc-timeline-hover-guide"/);
 

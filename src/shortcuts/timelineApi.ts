@@ -17,6 +17,8 @@ export interface TimelineShortcutApi {
   trimSelectedToPlayhead: (side: 'start' | 'end') => void;
   selectBeforePlayhead: () => void;
   selectAllAfterPlayhead: () => void;
+  selectTrackBeforePlayhead: () => void;
+  selectTrackAfterPlayhead: () => void;
   selectAfterPlayhead: () => void;
   selectUnderPlayhead: () => void;
   gotoEdit: (dir: 1 | -1) => void;
@@ -26,12 +28,15 @@ export interface TimelineShortcutApi {
   deleteMarkerAtPlayhead: () => void;
   setZoneIn: () => void;
   setZoneOut: () => void;
+  clearZoneIn: () => void;
+  clearZoneOut: () => void;
   clearZone: () => void;
   zoneFromClip: () => void;
   zoneFromSelection: () => void;
   getZone: () => { inFrame: number | null; outFrame: number | null };
   shuttle: (dir: -1 | 0 | 1) => void;
   shuttleJog: (dir: -1 | 1) => void;
+  fastForward: () => void;
   moveSelectedTrack: (dir: -1 | 1) => void;
   moveSelectedToBoundary: (side: 'left' | 'right') => void;
   copySelected: () => void;

@@ -167,6 +167,15 @@ async function ready(): Promise<void> {
   await readyPromise;
 }
 
+async function ensureRemoteConnected(): Promise<boolean> {
+  await ready();
+  if (remoteCache) return true;
+  if (!canSync()) return false;
+  readyPromise = bootstrap();
+  await readyPromise;
+  return remoteCache !== null;
+}
+
 async function disableRemote(): Promise<void> {
   remoteCache = null;
   remoteKnown.clear();
@@ -359,7 +368,7 @@ export async function kvSet(key: string, value: unknown): Promise<void> {
 }
 
 export async function kvDel(key: string): Promise<void> {
-  await ready();
+  await ensureRemoteConnected();
   // Deleting a project document must always go through the shared store: a
   // silent local-only delete is what let deleted projects "resurrect" on
   // other ports (their server copy + other ports' caches stayed intact).
@@ -393,20 +402,29 @@ async function purgeLocalProjectEntries(projectId: string): Promise<void> {
   for (const key of await localKeys()) {
     if (projectIdFromProjectStoreKey(key) === projectId) await localDel(key);
   }
+  for (const key of [...locallyPendingKeys]) {
+    if (projectIdFromProjectStoreKey(key) === projectId) await clearPendingKey(key);
+  }
 }
 
 function forgetRemoteProjectEntries(projectId: string): void {
-  remoteCache = Object.fromEntries(
+  const nextCache = Object.fromEntries(
     Object.entries(remoteCache ?? {}).filter(([key]) =>
       projectIdFromProjectStoreKey(key) !== projectId),
   );
+  if (Array.isArray(nextCache.projects)) {
+    nextCache.projects = nextCache.projects.filter(
+      (item) => !item || typeof item !== 'object' || (item as { id?: unknown }).id !== projectId,
+    );
+  }
+  remoteCache = nextCache;
   for (const key of remoteKnown) {
     if (projectIdFromProjectStoreKey(key) === projectId) remoteKnown.delete(key);
   }
 }
 
 export async function kvPurgeProject(projectId: string): Promise<void> {
-  await ready();
+  await ensureRemoteConnected();
   const requireSharedDelete = canSync();
   if (!remoteCache) {
     if (requireSharedDelete) throw new Error('共享工程数据库暂时不可用，工程未删除');

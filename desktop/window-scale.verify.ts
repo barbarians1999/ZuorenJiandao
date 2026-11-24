@@ -154,3 +154,43 @@ console.log('window-scale.verify: responsive desktop bounds and renderer scaling
   assert.equal(parseUserUiScale('3'), DESKTOP_UI_SCALE_MAX, 'upper clamp');
   assert.equal(parseUserUiScale('0.2'), DESKTOP_UI_SCALE_MIN, 'lower clamp');
 }
+
+// ── Minimize / restore guard: ignore zero/iconic sizes and re-sync on restore ──
+{
+  const { applyResponsiveWindowScale, installResponsiveWindowScale } = await import('./window-scale');
+  let zoom = 0;
+  let contentSize: [number, number] = [1440, 900];
+  let minimized = false;
+  const listeners = new Map<string, () => void>();
+  const fakeWin = {
+    isDestroyed: () => false,
+    isMinimized: () => minimized,
+    getContentSize: () => contentSize,
+    getSize: () => contentSize,
+    setMinimumSize: () => undefined,
+    on: (event: string, fn: () => void) => { listeners.set(event, fn); },
+    webContents: {
+      isDestroyed: () => false,
+      getZoomFactor: () => zoom,
+      setZoomFactor: (next: number) => { zoom = next; },
+      on: () => undefined,
+    },
+  } as unknown as import('electron').BrowserWindow;
+  installResponsiveWindowScale(fakeWin);
+  applyResponsiveWindowScale(fakeWin);
+  const initialZoom = zoom;
+  assert.ok(initialZoom > 0, 'install/apply sets positive initial zoomFactor');
+  // Transient Windows minimized size must not drop zoomFactor to 2/3.
+  contentSize = [160, 28];
+  listeners.get('resize')?.();
+  assert.equal(zoom, initialZoom, 'iconic resize event must not shrink zoomFactor');
+  minimized = true;
+  contentSize = [0, 0];
+  applyResponsiveWindowScale(fakeWin);
+  assert.equal(zoom, initialZoom, 'minimized window must keep pre-minimize zoomFactor');
+  // Restoring brings back full size cleanly.
+  minimized = false;
+  contentSize = [1440, 900];
+  listeners.get('restore')?.();
+  assert.equal(zoom, initialZoom, 'restore re-syncs zoomFactor cleanly');
+}

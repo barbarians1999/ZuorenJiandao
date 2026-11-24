@@ -22,6 +22,7 @@ export interface TimelineProps {
   onSlipPreview?: (preview: SlipPreview | null) => void;
   /** Read-only frame under the pointer; never mutates the formal playhead. */
   onHoverPreviewFrameChange?: (frame: number | null) => void;
+  onScrubActiveChange?: (active: boolean) => void;
   selectedCaptions?: CaptionSelectionRef[];
   onSelectCaption?: (selection: CaptionSelectionRef | null, options?: CaptionSelectOptions) => void;
   onLiveCaptionPreview?: (preview: LiveCaptionPreviewInput | null) => void;

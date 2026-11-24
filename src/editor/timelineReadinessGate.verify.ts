@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { setImmediate } from 'node:timers/promises';
 import { loadTimelineFonts } from '../fonts/projectFonts';
 import { prepareTimelineReadiness } from './timelineReadiness';
 import type { TimelineState } from './types';
@@ -55,6 +56,19 @@ await prepareTimelineReadiness([sampleState], {
   prepareTemplates: async () => undefined,
 });
 assert.equal(observedPreviewOpts?.tolerateErrors, true);
+
+for (const isRendering of [false, true]) {
+  const fonts = Promise.withResolvers<void>();
+  const readiness = prepareTimelineReadiness([sampleState], {
+    isRendering,
+    loadFonts: () => fonts.promise,
+    prepareTemplates: async () => undefined,
+  });
+  const first = await Promise.race([readiness.then(() => 'ready'), setImmediate('waiting for fonts')]);
+  fonts.resolve();
+  await readiness;
+  assert.equal(first, isRendering ? 'waiting for fonts' : 'ready');
+}
 
 await assert.rejects(
   prepareTimelineReadiness([sampleState], {

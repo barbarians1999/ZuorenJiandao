@@ -29,6 +29,7 @@ export interface ExternalBridgeHydrationInput {
   readonly install: (hydrated: HydratedExternalSession) => void;
   readonly publish: (snapshot: { proposal: Proposal | null; stale: boolean }) => void;
   readonly applyAutomatic: (operationCount: number) => Promise<void>;
+  readonly autoApprove?: boolean;
 }
 
 async function markDraftStale(input: ExternalBridgeHydrationInput): Promise<void> {
@@ -126,7 +127,7 @@ export async function hydrateStoredExternalBridge(input: ExternalBridgeHydration
     input.publish({ proposal: null, stale: false });
     return;
   }
-  if (session.approvalMode === 'auto') {
+  if (session.approvalMode === 'auto' || input.autoApprove) {
     await input.applyAutomatic(session.proposal?.options[0].operations.length ?? 0);
     return;
   }

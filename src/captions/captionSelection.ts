@@ -154,6 +154,30 @@ export function selectableCaptionSelectionsAtPlayheadSide(
   });
 }
 
+/** Select every visible cue on one unlocked caption track before or after `referenceFrame`. */
+export function selectableCaptionSelectionsOnTrackSide(
+  state: TimelineState,
+  trackId: TrackId,
+  referenceFrame: number,
+  side: 'left' | 'right',
+): CaptionSelectionRef[] {
+  if (trackKind(state, trackId) !== 'caption' || state.tracks?.[trackId]?.locked) return [];
+  const frame = Math.max(0, Math.round(referenceFrame));
+  if (side === 'left' && frame <= 0) return [];
+  const captions = captionsOnTrack(state, trackId);
+  return captions
+    ? captionSelectionsInFrameRange(
+        trackId,
+        captions,
+        state.items,
+        state.fps,
+        side === 'left' ? 0 : frame,
+        side === 'left' ? frame : Number.MAX_SAFE_INTEGER,
+        'within',
+      )
+    : [];
+}
+
 /** Fallback caption inspector target when no clip or cue is explicitly selected. */
 export function resolveFirstCaptionSelection(state: TimelineState): SelectedCaptionInspector | null {
   for (const trackId of timelineTrackIds(state)) {

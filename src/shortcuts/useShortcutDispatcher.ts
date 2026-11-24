@@ -22,7 +22,8 @@ export function useShortcutDispatcher(
 
     const onKeyDown = (e: KeyboardEvent) => {
       const typing = isTypingTarget(e.target);
-      const isBracketKey = e.code === 'BracketLeft' || e.code === 'BracketRight' || e.key === '【' || e.key === '】';
+      const isBracketKey = e.code === 'BracketLeft' || e.code === 'BracketRight'
+        || e.key === '【' || e.key === '】' || e.key === '{' || e.key === '}';
       if (isShortcutImeComposing(e) && (typing || !isBracketKey)) return;
       const nk = normalizeKey(e.key);
       if (!['shift', 'control', 'alt', 'meta'].includes(nk)) held.add(nk);

@@ -6,7 +6,35 @@ import { SHORTCUT_CATALOG, type ShortcutAction } from './catalog';
 import { parseBindingAlts, normalizeKey, type ParsedChord } from './match';
 
 const LS_KEY = 'cc.keymap.v1';
+const LS_PRESET_KEY = 'cc.keymap.preset.v1';
+const LS_CUSTOM_BASE_KEY = 'cc.keymap.customBase.v1';
 type UserKeymap = Record<string, string>; // actionId → override binding string
+
+export type BuiltinShortcutPresetId = 'jianying' | 'premiere';
+export type ShortcutPresetId = BuiltinShortcutPresetId | 'custom';
+
+export const SHORTCUT_PRESETS: ReadonlyArray<{ id: ShortcutPresetId; label: string; summary: string }> = [
+  { id: 'jianying', label: '剪映', summary: 'A 选择 · B 刀片 · Ctrl+B 切分 · V 停用画面' },
+  { id: 'premiere', label: 'PR', summary: 'V 选择 · C 剃刀 · Ctrl+K 切分 · A/Shift+A 单轨全选' },
+  { id: 'custom', label: '自定义', summary: '基于当前方案微调，切换预设会保留你的自定义键位' },
+];
+
+const PREMIERE_PRESET_OVERRIDES: Readonly<Record<string, string>> = {
+  'interaction-mode-selection': 'V',
+  'interaction-mode-blade': 'C',
+  'split': 'Mod + K',
+  'interaction-mode-trim': 'B',
+  'interaction-mode-slip': 'Y',
+  'toggle-picture': 'Shift + E',
+  'select-track-after-playhead': 'A / Shift + ]',
+  'select-track-before-playhead': 'Shift + A / Shift + [',
+  'select-after': 'Alt + Y',
+  'zoom-in': '= / Mod + =',
+  'zoom-out': '- / Mod + -',
+  'zoom-fit': '\\ / Shift + Z',
+  'nudge-left': 'Alt + ←',
+  'nudge-right': 'Alt + →',
+};
 
 function readLS(): UserKeymap {
   try {
@@ -30,7 +58,33 @@ function writeLS(m: UserKeymap): void {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem(LS_KEY, JSON.stringify(m)); } catch { /* private mode / quota */ }
 }
 
+function readPresetLS(hasOverrides: boolean): ShortcutPresetId {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LS_PRESET_KEY) : null;
+    if (raw === 'jianying' || raw === 'premiere' || raw === 'custom') return raw;
+  } catch { /* private mode / quota */ }
+  return hasOverrides ? 'custom' : 'jianying';
+}
+
+function writePresetLS(preset: ShortcutPresetId): void {
+  try { if (typeof localStorage !== 'undefined') localStorage.setItem(LS_PRESET_KEY, preset); } catch { /* private mode / quota */ }
+}
+
+function readCustomBaseLS(): BuiltinShortcutPresetId {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LS_CUSTOM_BASE_KEY) : null;
+    if (raw === 'premiere' || raw === 'jianying') return raw;
+  } catch { /* private mode / quota */ }
+  return 'jianying';
+}
+
+function writeCustomBaseLS(base: BuiltinShortcutPresetId): void {
+  try { if (typeof localStorage !== 'undefined') localStorage.setItem(LS_CUSTOM_BASE_KEY, base); } catch { /* private mode / quota */ }
+}
+
 let userKeymap: UserKeymap = readLS();
+let activePreset: ShortcutPresetId = readPresetLS(Object.keys(userKeymap).length > 0);
+let customBase: BuiltinShortcutPresetId = readCustomBaseLS();
 let cache: ShortcutAction[] | null = null;
 const listeners = new Set<() => void>();
 
@@ -45,32 +99,73 @@ export function subscribeKeymap(fn: () => void): () => void {
   return () => { listeners.delete(fn); };
 }
 
-/** The catalog with user overrides applied (memoized until a binding changes). */
+export function getShortcutPreset(): ShortcutPresetId {
+  return activePreset;
+}
+
+export function getCustomPresetBase(): BuiltinShortcutPresetId {
+  return customBase;
+}
+
+export function setShortcutPreset(preset: ShortcutPresetId): void {
+  if (activePreset === preset) return;
+  if (preset === 'custom' && activePreset !== 'custom' && !Object.keys(userKeymap).length) {
+    customBase = activePreset;
+    writeCustomBaseLS(customBase);
+  }
+  activePreset = preset;
+  writePresetLS(activePreset);
+  invalidate();
+}
+
+export function presetCatalog(preset: BuiltinShortcutPresetId): ShortcutAction[] {
+  if (preset === 'jianying') return SHORTCUT_CATALOG;
+  return SHORTCUT_CATALOG.map((a) => (
+    a.id in PREMIERE_PRESET_OVERRIDES ? { ...a, keys: PREMIERE_PRESET_OVERRIDES[a.id]! } : a
+  ));
+}
+
+/** The catalog with active preset and user overrides applied (memoized until a binding changes). */
 export function effectiveCatalog(): ShortcutAction[] {
   if (!cache) {
-    cache = SHORTCUT_CATALOG.map((a) => (a.id in userKeymap ? { ...a, keys: userKeymap[a.id]! } : a));
+    if (activePreset === 'jianying') {
+      cache = SHORTCUT_CATALOG;
+    } else if (activePreset === 'premiere') {
+      cache = presetCatalog('premiere');
+    } else {
+      cache = presetCatalog(customBase).map((a) => (a.id in userKeymap ? { ...a, keys: userKeymap[a.id]! } : a));
+    }
   }
   return cache;
 }
 
 /** New default shortcuts must not shadow a user's existing explicit binding. */
 export function effectiveMatchingCatalog(): ShortcutAction[] {
+  if (activePreset !== 'custom') return [...effectiveCatalog()];
   return [...effectiveCatalog()].sort((a, b) => Number(b.id in userKeymap) - Number(a.id in userKeymap));
 }
 
-export function isCustomized(id: string): boolean { return id in userKeymap; }
-export function customizedCount(): number { return Object.keys(userKeymap).length; }
+export function isCustomized(id: string): boolean { return activePreset === 'custom' && id in userKeymap; }
+export function customizedCount(): number { return activePreset === 'custom' ? Object.keys(userKeymap).length : 0; }
 
 export function setBinding(id: string, keys: string): void {
   const trimmed = keys.trim();
   if (!trimmed) return;
-  userKeymap = { ...userKeymap, [id]: trimmed };
+  if (activePreset !== 'custom') {
+    userKeymap = customBase === activePreset ? { ...userKeymap, [id]: trimmed } : { [id]: trimmed };
+    customBase = activePreset;
+    activePreset = 'custom';
+    writePresetLS(activePreset);
+    writeCustomBaseLS(customBase);
+  } else {
+    userKeymap = { ...userKeymap, [id]: trimmed };
+  }
   writeLS(userKeymap);
   invalidate();
 }
 
 export function resetBinding(id: string): void {
-  if (!(id in userKeymap)) return;
+  if (activePreset !== 'custom' || !(id in userKeymap)) return;
   const next = { ...userKeymap };
   delete next[id];
   userKeymap = next;
@@ -79,9 +174,13 @@ export function resetBinding(id: string): void {
 }
 
 export function resetAllBindings(): void {
-  if (!Object.keys(userKeymap).length) return;
+  if (activePreset === 'jianying' && customBase === 'jianying' && !Object.keys(userKeymap).length) return;
   userKeymap = {};
+  activePreset = 'jianying';
+  customBase = 'jianying';
   writeLS(userKeymap);
+  writePresetLS(activePreset);
+  writeCustomBaseLS(customBase);
   invalidate();
 }
 
@@ -92,6 +191,10 @@ const DISPLAY: Record<string, string> = {
 
 function isMacPlatform(): boolean {
   return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+}
+
+export function formatShortcutKeys(keys: string): string {
+  return keys.replace(/\bMod\b/g, isMacPlatform() ? '⌘' : 'Ctrl');
 }
 
 /** Serialize a captured keydown → a canonical binding string ("Mod + Shift + Z"), or null

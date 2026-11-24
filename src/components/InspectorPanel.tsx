@@ -89,7 +89,7 @@ export function InspectorPanel(panel: InspectorPanelProps) {
         {!panel.collapsed && (panel.selectedCaption && panel.onCaptionUpdate
           ? <CaptionInspectorControls selection={panel.selectedCaption} onUpdate={panel.onCaptionUpdate} />
           : item ? <InspectorContent panel={panel} item={item} schema={schema} playheadLocal={playheadLocal} activeTab={activeTab} onTabChange={setActiveTab} />
-          : <div className="cc-insp-body"><div className="cc-insp-muted">{t('选中时间线片段或字幕后，可在此调整大小、描边、位置与形状。')}</div></div>)}
+          : <div className="cc-insp-body"><div className="cc-insp-muted">{t('选中片段或字幕后编辑属性')}</div></div>)}
       </section>
     </HistoryGestureProvider>
   );

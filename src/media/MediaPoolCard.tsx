@@ -14,6 +14,7 @@ import { usePreviewMediaSource } from './previewMedia';
 import { assetCanTranscribe } from '../transcript/transcribe-jobs';
 import type { MediaPlacementPurpose } from './placementPurpose';
 import type { MediaSourceRanges } from '../editor/mediaSourceRange';
+import { isPreviewableSourceAsset } from '../components/preview/sourceAssetPreviewState';
 
 interface MediaAssetCardProps {
   asset: MediaAsset;
@@ -36,6 +37,7 @@ interface MediaAssetCardProps {
   onLoadError: (id: string) => void;
   onLoadSuccess: (id: string) => void;
   onOpenMenu: (id: string, anchor: HTMLElement, point?: { x: number; y: number }) => void;
+  onPreview?: (asset: MediaAsset | null) => void;
   onRelink: (id: string) => void;
   onToggleSelected: (id: string) => void;
   onSetSelected: (ids: string[]) => void;
@@ -139,6 +141,7 @@ function previewable(asset: MediaAsset): boolean {
 
 export const MediaAssetCard = memo(function MediaAssetCard(props: MediaAssetCardProps) {
   const { asset, missing, onFocusChange, onPointerChange, view } = props;
+  const draggedRef = useRef(false);
   return (
     <div
       data-cc-media-asset-id={asset.id}
@@ -146,32 +149,39 @@ export const MediaAssetCard = memo(function MediaAssetCard(props: MediaAssetCard
       draggable={!missing}
       onDragStart={(event) => {
         if (missing) return;
+        draggedRef.current = true;
         props.onDragChange(asset.id);
         setMediaAssetDrag(event, asset, props.selected ? props.selectedAssetIds : [asset.id], props.dragPurpose, props.sourceRanges);
       }}
-      onDragEnd={() => props.onDragChange(null)}
+      onDragEnd={() => {
+        props.onDragChange(null);
+        window.setTimeout(() => { draggedRef.current = false; }, 0);
+      }}
       onClickCapture={(event) => {
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest('[data-music-analysis-control], .cc-asset-favorite, .cc-asset-more, .cc-asset-transcribe, .cc-asset-transcribe-status, .cc-asset-source-range, .cc-asset-add-btn')) return;
-        // Plain click selects and opens the asset menu beside the card;
-        // Ctrl/Shift/meta toggles extra items. Clicking the selected card
-        // again deselects it. Double-click adds to the timeline.
-        if (missing) return;
+        // Plain click selects and opens center source preview (without dragging);
+        // Ctrl/Shift/meta toggles multi-selection. Double-click adds to the timeline.
+        if (missing || draggedRef.current) return;
         event.preventDefault();
         event.stopPropagation();
         if (event.metaKey || event.ctrlKey || event.shiftKey) {
           props.onToggleSelected(asset.id);
           return;
         }
-        if (props.selected) {
-          props.onToggleSelected(asset.id);
-          props.onOpenMenu(asset.id, event.currentTarget as HTMLElement);
-        } else {
-          props.onSetSelected([asset.id]);
-          props.onOpenMenu(asset.id, event.currentTarget as HTMLElement);
+        props.onSetSelected([asset.id]);
+        if (props.onPreview) {
+          props.onPreview(isPreviewableSourceAsset(asset) ? asset : null);
+          return;
+        }
+        props.onOpenMenu(asset.id, event.currentTarget as HTMLElement);
+      }}
+      onDoubleClick={() => {
+        if (!missing && isTimelineMediaAssetKind(asset.kind)) {
+          props.onPreview?.(null);
+          props.onAdd(asset);
         }
       }}
-      onDoubleClick={() => { if (!missing && isTimelineMediaAssetKind(asset.kind)) props.onAdd(asset); }}
       onContextMenu={(event) => {
         if (event.target instanceof Element && event.target.closest('[data-music-analysis-control]')) return;
         event.preventDefault();
@@ -213,8 +223,8 @@ function AssetThumbArea(props: MediaAssetCardProps) {
         title={missing
           ? t('点击重新链接')
           : t(isTimelineMediaAssetKind(asset.kind)
-            ? '单击选中，双击加入时间线，或拖到指定轨道：{name}'
-            : '单击选中，或拖到时间线：{name}', { name: asset.name })}
+            ? '单击预览，双击加入时间线，或拖到指定轨道：{name}'
+            : '单击预览，或拖到时间线：{name}', { name: asset.name })}
         style={missing ? undefined : { cursor: 'grab' }}
         onClick={() => { if (missing && props.canRelink) props.onRelink(asset.id); }}
       >
@@ -277,7 +287,7 @@ function AssetBadges(props: MediaAssetCardProps) {
     <>
       {asset.kind === 'audio' && <span className="cc-asset-audio-mark"><Icon name="volume" size={13} strokeWidth={1.4} /></span>}
       {(asset.kind === 'gif' || asset.kind === 'svg') && <span className="cc-asset-audio-mark cc-asset-kind-mark">{asset.kind.toUpperCase()}</span>}
-      {props.used && <span className="cc-asset-used-dot" title={t('正在时间线中使用')} aria-label={t('正在时间线中使用')} />}
+      {props.used && <span className="cc-asset-used-dot" title={t('已在轨道上')} aria-label={t('已在轨道上')} />}
       {aspectLabel && <span className="cc-asset-ratio">{aspectLabel}</span>}
       {isTimelineMediaAssetKind(asset.kind) && <span className="cc-asset-duration">{durationLabel(asset.durationInFrames, props.fps)}</span>}
       <button

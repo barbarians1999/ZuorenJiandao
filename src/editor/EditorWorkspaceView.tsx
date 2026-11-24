@@ -114,9 +114,10 @@ function renderLibrary(props: EditorWorkspaceViewProps, rightPanel: ReturnType<t
   );
 }
 
-function renderPreview(props: EditorWorkspaceViewProps, rightPanel: ReturnType<typeof useRightPanelRouting>) {
+function renderPreview(props: EditorWorkspaceViewProps, rightPanel: ReturnType<typeof useRightPanelRouting>, timelineScrubbing: boolean) {
   const previewProps: ComponentProps<typeof PreviewPanel> = {
     ...props.previewPanel,
+    timelineScrubbing,
     onSelectCaption: props.previewPanel.onSelectCaption
       ? (selection) => {
           props.previewPanel.onSelectCaption?.(selection);
@@ -140,11 +141,21 @@ function renderPreview(props: EditorWorkspaceViewProps, rightPanel: ReturnType<t
   );
 }
 
-function renderTimeline(props: EditorWorkspaceViewProps, rightPanel: ReturnType<typeof useRightPanelRouting>) {
+function renderTimeline(props: EditorWorkspaceViewProps, rightPanel: ReturnType<typeof useRightPanelRouting>, onScrubActiveChange: (active: boolean) => void) {
   const openCaptions = () => { rightPanel.setPage('字幕'); rightPanel.setMode('text'); };
   return (
-    <div className="cc-editor-timeline-column" style={{ gridColumn: '1 / -1', gridRow: 4, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-      <Timeline {...props.timeline} headerLeading={<TimelineTabs {...props.timelineTabs} />} onSelectCaption={(selection, options) => {
+    <div
+      className="cc-editor-timeline-column"
+      style={{ gridColumn: '1 / -1', gridRow: 4, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}
+      onPointerDownCapture={() => {
+        if (props.previewPanel.previewAsset) props.previewPanel.onClosePreviewAsset?.();
+      }}
+    >
+      <Timeline {...props.timeline} onScrubActiveChange={(active) => {
+        if (active && props.previewPanel.previewAsset) props.previewPanel.onClosePreviewAsset?.();
+        onScrubActiveChange(active);
+      }}
+        headerLeading={<TimelineTabs {...props.timelineTabs} />} onSelectCaption={(selection, options) => {
         props.timeline.onSelectCaption?.(selection, options);
         if (selection) openCaptions();
       }} onMarqueeCaptionSelect={(selections, options) => {
@@ -158,6 +169,7 @@ function renderTimeline(props: EditorWorkspaceViewProps, rightPanel: ReturnType<
 export function EditorWorkspaceView(props: EditorWorkspaceViewProps) {
   useWorkspaceDialogPrefetch();
   const rightPanel = useRightPanelRouting(props);
+  const [timelineScrubbing, setTimelineScrubbing] = useState(false);
   const content = (
     <div
       className="cc-editor-shell"
@@ -186,11 +198,11 @@ export function EditorWorkspaceView(props: EditorWorkspaceViewProps) {
       <div style={{ gridColumn: 2, gridRow: 2 }}>
         <Divider ariaValue={props.librarySize} ariaValueLabel="媒体库宽度" onResize={props.onResizeLibrary} onResizeStart={props.onResizeLibraryStart} onResizeCancel={props.onResizeLibraryCancel} onReset={props.onResetLibrarySize} />
       </div>
-      {renderPreview(props, rightPanel)}
+      {renderPreview(props, rightPanel, timelineScrubbing)}
       <div style={{ gridColumn: '1 / -1', gridRow: 3 }}>
         <Divider orientation="horizontal" ariaValue={props.timelineSize} ariaValueLabel="时间线高度" onResize={props.onResizeTimeline} onResizeStart={props.onResizeTimelineStart} onResizeCancel={props.onResizeTimelineCancel} onReset={props.onResetTimelineSize} />
       </div>
-      {renderTimeline(props, rightPanel)}
+      {renderTimeline(props, rightPanel, setTimelineScrubbing)}
       <AppToastHost />
     </div>
   );

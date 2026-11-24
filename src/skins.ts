@@ -1,5 +1,8 @@
-// Skinning engine: design tokens live here and are injected before the app renders.
-// The persistent cc.skin value is validated against the registry so stale IDs safely migrate.
+// Skinning engine: design-language tokens and family metadata live here and are injected before first paint.
+// Persistent cc.skin values are validated and migrated so removed legacy IDs resolve cleanly.
+
+export type SkinFamilyId = 'liquid-glass' | 'constructivism' | 'material' | 'minimalism';
+export type SkinMode = 'dark' | 'light';
 
 export interface SkinTokens {
   bg: string;
@@ -39,83 +42,154 @@ export interface SkinTokens {
   clipText: string;
 }
 
+export interface SkinFamilyDef {
+  id: SkinFamilyId;
+  nameZh: string;
+  taglineZh: string;
+}
+
 export interface SkinDef {
   id: string;
+  family: SkinFamilyId;
+  mode: SkinMode;
   nameZh: string;
+  taglineZh: string;
   tokens: SkinTokens;
 }
 
-// Timeline media colors stay balanced for darkroom and editorial clarity.
-const MEDIA_COLORS = {
-  trackVideo: '#35699e', trackAudioA1: '#d48b3b', trackAudioA2: '#429972', trackCaption: '#8b47a6',
-  clipVideo: '#256c85', clipAudio: '#2b6b50', clipMg: '#a8466f', clipText: '#825711',
-} as const;
+export const SKIN_FAMILIES: readonly SkinFamilyDef[] = [
+  { id: 'liquid-glass', nameZh: '液态玻璃', taglineZh: '克制石墨/银白工作台 · 悬浮通透胶囊' },
+  { id: 'constructivism', nameZh: '构成主义', taglineZh: '零圆角几何平面 · 朱红秩序标尺' },
+  { id: 'material', nameZh: 'Material', taglineZh: '鼠尾草色阶层级 · 圆润胶囊与竖杠滑块' },
+  { id: 'minimalism', nameZh: '极简主义', taglineZh: '哑光低噪画布 · 极细分隔与博朗橙点' },
+];
 
-const CONSTRUCTIVIST: SkinTokens = {
-  bg: '#f4f1e8', inset: '#ece8dd', panel: '#fffdf8', panelAlt: '#f7f3e8', hover: '#eee9dc',
-  border: '#c9c1b0', borderLight: '#9b927f',
-  text: '#28241d', textMuted: '#4d463a', textDim: '#666052', textStrong: '#17140f',
-  headingBg: '#b92c2b', headingInk: '#fffaf2', headingEdge: '#e2b52c',
-  accent: '#e2b52c', accentDeep: '#be951d', accentRgb: '226,181,44', onAccent: '#191300',
-  inkRgb: '25,19,0', shadowRgb: '54,45,26', colorScheme: 'light',
-  gold: '#c39925', select: '#d5a900', success: '#277844', danger: '#c82020',
-  tlTrack: '#f2eddf', tlSidePanel: '#f8f4e8', ...MEDIA_COLORS,
+const LIQUID_GLASS_DARK: SkinTokens = {
+  bg: '#101114', inset: '#141519', panel: '#191a1e', panelAlt: '#24262c', hover: '#2e3139',
+  border: '#2c2e36', borderLight: '#3c3f4a',
+  text: '#f2f2f7', textMuted: '#b8b8be', textDim: '#929299', textStrong: '#ffffff',
+  headingBg: '#006be6', headingInk: '#ffffff', headingEdge: '#5cb0ff',
+  accent: '#3b9eff', accentDeep: '#006be6', accentRgb: '59,158,255', onAccent: '#071426',
+  inkRgb: '242,242,247', shadowRgb: '0,0,0', colorScheme: 'dark',
+  gold: '#e6b84c', select: '#3b9eff', success: '#30d158', danger: '#ff453a',
+  tlTrack: '#141518', tlSidePanel: '#191a1e',
+  trackVideo: '#5ac8fa', trackAudioA1: '#30d158', trackAudioA2: '#64d2ff', trackCaption: '#bf5af2',
+  clipVideo: '#2a4c6b', clipAudio: '#245746', clipMg: '#6e3a50', clipText: '#563f73',
 };
 
-const GRAPHITE_CHAMPAGNE: SkinTokens = {
-  bg: '#111214', inset: '#16171b', panel: '#1a1b1f', panelAlt: '#23252b', hover: '#2c2f37',
-  border: '#272930', borderLight: '#363943',
-  text: '#efeff2', textMuted: '#b5b8c2', textDim: '#8e929e', textStrong: '#ffffff',
-  headingBg: '#e2b659', headingInk: '#181306', headingEdge: '#f2ce78',
-  accent: '#e2b659', accentDeep: '#c89838', accentRgb: '226,182,89', onAccent: '#181306',
-  inkRgb: '239,239,242', shadowRgb: '0,0,0', colorScheme: 'dark',
-  gold: '#e2b659', select: '#e2b659', success: '#4fbe84', danger: '#e85d56',
-  tlTrack: '#151619', tlSidePanel: '#191a1e', ...MEDIA_COLORS,
+const LIQUID_GLASS_LIGHT: SkinTokens = {
+  bg: '#e8ecf0', inset: '#eff1f5', panel: '#ffffff', panelAlt: '#f2f4f7', hover: '#e6e9ef',
+  border: '#dcdfe5', borderLight: '#c4c9d2',
+  text: '#1d1d1f', textMuted: '#515154', textDim: '#68686d', textStrong: '#000000',
+  headingBg: '#006be6', headingInk: '#ffffff', headingEdge: '#4da3ff',
+  accent: '#006be6', accentDeep: '#0055bd', accentRgb: '0,107,230', onAccent: '#ffffff',
+  inkRgb: '29,29,31', shadowRgb: '15,23,36', colorScheme: 'light',
+  gold: '#b88214', select: '#006be6', success: '#248a3d', danger: '#d70015',
+  tlTrack: '#f5f6f8', tlSidePanel: '#ffffff',
+  trackVideo: '#35699e', trackAudioA1: '#248a3d', trackAudioA2: '#0b7ea8', trackCaption: '#7e48a6',
+  clipVideo: '#3b6a94', clipAudio: '#2e755c', clipMg: '#8c4b65', clipText: '#684e8a',
 };
 
-const TEAL_OBSIDIAN: SkinTokens = {
-  bg: '#111214', inset: '#16171b', panel: '#1a1b1f', panelAlt: '#23252b', hover: '#2c2f37',
-  border: '#272930', borderLight: '#363943',
-  text: '#efeff2', textMuted: '#b5b8c2', textDim: '#8e929e', textStrong: '#ffffff',
-  headingBg: '#00c8d7', headingInk: '#061619', headingEdge: '#54e4ef',
-  accent: '#00c8d7', accentDeep: '#00a3b3', accentRgb: '0,200,215', onAccent: '#061619',
-  inkRgb: '239,239,242', shadowRgb: '0,0,0', colorScheme: 'dark',
-  gold: '#e2b659', select: '#00c8d7', success: '#4fbe84', danger: '#e85d56',
-  tlTrack: '#151619', tlSidePanel: '#191a1e', ...MEDIA_COLORS,
+const CONSTRUCTIVISM_DARK: SkinTokens = {
+  bg: '#080807', inset: '#10100e', panel: '#161614', panelAlt: '#21201c', hover: '#2c2b25',
+  border: '#3e3b33', borderLight: '#6a6558',
+  text: '#f2ece0', textMuted: '#cfc8b8', textDim: '#a19988', textStrong: '#ffffff',
+  headingBg: '#c8281c', headingInk: '#ffffff', headingEdge: '#e04235',
+  accent: '#df3426', accentDeep: '#b82217', accentRgb: '223,52,38', onAccent: '#ffffff',
+  inkRgb: '242,236,224', shadowRgb: '0,0,0', colorScheme: 'dark',
+  gold: '#d49a2a', select: '#df3426', success: '#3c9673', danger: '#e84133',
+  tlTrack: '#121210', tlSidePanel: '#181815',
+  trackVideo: '#35699e', trackAudioA1: '#c88d22', trackAudioA2: '#35856a', trackCaption: '#df3426',
+  clipVideo: '#204664', clipAudio: '#245745', clipMg: '#a67012', clipText: '#b8251a',
 };
 
-const OBSIDIAN_BLUE: SkinTokens = {
-  bg: '#0f1218', inset: '#141821', panel: '#181d27', panelAlt: '#212734', hover: '#2a3242',
-  border: '#252c3b', borderLight: '#353e52',
-  text: '#eef2f9', textMuted: '#b3bdd0', textDim: '#8b96ab', textStrong: '#ffffff',
-  headingBg: '#63a4ff', headingInk: '#081224', headingEdge: '#96c2ff',
-  accent: '#63a4ff', accentDeep: '#4283e0', accentRgb: '99,164,255', onAccent: '#081224',
-  inkRgb: '238,242,249', shadowRgb: '0,0,0', colorScheme: 'dark',
-  gold: '#e2b659', select: '#63a4ff', success: '#4fbe84', danger: '#e85d56',
-  tlTrack: '#131720', tlSidePanel: '#171b25', ...MEDIA_COLORS,
+const CONSTRUCTIVISM_LIGHT: SkinTokens = {
+  bg: '#e5dcc8', inset: '#ece4d2', panel: '#f5efe1', panelAlt: '#e9e0ce', hover: '#dfd3bc',
+  border: '#141412', borderLight: '#3a3730',
+  text: '#141412', textMuted: '#3a3730', textDim: '#524d43', textStrong: '#0a0a08',
+  headingBg: '#c8281c', headingInk: '#ffffff', headingEdge: '#141412',
+  accent: '#c8281c', accentDeep: '#a11e14', accentRgb: '200,40,28', onAccent: '#ffffff',
+  inkRgb: '20,20,18', shadowRgb: '10,10,8', colorScheme: 'light',
+  gold: '#a67012', select: '#c8281c', success: '#22664d', danger: '#c8281c',
+  tlTrack: '#efe8d8', tlSidePanel: '#e8dfcc',
+  trackVideo: '#204664', trackAudioA1: '#a67012', trackAudioA2: '#245745', trackCaption: '#c8281c',
+  clipVideo: '#204664', clipAudio: '#245745', clipMg: '#a67012', clipText: '#b8251a',
 };
 
-const AURORA_PURPLE: SkinTokens = {
-  bg: '#121018', inset: '#16141f', panel: '#1b1825', panelAlt: '#252132', hover: '#302b40',
-  border: '#2b2638', borderLight: '#3b354d',
-  text: '#f1eef8', textMuted: '#bcb6cf', textDim: '#968fad', textStrong: '#ffffff',
-  headingBg: '#b494ff', headingInk: '#130b26', headingEdge: '#d2beff',
-  accent: '#b494ff', accentDeep: '#936ee8', accentRgb: '180,148,255', onAccent: '#130b26',
-  inkRgb: '241,238,248', shadowRgb: '0,0,0', colorScheme: 'dark',
-  gold: '#e2b659', select: '#b494ff', success: '#4fbe84', danger: '#e85d56',
-  tlTrack: '#15131d', tlSidePanel: '#191723', ...MEDIA_COLORS,
+const MATERIAL_DARK: SkinTokens = {
+  bg: '#101412', inset: '#141a17', panel: '#19201c', panelAlt: '#232b26', hover: '#2c3731',
+  border: '#2a352f', borderLight: '#3e4d44',
+  text: '#e2eae4', textMuted: '#b6c5bb', textDim: '#92a69a', textStrong: '#f4faf6',
+  headingBg: '#7fd1b2', headingInk: '#003828', headingEdge: '#c7e8d6',
+  accent: '#7fd1b2', accentDeep: '#5ab896', accentRgb: '127,209,178', onAccent: '#003828',
+  inkRgb: '226,234,228', shadowRgb: '0,0,0', colorScheme: 'dark',
+  gold: '#e0b46a', select: '#7fd1b2', success: '#7fd1b2', danger: '#ff897d',
+  tlTrack: '#141a17', tlSidePanel: '#19201c',
+  trackVideo: '#5a9ec9', trackAudioA1: '#7fd1b2', trackAudioA2: '#d49a6a', trackCaption: '#b58ecc',
+  clipVideo: '#244f67', clipAudio: '#1b5440', clipMg: '#6f3a2c', clipText: '#563869',
+};
+
+const MATERIAL_LIGHT: SkinTokens = {
+  bg: '#eaefe9', inset: '#e2eae3', panel: '#ffffff', panelAlt: '#edf3ee', hover: '#dde8df',
+  border: '#d4dfd6', borderLight: '#b8c7ba',
+  text: '#1a241e', textMuted: '#45564c', textDim: '#56685d', textStrong: '#0d1611',
+  headingBg: '#196b52', headingInk: '#ffffff', headingEdge: '#c7e8d6',
+  accent: '#196b52', accentDeep: '#12523e', accentRgb: '25,107,82', onAccent: '#ffffff',
+  inkRgb: '26,36,30', shadowRgb: '14,34,22', colorScheme: 'light',
+  gold: '#8a5300', select: '#196b52', success: '#196b52', danger: '#ba1a1a',
+  tlTrack: '#f2f6f2', tlSidePanel: '#f8fbf8',
+  trackVideo: '#2a628f', trackAudioA1: '#196b52', trackAudioA2: '#8a5300', trackCaption: '#76448a',
+  clipVideo: '#2c5e7a', clipAudio: '#1d6b52', clipMg: '#8b4a39', clipText: '#6b4480',
+};
+
+const MINIMALISM_DARK: SkinTokens = {
+  bg: '#0e0e0d', inset: '#1a1a18', panel: '#151514', panelAlt: '#1e1e1b', hover: '#272723',
+  border: '#2a2a26', borderLight: '#3d3d37',
+  text: '#ecece7', textMuted: '#b6b6ae', textDim: '#8e8e86', textStrong: '#ffffff',
+  headingBg: '#ecece7', headingInk: '#141413', headingEdge: '#f25c22',
+  accent: '#f25c22', accentDeep: '#d44812', accentRgb: '242,92,34', onAccent: '#141413',
+  inkRgb: '236,236,231', shadowRgb: '0,0,0', colorScheme: 'dark',
+  gold: '#f25c22', select: '#f25c22', success: '#4ca673', danger: '#f25c22',
+  tlTrack: '#121211', tlSidePanel: '#151514',
+  trackVideo: '#7b8794', trackAudioA1: '#658a76', trackAudioA2: '#8f8470', trackCaption: '#9b7b8c',
+  clipVideo: '#2f353d', clipAudio: '#293830', clipMg: '#42352f', clipText: '#3a3340',
+};
+
+const MINIMALISM_LIGHT: SkinTokens = {
+  bg: '#f1f1ec', inset: '#e9e9e3', panel: '#fafafa', panelAlt: '#f1f1ec', hover: '#e5e5de',
+  border: '#dcdcd4', borderLight: '#c4c4bc',
+  text: '#181816', textMuted: '#4e4e4a', textDim: '#686862', textStrong: '#0d0d0c',
+  headingBg: '#181816', headingInk: '#fafafa', headingEdge: '#d9480f',
+  accent: '#d9480f', accentDeep: '#b83a09', accentRgb: '217,72,15', onAccent: '#ffffff',
+  inkRgb: '24,24,22', shadowRgb: '20,20,18', colorScheme: 'light',
+  gold: '#c24614', select: '#d9480f', success: '#2c8a56', danger: '#d9480f',
+  tlTrack: '#f5f5f1', tlSidePanel: '#fafafa',
+  trackVideo: '#5a6470', trackAudioA1: '#4e6b5c', trackAudioA2: '#7a6c55', trackCaption: '#7d5868',
+  clipVideo: '#525c68', clipAudio: '#486355', clipMg: '#755c52', clipText: '#665870',
 };
 
 export const SKINS: readonly SkinDef[] = [
-  { id: 'graphite-champagne', nameZh: '石墨香槟金', tokens: GRAPHITE_CHAMPAGNE },
-  { id: 'teal-obsidian', nameZh: '青绿暗夜', tokens: TEAL_OBSIDIAN },
-  { id: 'obsidian-blue', nameZh: '曜石深蓝', tokens: OBSIDIAN_BLUE },
-  { id: 'aurora-purple', nameZh: '极光紫韵', tokens: AURORA_PURPLE },
-  { id: 'constructivist', nameZh: '构成主义日间', tokens: CONSTRUCTIVIST },
+  { id: 'liquid-glass-dark', family: 'liquid-glass', mode: 'dark', nameZh: '液态玻璃 · 夜间', taglineZh: '深石墨工作台 · 悬浮折射玻璃胶囊', tokens: LIQUID_GLASS_DARK },
+  { id: 'liquid-glass-light', family: 'liquid-glass', mode: 'light', nameZh: '液态玻璃 · 日间', taglineZh: '银白工作台 · 通透微光胶囊', tokens: LIQUID_GLASS_LIGHT },
+  { id: 'constructivism-dark', family: 'constructivism', mode: 'dark', nameZh: '构成主义 · 夜间', taglineZh: '玄黑红棱暗房 · 零圆角几何平面', tokens: CONSTRUCTIVISM_DARK },
+  { id: 'constructivism-light', family: 'constructivism', mode: 'light', nameZh: '构成主义 · 日间', taglineZh: '米白纸张 · 朱红秩序标尺', tokens: CONSTRUCTIVISM_LIGHT },
+  { id: 'material-dark', family: 'material', mode: 'dark', nameZh: 'Material · 夜间', taglineZh: '深林鼠尾草色阶 · 圆润胶囊推子', tokens: MATERIAL_DARK },
+  { id: 'material-light', family: 'material', mode: 'light', nameZh: 'Material · 日间', taglineZh: '鼠尾草浅绿阶梯 · 竖杠表现滑块', tokens: MATERIAL_LIGHT },
+  { id: 'minimalism-dark', family: 'minimalism', mode: 'dark', nameZh: '极简主义 · 夜间', taglineZh: '博朗哑光黑铝 · 细线分隔橙点', tokens: MINIMALISM_DARK },
+  { id: 'minimalism-light', family: 'minimalism', mode: 'light', nameZh: '极简主义 · 日间', taglineZh: '哑光白画布 · 瑞士极细线条秩序', tokens: MINIMALISM_LIGHT },
 ];
 
 const STORAGE_KEY = 'cc.skin';
-export const DEFAULT_SKIN = 'graphite-champagne';
+export const DEFAULT_SKIN = 'liquid-glass-dark';
+
+const LEGACY_MIGRATION: Record<string, string> = {
+  'constructivist': 'constructivism-light',
+  'constructivist-night': DEFAULT_SKIN,
+  'graphite-champagne': DEFAULT_SKIN,
+  'teal-obsidian': DEFAULT_SKIN,
+  'obsidian-blue': DEFAULT_SKIN,
+  'aurora-purple': DEFAULT_SKIN,
+};
 
 const kebab = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
@@ -125,8 +199,23 @@ function skinBlock(tokens: SkinTokens): string {
     .join('\n');
 }
 
+export function resolveSkinId(id: string | null | undefined): string {
+  if (!id) return DEFAULT_SKIN;
+  if (SKINS.some((s) => s.id === id)) return id;
+  return LEGACY_MIGRATION[id] ?? DEFAULT_SKIN;
+}
+
+export function getSkinDef(id?: string): SkinDef {
+  const resolved = resolveSkinId(id ?? getSkin());
+  return SKINS.find((s) => s.id === resolved) ?? SKINS[0]!;
+}
+
+export function findSkinByFamilyAndMode(family: SkinFamilyId, mode: SkinMode): SkinDef {
+  return SKINS.find((s) => s.family === family && s.mode === mode) ?? SKINS[0]!;
+}
+
 export function buildSkinsCss(): string {
-  const base = SKINS.find((s) => s.id === DEFAULT_SKIN) ?? SKINS[0];
+  const base = SKINS.find((s) => s.id === DEFAULT_SKIN) ?? SKINS[0]!;
   const overrides = SKINS.filter((s) => s.id !== base.id)
     .map((s) => `html[data-cc-skin='${s.id}'] {\n${skinBlock(s.tokens)}\n}`)
     .join('\n');
@@ -137,15 +226,17 @@ export function buildSkinsCss(): string {
 export function getSkin(): string {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved && SKINS.some((s) => s.id === saved)) return saved;
+    return resolveSkinId(saved);
   } catch { /* Storage may be unavailable. */ }
   return DEFAULT_SKIN;
 }
 
 export function applySkin(id: string): void {
-  const skin = SKINS.some((s) => s.id === id) ? id : DEFAULT_SKIN;
+  const skin = resolveSkinId(id);
+  const def = getSkinDef(skin);
   if (skin === DEFAULT_SKIN) delete document.documentElement.dataset.ccSkin;
   else document.documentElement.dataset.ccSkin = skin;
+  document.documentElement.dataset.ccSkinFamily = def.family;
   try { localStorage.setItem(STORAGE_KEY, skin); } catch { /* Storage may be unavailable. */ }
 }
 

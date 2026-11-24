@@ -18,6 +18,7 @@ import type {
   ExportJobSnapshot,
   ExportPhase,
   ExportProgress,
+  ExportRenderDiagnostics,
   RenderEngine,
   StateSetter,
   Translate,
@@ -34,6 +35,7 @@ export interface ServerExportContext {
   endTargetCommit(): void;
   markTargetCommitted(): void;
   setBusy: StateSetter<string | null>;
+  setDiagnostics?: StateSetter<ExportRenderDiagnostics | null>;
   setEngineInfo: StateSetter<ExportEngineInfo | null>;
   setEngineReason: StateSetter<string | null>;
   setProgress: StateSetter<ExportProgress | null>;

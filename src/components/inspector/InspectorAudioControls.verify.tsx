@@ -39,7 +39,8 @@ assert.match(normal, /统一响度/);
 assert.match(normal, /声音淡入淡出/);
 assert.match(normal, /人声与配乐/);
 assert.match(normal, /口播轨道/);
-assert.match(normal, /作用于这个轨道的所有片段，不修改源文件/);
+assert.match(normal, /整轨音量/);
+assert.doesNotMatch(normal, /作用于这个轨道的所有片段/);
 assert.match(normal, /更多音频处理/);
 assert.doesNotMatch(normal, /自动闪避|响度归一/);
 

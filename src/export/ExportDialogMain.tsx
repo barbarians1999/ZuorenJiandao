@@ -1,5 +1,8 @@
+import { useMemo } from 'react';
 import type { TimelineState } from '../editor/types';
 import { useT } from '../i18n/locale';
+import { formatDeclineReason, formatExportDiagnostics } from './exportDiagnostics';
+import { analyzeExportRoutePreflight } from './exportPreflight';
 import { ExportDestinationBar } from './ExportDestinationBar';
 import { ExportFooter, formatProgressPercent } from './ExportDialogFooter';
 import { ExportTabContent } from './ExportDialogTabs';
@@ -118,13 +121,58 @@ function StructuredExportFailure({ model }: { model: ExportDialogModel }) {
   );
 }
 
+function ExportRoutePreflightNotice({ state, model }: { state: TimelineState; model: ExportDialogModel }) {
+  const t = useT();
+  const preflight = useMemo(
+    () => (model.tab === 'video' ? analyzeExportRoutePreflight(state, model.video.codec, model.video.fps) : null),
+    [state, model.tab, model.video.codec, model.video.fps],
+  );
+  if (!preflight || model.workflow.progress?.phase === 'completed') return null;
+  const reasonText = preflight.reasons.map((r) => formatDeclineReason(r, t)).filter(Boolean).join('、');
+  const message = preflight.mode === 'fast'
+    ? t('导出预检：将走极速硬件导出（常规剪辑与静态效果全速合成）')
+    : preflight.mode === 'segmented'
+      ? t('导出预检：将走分段混合导出（绝大部分极速硬编，仅约 {sec} 秒走精细渲染{reasons}）', {
+        sec: preflight.compatSeconds,
+        reasons: reasonText ? `：${reasonText}` : '',
+      })
+      : t('导出预检：将走完整逐帧渲染{reasons}', { reasons: reasonText ? `（${reasonText}）` : '' });
+  return (
+    <div className="cc-export-footnote" role="status">
+      <div>{message}</div>
+      {preflight.animatedCaptionWarning && (
+        <div>{t('提示：当前开启了逐字动态字幕，较长视频需要绘制较多文字透明层，导出时间会适当增加。')}</div>
+      )}
+    </div>
+  );
+}
+
+function ExportDiagnosticsSummary({ model }: { model: ExportDialogModel }) {
+  const t = useT();
+  const formatted = model.workflow.progress?.phase === 'completed'
+    ? formatExportDiagnostics(model.workflow.diagnostics, model.workflow.engineInfo, t)
+    : null;
+  if (!formatted) return null;
+  return (
+    <div className="cc-export-footnote" role="status">
+      <div>{formatted.summary}</div>
+      {formatted.details.length > 0 && (
+        <details>
+          <summary>{t('耗时明细')}</summary>
+          <div>{formatted.details.join(' · ')}</div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export function ExportDialogMain({ state, model }: { state: TimelineState; model: ExportDialogModel }) {
   const { workflow } = model;
   const t = useT();
   const settingsLocked = !!workflow.busy || workflow.progress?.phase === 'completed';
   const settingsLockMessage = workflow.busy
-    ? t('导出进行中，设置已锁定。')
-    : t('本次导出已完成；关闭窗口后可调整下一次导出设置。');
+    ? t('导出中，参数已锁定')
+    : t('本次导出已完成');
   return (
     <main className="cc-export-main">
       <ExportMainHeader model={model} />
@@ -141,6 +189,8 @@ export function ExportDialogMain({ state, model }: { state: TimelineState; model
             setIncludeMg={model.setIncludeMg} mgCount={model.mgItems.length} base={model.base}
           />
         </fieldset>
+        <ExportRoutePreflightNotice state={state} model={model} />
+        <ExportDiagnosticsSummary model={model} />
         <StructuredExportFailure model={model} />
       </div>
       <BackgroundExportJobs model={model} />

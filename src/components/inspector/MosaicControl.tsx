@@ -30,7 +30,6 @@ export function MosaicControl({ item, localFrame, fit, canvasWidth, canvasHeight
         {t({ none: '无', local: '局部打码', full: '全屏打码' }[value])}
       </button>)}
     </div>
-    <p className="cc-region-note">{t('高斯模糊用于柔化和遮挡画面内容；不影响声音。请确认敏感内容已看不清。')}</p>
     {legacyCount > 0 && <p className="cc-region-note">{t('旧版像素格效果仍保留，不会自动改成模糊。选择“无”将清除所有打码效果。')}</p>}
     {mode !== 'none' && <>
       {count > 1 && <p className="cc-region-note">{t('已有 {n} 处打码；本面板调整第一处，其余保持不变。', { n: count })}</p>}
@@ -42,9 +41,7 @@ export function MosaicControl({ item, localFrame, fit, canvasWidth, canvasHeight
         onReset={() => update({ [key]: DEFAULT_MOSAIC[key] })} />)}
       {mode === 'local' && <SliderRow label={t('边缘羽化')} val={region.feather} min={0} max={100} step={1}
         fmt={`${Math.round(region.feather)} px`} onChange={(feather) => update({ feather })} onReset={() => update({ feather: 0 })} />}
-      <p className="cc-region-note">{t('局部位置相对于片段画面；边缘羽化会减少边缘的遮挡。请检查是否完整覆盖需打码内容。')}</p>
       {track && <>
-        <p className="cc-region-note">{t('重复纹理或遮挡可能导致轨迹漂移；应用前请检查路径。调整区域会清除跟踪；超出跟踪范围时保持端点。目标被裁切到画面边缘时，打码边缘会变硬。')}</p>
         <button type="button" onClick={() => onChange(clearMosaicTrack(item,
           Math.max(0, Math.min(item.durationInFrames - 1, localFrame)), id(), fit,
           { width: canvasWidth, height: canvasHeight }))}

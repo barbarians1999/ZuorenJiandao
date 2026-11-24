@@ -84,12 +84,12 @@
 .cc-project-list-heading,
 .cc-project-row-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 24%) 160px;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 24%) 176px;
   align-items: center;
 }
 .cc-project-list-heading {
   display: grid;
-  grid-template-columns: 144px minmax(0, 1fr) minmax(150px, 24%) 112px;
+  grid-template-columns: 144px minmax(0, 1fr) minmax(150px, 24%) 176px;
   gap: 18px;
   min-height: 38px;
   padding: 0 16px;
@@ -162,10 +162,52 @@
 .cc-project-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .cc-project-name-edit { min-width: 0; width: 100%; font-size: 14px !important; }
 .cc-project-updated { color: var(--cc-text-dim); font-size: 14px; font-variant-numeric: tabular-nums; }
-.cc-project-row-actions { display: flex; justify-content: flex-end; gap: 4px; }
+.cc-project-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .cc-project-row-actions .cc-project-mini-action { width: 36px; min-width: 36px; height: 36px; padding: 6px; }
-.cc-project-row-actions > button:not(.cc-project-mini-action) { min-height: 36px; padding: 6px 10px; white-space: nowrap; }
-.cc-project-mini-action:hover { background: var(--cc-hover) !important; color: var(--cc-text-strong) !important; }
+.cc-project-mini-action:disabled { opacity: 0.45; cursor: not-allowed; }
+.cc-project-mini-action:hover:not(:disabled) { background: var(--cc-hover) !important; color: var(--cc-text-strong) !important; }
+.cc-dashboard-status { min-width: 0; white-space: normal; line-height: 1.35; }
+.cc-dashboard-status--error { font-weight: 550; }
+.cc-project-confirm-cancel,
+.cc-project-confirm-delete,
+.cc-project-confirm-busy {
+  min-height: 32px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.cc-project-confirm-cancel {
+  background: var(--cc-panel-alt);
+  color: var(--cc-text-dim);
+}
+.cc-project-confirm-cancel:hover:not(:disabled) {
+  background: var(--cc-hover);
+  color: var(--cc-text-strong);
+}
+.cc-project-confirm-delete {
+  background: color-mix(in srgb, var(--cc-danger) 16%, var(--cc-panel-alt));
+  color: var(--cc-danger);
+  font-weight: 600;
+}
+.cc-project-confirm-delete:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--cc-danger) 24%, var(--cc-panel-alt));
+}
+.cc-project-confirm-busy {
+  background: var(--cc-panel-alt);
+  color: var(--cc-text-dim);
+  cursor: wait;
+}
+.cc-project-confirm-cancel:focus-visible,
+.cc-project-confirm-delete:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
+}
 .cc-dashboard-empty {
   display: flex;
   flex-direction: column;

@@ -72,6 +72,7 @@ function playbackActions(deps: EditorActionDeps): ActionBindings {
     'shuttle-pause': () => tl()?.shuttle(0),
     'shuttle-jog-back': () => tl()?.shuttleJog(-1),
     'shuttle-jog-fwd': () => tl()?.shuttleJog(1),
+    'shuttle-fast-forward': () => tl()?.fastForward(),
   };
 }
 
@@ -125,6 +126,8 @@ function editingActions(deps: EditorActionDeps): ActionBindings {
     'select-all': () => deps.selectAll(),
     'select-before-playhead': () => tl()?.selectBeforePlayhead(),
     'select-after-playhead': () => tl()?.selectAllAfterPlayhead(),
+    'select-track-before-playhead': () => tl()?.selectTrackBeforePlayhead(),
+    'select-track-after-playhead': () => tl()?.selectTrackAfterPlayhead(),
     'select-after': () => tl()?.selectAfterPlayhead(),
     'move-up': () => tl()?.moveSelectedTrack(-1),
     'move-down': () => tl()?.moveSelectedTrack(1),
@@ -144,6 +147,8 @@ function navigationActions(deps: EditorActionDeps): ActionBindings {
     },
     'zone-in': () => tl()?.setZoneIn(),
     'zone-out': () => tl()?.setZoneOut(),
+    'zone-clear-in': () => tl()?.clearZoneIn(),
+    'zone-clear-out': () => tl()?.clearZoneOut(),
     'zone-clear': () => tl()?.clearZone(),
     'zone-clip': () => tl()?.zoneFromClip(),
     'zone-selection': () => tl()?.zoneFromSelection(),

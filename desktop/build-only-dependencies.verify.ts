@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-for (const name of ['@remotion/bundler', '@remotion/google-fonts', '@babel/standalone', '@mediapipe/tasks-vision']) {
+for (const name of [
+  '@remotion/bundler', '@remotion/google-fonts', '@babel/standalone', '@mediapipe/tasks-vision',
+  '@remotion/media', '@remotion/player', '@remotion/web-renderer',
+  'heic-to', 'mammoth', 'onnxruntime-web', 'pdfjs-dist', 'qrcode', 'react-dom', 'react-markdown', 'remark-gfm',
+]) {
   assert.equal(pkg.dependencies[name], undefined, `${name} must not be collected as an installed Node runtime dependency`);
   assert.ok(pkg.devDependencies[name], `${name} remains available for browser/prebundle builds`);
 }
@@ -18,6 +22,14 @@ try {
   const { default: config } = await import(`${new URL('../config/electron-builder.config.mjs', import.meta.url).href}?buildOnlyCheck`);
   for (const foreign of ['darwin/arm64', 'darwin/x64', 'win32/arm64', 'linux/arm64', 'linux/x64']) {
     assert.ok(config.files.includes(`!node_modules/**/node_modules/onnxruntime-node/bin/napi-v6/${foreign}/**`), `nested ${foreign} binaries must be excluded`);
+  }
+  for (const excluded of [
+    '!node_modules/onnxruntime-web/**',
+    '!node_modules/@huggingface/transformers/dist/transformers.web*',
+    '!node_modules/**/*.map',
+    '!node_modules/**/*.d.ts',
+  ]) {
+    assert.ok(config.files.includes(excluded), `expected ${excluded} packaging slim filter`);
   }
   assert.equal(config.files.some((filter: string) => filter.startsWith('!') && filter.includes('/napi-v6/win32/x64/')), false, 'both installed ONNX versions retain Windows x64 support');
 } finally {

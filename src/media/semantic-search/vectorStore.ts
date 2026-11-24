@@ -66,6 +66,7 @@ function openDatabase(): Promise<IDBDatabase> {
   };
   request.onsuccess = () => resolve(request.result);
   request.onerror = () => reject(request.error ?? new Error('Unable to open semantic index'));
+  request.onblocked = () => reject(new Error('Semantic index open blocked'));
   return promise;
 }
 
@@ -79,6 +80,7 @@ async function withStore<T>(
   const finish = (value: T) => { database.close(); resolve(value); };
   const fail = (reason?: unknown) => { database.close(); reject(reason); };
   transaction.onerror = () => fail(transaction.error);
+  transaction.onabort = () => fail(transaction.error ?? new Error('Semantic index transaction aborted'));
   run(transaction.objectStore(STORE_NAME), finish, fail);
   return promise;
 }
@@ -313,8 +315,10 @@ export async function clearSemanticVectors(scopeId: string): Promise<void> {
       }
     }
     const existing = await readStoredVectors();
+    const toDelete = existing.filter((item) => item.scopeId === scopeId);
+    if (toDelete.length === 0) return;
     await withStore<void>('readwrite', (store, resolve) => {
-      for (const item of existing) if (item.scopeId === scopeId) store.delete(item.key);
+      for (const item of toDelete) store.delete(item.key);
       store.transaction.oncomplete = () => resolve();
     }).catch(() => undefined);
   });

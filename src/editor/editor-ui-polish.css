@@ -32,21 +32,46 @@
   color: var(--cc-accent);
 }
 
-.cc-editor-shell .cc-skin-picker-option:hover,
-.cc-editor-shell .cc-skin-picker-option:focus-visible {
+.cc-skin-picker-option:hover,
+.cc-skin-picker-option:focus-visible {
   box-shadow: inset 0 0 0 1px var(--cc-border-light);
 }
 
-.cc-editor-shell .cc-skin-picker-option.is-active {
+.cc-skin-picker-option.is-active {
   box-shadow: inset 0 0 0 1px var(--cc-accent) !important;
 }
 
 .cc-editor-shell .cc-timeline-tool-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px !important;
+  background: transparent;
+  color: var(--cc-text-muted);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
   transition: color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
 .cc-editor-shell .cc-timeline-tool-button:hover:not(:disabled) {
+  background: var(--cc-panel-alt);
+  color: var(--cc-text-strong);
   box-shadow: inset 0 0 0 1px var(--cc-border-light);
+}
+
+.cc-editor-shell .cc-timeline-tool-button:disabled {
+  color: var(--cc-text-dim);
+  opacity: 0.4;
+  cursor: default;
 }
 
 .cc-editor-shell .cc-timeline-tool-button[aria-pressed='true'] {
@@ -255,6 +280,10 @@
 /* Keep the editing surface compact while leaving every existing control present. */
 .cc-editor-shell .cc-topbar {
   min-width: 0;
+}
+
+.cc-editor-shell .cc-topbar:has(.cc-utilities-popover, .cc-skin-picker-popover) {
+  z-index: 140;
 }
 
 .cc-editor-shell .cc-editor-brand-mark {
@@ -562,6 +591,41 @@
   border-radius: 2px;
 }
 
+.cc-editor-shell .cc-timeline-clip[data-adjacent-left="true"],
+.cc-editor-shell .cc-timeline-clip[data-adjacent-left="true"] .cc-clip-surface {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.cc-editor-shell .cc-timeline-clip[data-adjacent-right="true"],
+.cc-editor-shell .cc-timeline-clip[data-adjacent-right="true"] .cc-clip-surface {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.cc-editor-shell .cc-timeline-clip[data-adjacent-right="true"] .cc-clip-surface {
+  right: -1px;
+  width: auto;
+}
+
+.cc-editor-shell .cc-timeline-clip:is([data-adjacent-left="true"], [data-adjacent-right="true"]) .cc-clip-surface {
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.14),
+    inset 0 -1px 0 rgba(var(--cc-shadow-rgb), 0.35);
+}
+
+.cc-editor-shell .cc-timeline-clip[data-adjacent-left="true"]:not([data-adjacent-right="true"]) .cc-clip-surface {
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.14),
+    inset -1px -1px 0 rgba(var(--cc-shadow-rgb), 0.35);
+}
+
+.cc-editor-shell .cc-timeline-clip[data-adjacent-right="true"]:not([data-adjacent-left="true"]) .cc-clip-surface {
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.14),
+    inset 1px -1px 0 rgba(var(--cc-shadow-rgb), 0.35);
+}
+
 .cc-editor-shell .cc-timeline-clip.is-selected {
   box-shadow:
     0 0 0 1.5px var(--cc-accent),
@@ -635,13 +699,19 @@
 }
 
 .cc-editor-shell .cc-library-workbench {
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .cc-editor-shell .cc-library-rail {
-  flex: 0 0 82px;
-  padding: 6px 5px;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: stretch;
+  padding: 5px;
   gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   border-radius: 16px;
   border: 1px solid transparent;
   background: var(--cc-panel);
@@ -649,11 +719,14 @@
 }
 
 .cc-editor-shell .cc-library-tool {
+  flex: 1 0 auto;
+  min-width: 52px;
   flex-direction: column;
+  align-items: center;
   justify-content: center;
   text-align: center;
   gap: 3px;
-  padding: 5px 4px;
+  padding: 6px 6px;
   min-height: 44px;
   border-radius: 12px;
   font-size: 11px;
@@ -1125,6 +1198,30 @@
   }
 }
 
+.cc-editor-shell .cc-caption-style-row .cc-insp-val {
+  gap: 6px;
+}
+
+.cc-editor-shell .cc-caption-inline-color {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  padding: 0;
+  border: 1px solid var(--cc-border);
+  border-radius: 6px;
+  background: var(--cc-panel);
+  cursor: pointer;
+}
+
+.cc-editor-shell .cc-caption-inline-color::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.cc-editor-shell .cc-caption-inline-color::-webkit-color-swatch {
+  border: 0;
+  border-radius: 4px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cc-editor-shell .cc-topbar-icon-button,
   .cc-editor-shell .cc-topbar-export,
@@ -1166,7 +1263,8 @@ body > .cc-media-popover {
 }
 
 /* The dialog surface settles in place; the backdrop and editor do not move. */
-.cc-editor-shell :is(.cc-modal, .cc-mobile-upload-dialog, .cc-settings-readable, .cc-export-panel) {
+:is(.cc-editor-shell, body > .cc-settings-backdrop, body > .cc-modal-backdrop) :is(.cc-modal, .cc-mobile-upload-dialog, .cc-settings-readable, .cc-export-panel),
+body > div > .cc-modal {
   animation: cc-ui-dialog-enter var(--cc-motion-overlay) var(--cc-motion-ease);
 }
 @keyframes cc-ui-dialog-enter {
@@ -1178,7 +1276,10 @@ body > .cc-media-popover {
   .cc-editor-shell :is(.cc-topbar-icon-button, .cc-timeline-tool-button) > svg { transition: none; }
   .cc-editor-shell :is(.cc-topbar-icon-button, .cc-timeline-tool-button):not(:disabled):active > svg { transform: none; }
   .cc-editor-shell :is(.cc-utilities-popover, .cc-media-popover, .cc-track-create-menu, .cc-caption-cue-menu, .cc-clip-context-menu, .cc-modal, .cc-mobile-upload-dialog, .cc-settings-readable, .cc-export-panel) { animation: none; }
-  body > .cc-media-popover { animation: none; }
+  body > .cc-media-popover,
+  body > .cc-settings-backdrop .cc-settings-readable,
+  body > .cc-modal-backdrop .cc-modal,
+  body > div > .cc-modal { animation: none; }
 }
 
 /* --- Option B (Graphite Champagne) + Jianying-style rounded cards, toggles & aligned controls --- */
@@ -1321,7 +1422,18 @@ body > .cc-media-popover {
   cursor: pointer;
 }
 
-.cc-editor-shell .cc-switch {
+.cc-external-auto-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--cc-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.cc-switch {
   position: relative;
   width: 36px;
   height: 20px;
@@ -1336,7 +1448,7 @@ body > .cc-media-popover {
   transition: background-color 150ms ease;
 }
 
-.cc-editor-shell .cc-switch::after {
+.cc-switch::after {
   content: '';
   position: absolute;
   top: 2px;
@@ -1349,16 +1461,16 @@ body > .cc-media-popover {
   transition: transform 150ms ease;
 }
 
-.cc-editor-shell .cc-switch:checked {
+.cc-switch:checked {
   background: var(--cc-accent);
 }
 
-.cc-editor-shell .cc-switch:checked::after {
+.cc-switch:checked::after {
   transform: translateX(16px);
   background: var(--cc-on-accent);
 }
 
-.cc-editor-shell .cc-switch:focus-visible {
+.cc-switch:focus-visible {
   outline: 2px solid var(--cc-accent);
   outline-offset: 2px;
 }
@@ -1479,6 +1591,239 @@ body > .cc-media-popover {
   user-select: none;
 }
 
+/* Phase 2: Concat-inspired preview bar, compact quality pill, floating drag HUD, and popover toolbars */
+.cc-editor-shell .cc-preview-transport {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 6px !important;
+}
+
+.cc-editor-shell .cc-preview-transport-side {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.cc-editor-shell .cc-preview-transport-right {
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.cc-editor-shell .cc-preview-transport-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 28px;
+  min-block-size: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--cc-panel-alt);
+  color: var(--cc-text-muted);
+  cursor: pointer;
+}
+
+.cc-editor-shell .cc-preview-transport-icon:hover {
+  color: var(--cc-text-strong);
+  background: var(--cc-hover);
+}
+
+.cc-editor-shell .cc-preview-transport-center {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.cc-editor-shell .cc-preview-ff-button {
+  gap: 4px;
+  padding: 0 9px;
+  min-block-size: 28px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cc-editor-shell .cc-preview-ff-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.cc-editor-shell .cc-preview-ff-button.is-active {
+  background: var(--cc-accent);
+  color: var(--cc-on-accent);
+}
+
+.cc-editor-shell .cc-preview-shuttle-badge {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--cc-panel-alt);
+  color: var(--cc-accent);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cc-editor-shell .cc-preview-quality-select {
+  min-block-size: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--cc-border);
+  border-radius: 999px;
+  background: var(--cc-panel-alt);
+  color: var(--cc-text);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cc-editor-shell .cc-preview-quality-select:hover {
+  background: var(--cc-hover);
+  border-color: var(--cc-border-light);
+}
+
+.cc-editor-shell .cc-preview-transform-hud {
+  position: absolute;
+  z-index: 8;
+  transform: translate(-50%, 10px);
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--cc-border-light);
+  background: var(--cc-panel);
+  color: var(--cc-text-strong);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(var(--cc-shadow-rgb), 0.45);
+}
+
+.cc-editor-shell .cc-timeline-tool-group > [role='group'] {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cc-timeline-control-gap);
+  flex-wrap: wrap;
+}
+
+.cc-editor-shell .cc-aspect-select {
+  width: auto !important;
+  min-width: 0;
+  height: 30px !important;
+  padding: 0 11px;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--cc-border);
+  border-radius: 999px;
+  background: var(--cc-panel-alt);
+  color: var(--cc-text);
+  font: inherit;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cc-editor-shell .cc-aspect-select:hover {
+  border-radius: 999px;
+  background: var(--cc-hover);
+  border-color: var(--cc-border-light);
+}
+
+.cc-editor-shell .cc-mode-picker-trigger {
+  height: 30px !important;
+  min-width: 0;
+  gap: 5px;
+  padding: 0 10px !important;
+  border: 1px solid var(--cc-border) !important;
+  border-radius: 999px !important;
+  background: var(--cc-panel-alt) !important;
+  color: var(--cc-text) !important;
+  font-size: 13px !important;
+}
+
+.cc-editor-shell .cc-mode-picker-trigger:hover {
+  background: var(--cc-hover) !important;
+  border-color: var(--cc-border-light) !important;
+}
+
+.cc-editor-shell .cc-mode-picker-trigger:is(.is-blade, .is-pen, .is-trim, .is-slip, .is-rate-stretch) {
+  color: var(--cc-accent) !important;
+  border-color: var(--cc-accent) !important;
+  box-shadow: inset 0 0 0 1px var(--cc-accent);
+}
+
+.cc-editor-shell .cc-popover-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.cc-editor-shell .cc-popover-anchor:has(:popover-open) .cc-tip::after {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.cc-editor-shell [popover].cc-popover-menu {
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid var(--cc-border-light);
+  background: var(--cc-panel-alt);
+  color: var(--cc-text);
+  box-shadow: 0 10px 28px rgba(var(--cc-shadow-rgb), 0.55);
+}
+
+.cc-editor-shell .cc-aspect-popover {
+  width: 152px;
+}
+
+.cc-editor-shell .cc-aspect-popover-heading {
+  padding: 4px 8px;
+  color: var(--cc-text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.cc-editor-shell .cc-aspect-popover button {
+  min-height: 30px;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-editor-shell .cc-aspect-popover button.selected {
+  color: var(--cc-accent);
+  font-weight: 650;
+}
+
+@supports (position-area: block-end) {
+  .cc-editor-shell [popover].cc-popover-menu {
+    inset: auto;
+    margin: 4px 0 0;
+    position-area: block-end span-inline-end;
+    position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+  }
+}
+
+@supports not (position-area: block-end) {
+  .cc-editor-shell [popover].cc-popover-menu {
+    position: fixed;
+    inset: auto 16px 72px auto;
+    margin: 0;
+  }
+}
+
+.cc-editor-shell [popover].cc-popover-menu[open],
+.cc-editor-shell [popover].cc-popover-menu:is(:popover-open, .\:popover-open) {
+  display: block;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cc-editor-shell .cc-asset-add-btn,
   .cc-editor-shell .cc-resource-add-badge,
@@ -1487,4 +1832,334 @@ body > .cc-media-popover {
   .cc-editor-shell .cc-switch::after {
     transition: none;
   }
+}
+
+.cc-editor-shell .cc-preview-source-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cc-accent) 18%, var(--cc-panel-alt));
+  color: var(--cc-accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
+.cc-editor-shell .cc-preview-source-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.cc-editor-shell .cc-preview-source-btn {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 0.5px solid var(--cc-border);
+  background: transparent;
+  color: var(--cc-text-dim);
+  white-space: nowrap;
+}
+
+.cc-editor-shell .cc-preview-source-btn:hover {
+  background: var(--cc-hover);
+  color: var(--cc-text);
+}
+
+.cc-editor-shell .cc-preview-source-btn.is-primary {
+  border-color: color-mix(in srgb, var(--cc-accent) 55%, var(--cc-border));
+  background: color-mix(in srgb, var(--cc-accent) 16%, transparent);
+  color: var(--cc-accent);
+}
+
+.cc-editor-shell .cc-preview-source-btn.is-primary:hover {
+  background: var(--cc-accent);
+  color: var(--cc-on-accent);
+}
+
+.cc-editor-shell .cc-source-preview-root {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.cc-editor-shell .cc-source-preview-stage {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.cc-editor-shell .cc-source-preview-video,
+.cc-editor-shell .cc-source-preview-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.cc-editor-shell .cc-source-preview-video {
+  cursor: pointer;
+}
+
+.cc-editor-shell .cc-source-preview-audio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: min(320px, 85%);
+  padding: 24px 28px;
+  border-radius: 12px;
+  border: 0.5px solid var(--cc-border);
+  background: color-mix(in srgb, var(--cc-panel) 84%, transparent);
+  text-align: center;
+}
+
+.cc-editor-shell .cc-source-preview-audio-icon {
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--cc-accent) 16%, var(--cc-panel-alt));
+  color: var(--cc-accent);
+}
+
+.cc-editor-shell .cc-source-preview-audio-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--cc-text);
+}
+
+.cc-editor-shell .cc-source-preview-audio-status {
+  font-size: 11.5px;
+  color: var(--cc-text-dim);
+}
+
+.cc-editor-shell .cc-source-preview-mg {
+  width: min(100%, 480px);
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cc-bg);
+}
+
+.cc-editor-shell .cc-source-preview-error {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--cc-panel) 92%, transparent);
+  border: 0.5px solid var(--cc-danger);
+  color: var(--cc-text);
+  font-size: 11px;
+}
+
+.cc-editor-shell .cc-source-preview-controls {
+  gap: 10px;
+}
+
+.cc-editor-shell .cc-source-preview-scrubber {
+  width: clamp(120px, 22vw, 240px);
+  accent-color: var(--cc-accent);
+  cursor: pointer;
+}
+
+.cc-editor-shell .cc-source-preview-time,
+.cc-editor-shell .cc-source-preview-hint {
+  font-size: 11px;
+  color: var(--cc-text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- Preview Monitor Bar (timecode, scrubbar with synced markers + in/out zone, shuttle & still capture) --- */
+.cc-editor-shell .cc-preview-monitor-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 12px 4px;
+  border-top: 0.5px solid var(--cc-border);
+  background: var(--cc-panel);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.cc-editor-shell .cc-preview-monitor-bar .cc-preview-transport {
+  padding: 2px 0 2px !important;
+  border-top: 0;
+}
+
+.cc-editor-shell .cc-preview-timecode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  line-height: 1.25;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-editor-shell .cc-preview-timecode-current {
+  color: var(--cc-accent);
+  font-weight: 600;
+}
+
+.cc-editor-shell .cc-preview-timecode-total {
+  color: var(--cc-text-dim);
+}
+
+.cc-editor-shell .cc-preview-scrub-track {
+  position: relative;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.cc-editor-shell .cc-preview-scrub-track.is-disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.cc-editor-shell .cc-preview-scrub-ruler {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 6px;
+  opacity: 0.35;
+  background-image:
+    repeating-linear-gradient(to right, var(--cc-text-dim) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(to right, var(--cc-text-muted) 0 1px, transparent 1px 30px);
+  background-size: 100% 3px, 100% 6px;
+  background-position: left bottom, left bottom;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+.cc-editor-shell .cc-preview-scrub-rail {
+  position: relative;
+  width: 100%;
+  height: 5px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cc-border-light) 45%, var(--cc-inset));
+  overflow: visible;
+}
+
+.cc-editor-shell .cc-preview-scrub-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cc-accent) 48%, transparent);
+  pointer-events: none;
+}
+
+.cc-editor-shell .cc-preview-zone-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cc-accent) 32%, transparent);
+  border-inline: 1.5px solid var(--cc-accent);
+  pointer-events: none;
+}
+
+.cc-editor-shell .cc-preview-zone-handle {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 9px;
+  background: var(--cc-accent);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.cc-editor-shell .cc-preview-marker-pin {
+  position: absolute;
+  top: -7px;
+  width: 9px;
+  height: 11px;
+  padding: 0;
+  border: 0;
+  background: currentColor;
+  color: var(--cc-success, #3fb950);
+  clip-path: polygon(15% 0%, 85% 0%, 85% 60%, 50% 100%, 15% 60%);
+  transform: translateX(-50%);
+  cursor: pointer;
+  z-index: 2;
+}
+
+.cc-editor-shell .cc-preview-marker-pin:hover {
+  transform: translateX(-50%) scale(1.2);
+}
+
+.cc-editor-shell .cc-preview-scrub-thumb {
+  position: absolute;
+  top: 7px;
+  width: 9px;
+  height: 10px;
+  border-radius: 2px 2px 4px 4px;
+  background: var(--cc-accent);
+  box-shadow: 0 0 0 1.5px var(--cc-panel);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.cc-editor-shell .cc-preview-transport-left {
+  justify-content: flex-start;
+  gap: 5px;
+}
+
+.cc-editor-shell .cc-preview-transport-icon.is-active {
+  background: var(--cc-accent);
+  color: var(--cc-on-accent);
+}
+
+.cc-editor-shell .cc-preview-transport-icon:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cc-editor-shell .cc-preview-shuttle-btn {
+  gap: 3px;
+  padding: 0 7px;
+}
+
+.cc-editor-shell .cc-preview-rate-tag {
+  font-size: 10.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-editor-shell .cc-preview-zone-clear-btn {
+  min-inline-size: 22px;
+  min-block-size: 22px;
+  padding: 0;
 }

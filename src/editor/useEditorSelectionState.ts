@@ -16,7 +16,7 @@ import {
   type CaptionSelectionRef,
 } from '../captions/captionSelection';
 import { updateCaptionSelections } from '../captions/captionSelectionInteraction';
-import { usedMediaAssetIds } from './mediaAssetUsage';
+import { activeTimelineUsedMediaAssetIds, usedMediaAssetIds } from './mediaAssetUsage';
 import { selectedInspectorItems } from './inspectorBatch';
 import { sequenceLibraryOptions } from '../library/sequenceOptions';
 import { planSlip, type SlipPreview } from './slip';
@@ -212,7 +212,11 @@ function useEditorOptions(state: Timeline, doc: ProjectDoc) {
     [doc.timelines, doc.activeTimelineId],
   );
   const usedAssetIds = useMemo(() => usedMediaAssetIds(doc), [doc]);
-  return { captionTracks, getSequenceOptions, trackOptions, usedAssetIds };
+  const activeTimelineAssetIds = useMemo(
+    () => activeTimelineUsedMediaAssetIds(doc, doc.activeTimelineId),
+    [doc],
+  );
+  return { activeTimelineAssetIds, captionTracks, getSequenceOptions, trackOptions, usedAssetIds };
 }
 
 export function useEditorSelectionState(

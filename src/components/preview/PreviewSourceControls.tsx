@@ -7,22 +7,19 @@ import { theme } from '../../theme';
 export function PreviewSourceToggle() {
   const t = useT();
   const mode = useSyncExternalStore(subscribeQualityMode, getPreviewSourceMode, getPreviewSourceMode);
-  return <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
-    <span>{t('预览画质')}</span>
-    {(['original', 'proxy'] as const).map((value) => <button key={value} type="button"
-      aria-pressed={mode === value} onClick={() => setPreviewSourceMode(value)}
-      title={value === 'original' ? t('原片：检查画面细节') : t('流畅预览仅影响编辑播放，导出仍使用原素材')}
-      style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, cursor: 'pointer',
-        border: `1px solid ${theme.border}`, color: theme.text,
-        background: mode === value ? theme.panelAlt : 'transparent' }}>
-      {value === 'original' ? t('原片') : t('流畅')}
-    </button>)}
-    <details style={{ position: 'relative' }}>
-      <summary title={t('更多预览选项')} style={{ cursor: 'pointer', listStyle: 'none', padding: '2px 6px', borderRadius: 999, border: `1px solid ${theme.border}`, background: theme.panelAlt }}>{mode === 'auto' ? t('自动') : '⋯'}</summary>
-      <button type="button" aria-pressed={mode === 'auto'} onClick={() => setPreviewSourceMode('auto')}
-        title={t('自动：跟随画质策略（画质优先=高清，均衡=流畅）')}>{t('自动')}</button>
-    </details>
-  </div>;
+  return (
+    <select
+      className="cc-branded-select cc-preview-quality-select"
+      aria-label={t('预览画质')}
+      title={t('预览画质（仅影响编辑播放，不影响导出）')}
+      value={mode}
+      onChange={(event) => setPreviewSourceMode(event.target.value as 'auto' | 'original' | 'proxy')}
+    >
+      <option value="auto">{t('画质：自动')}</option>
+      <option value="original">{t('画质：原片')}</option>
+      <option value="proxy">{t('画质：流畅')}</option>
+    </select>
+  );
 }
 
 export function PreviewProxyStatus({ proxies }: { proxies: Array<{ src: string; proxy: PreviewProxyState }> }) {
@@ -32,14 +29,21 @@ export function PreviewProxyStatus({ proxies }: { proxies: Array<{ src: string; 
   const pending = proxies.filter(({ proxy }) => proxy.status === 'loading').length;
   const ready = proxies.filter(({ proxy }) => proxy.status === 'ready').length;
   if (mode === 'original' || !proxies.length) return null;
-  return <div role="status" aria-live="polite" style={{ fontSize: 11, display: 'flex', gap: 8,
-    alignItems: 'center', flexWrap: 'wrap', padding: '4px 8px', color: theme.textMuted }}>
-    <span>{t('流畅预览：准备中 {pending} · 已就绪 {ready} · 失败 {failed}',
-      { pending, ready, failed: failed.length })}</span>
-    {(pending > 0 || failed.length > 0) && <span>{t('未就绪素材暂用原片，不影响导出')}</span>}
-    {failed.length > 0 && <>
-      <button type="button" onClick={() => { for (const { src } of failed) void retryPreviewProxy(src); }}>{t('重试失败素材')}</button>
-      <button type="button" onClick={() => setPreviewSourceMode('original')}>{t('切回原片')}</button>
-    </>}
-  </div>;
+  if (pending === 0 && failed.length === 0) return null;
+  return (
+    <div role="status" aria-live="polite" className="cc-preview-proxy-status" style={{ fontSize: 11, display: 'flex', gap: 8,
+      alignItems: 'center', flexWrap: 'wrap', padding: '4px 10px', color: theme.textMuted }}>
+      <span>
+        {failed.length > 0
+          ? t('流畅代理：准备 {pending} · 就绪 {ready} · 失败 {failed}', { pending, ready, failed: failed.length })
+          : t('流畅代理：准备中 {pending} · 已就绪 {ready}', { pending, ready })}
+      </span>
+      {failed.length > 0 && (
+        <>
+          <button type="button" onClick={() => { for (const { src } of failed) void retryPreviewProxy(src); }}>{t('重试')}</button>
+          <button type="button" onClick={() => setPreviewSourceMode('original')}>{t('切回原片')}</button>
+        </>
+      )}
+    </div>
+  );
 }

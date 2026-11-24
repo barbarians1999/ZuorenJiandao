@@ -67,7 +67,7 @@ export async function renderExportPlan(
   filepath: string,
   update: UpdateGenerationJob,
   signal?: AbortSignal,
-): Promise<H264EncoderOutcome | undefined> {
+): Promise<(H264EncoderOutcome & { diagnostics?: Record<string, unknown> }) | undefined> {
   signal?.throwIfAborted();
   const retimed = plan.retimeFps ? `${filepath}.retimed.${plan.media.ext}` : null;
   let failureStage: ExportFailureStage = 'render';
@@ -90,7 +90,7 @@ export async function renderExportPlan(
       onProgress: renderProgress,
       onProgressStage: (phase: 'rendering' | 'finalizing') => renderProgress.setPhase(phase),
       signal,
-    }) as Partial<H264EncoderOutcome>;
+    }) as Partial<H264EncoderOutcome> & { diagnostics?: Record<string, unknown> };
     signal?.throwIfAborted();
     let outcome = rendered.encoder ? { encoder: rendered.encoder, ...(rendered.encoderFallbackReason ? { encoderFallbackReason: rendered.encoderFallbackReason } : {}) } : undefined;
     if (retimed && plan.retimeFps) {
@@ -111,6 +111,9 @@ export async function renderExportPlan(
       signal?.throwIfAborted();
     }
     update({ phase: 'finalizing', progress: 99, processedFrames: plan.totalFrames });
+    if (rendered.diagnostics) {
+      return outcome ? { ...outcome, diagnostics: rendered.diagnostics } : ({ diagnostics: rendered.diagnostics } as H264EncoderOutcome & { diagnostics: Record<string, unknown> });
+    }
     return outcome;
   } catch (error) {
     const cleanupStatus = await cleanupExportOutputs([filepath, retimed]);

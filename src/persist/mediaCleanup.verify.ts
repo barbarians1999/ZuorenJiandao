@@ -1,10 +1,10 @@
 // 素材清理纯逻辑检查:引用做差、级联删的独占判定语义(经内存态 projectStore 走真流程)。
 // 跑法:npx tsx src/persist/mediaCleanup.check.ts(已挂 verify:persist,随 pretest 执行)。
 import assert from 'node:assert/strict';
-import { collectAllUploadRefs, orphanDocIdsToPurge, scanUnreferenced, unreferencedOf } from './mediaCleanup';
+import { collectAllUploadRefs, orphanDocIdsToPurge, purgeProjectCascade, scanUnreferenced, unreferencedOf } from './mediaCleanup';
 import { configureSharedKvBackend, kvDel, kvGet, kvSet, type SharedKvBackend } from './sharedKv';
 import { listPacks } from '../plugins/store';
-import { createProject, listProjectDocIds, purgeProject } from './projectStore';
+import { createProject, listProjectDocIds, listProjects, purgeProject } from './projectStore';
 import type { ProjectDoc } from '../editor/types';
 
 // ── unreferencedOf:盘面 − 引用 ──────────────────────────────────────────
@@ -117,6 +117,30 @@ console.log('mediaCleanup: read-only orphan scan and incomplete inventory protec
     await assert.rejects(listPacks({ strict: true }), /extension inventory unavailable/);
     globalThis.fetch = (async () => Response.json({ packs: [{ id: 'unknown', cubeUrls: { lut: '/media/uploads/keep.cube' } }] })) as typeof fetch;
     await assert.rejects(listPacks({ strict: true }), /Cannot verify/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+}
+
+// Post-purge media cleanup failure must not fail project deletion or block dashboard refresh.
+{
+  const originalFetch = globalThis.fetch;
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
+  try {
+    const project = await createProject('cascade-resilient', {
+      version: 3,
+      assets: [{ id: 'a1', name: 'x', kind: 'video', src: '/media/uploads/x.mp4', durationInFrames: 30 }],
+      mediaFolders: [],
+      timelines: [{ id: 'tl1', name: '序列 1', fps: 30, width: 1920, height: 1080, selectedId: null, items: [] } as never],
+      activeTimelineId: 'tl1',
+    } as never);
+    globalThis.fetch = (async () => { throw new TypeError('extension inventory unavailable'); }) as typeof fetch;
+    const outcome = await purgeProjectCascade(project.id);
+    assert.deepEqual(outcome, { filesDeleted: 0, mediaCleanupSkipped: true });
+    assert.equal((await listProjects()).some((entry) => entry.id === project.id), false);
   } finally {
     globalThis.fetch = originalFetch;
     if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);

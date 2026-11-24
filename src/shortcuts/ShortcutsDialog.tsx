@@ -5,15 +5,13 @@ import { SHORTCUT_GROUPS, type ShortcutAction } from './catalog';
 import { Icon } from '../components/icons';
 import {
   effectiveCatalog, subscribeKeymap, isCustomized, customizedCount,
-  setBinding, resetBinding, resetAllBindings, chordFromEvent, findConflicts,
+  setBinding, resetBinding, resetAllBindings, chordFromEvent, findConflicts, formatShortcutKeys,
+  SHORTCUT_PRESETS, getShortcutPreset, setShortcutPreset,
 } from './keymap';
 
 interface ShortcutsDialogProps {
   onClose: () => void;
 }
-
-const IS_MAC = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
-const showKeys = (keys: string): string => keys.replace(/Mod/g, IS_MAC ? '⌘' : 'Ctrl');
 
 interface Pending { id: string; keys: string; conflicts: ShortcutAction[] }
 
@@ -54,6 +52,8 @@ export function ShortcutsDialog({ onClose }: ShortcutsDialogProps) {
   }, [capturingId]);
 
   const catalog = effectiveCatalog();
+  const activePreset = getShortcutPreset();
+  const activePresetMeta = SHORTCUT_PRESETS.find((p) => p.id === activePreset) ?? SHORTCUT_PRESETS[0]!;
   const startCapture = (id: string) => { setPending(null); setCapturingId(id); };
 
   return (
@@ -85,6 +85,49 @@ export function ShortcutsDialog({ onClose }: ShortcutsDialogProps) {
           <button type="button" onClick={onClose} title={t('关闭')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: theme.textDim, padding: 4, display: 'grid' }}>
             <Icon name="x" size={16} />
           </button>
+        </div>
+        <div
+          role="tablist"
+          aria-label={t('快捷键方案')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+            padding: '10px 16px', borderBottom: `0.5px solid ${theme.border}`, background: theme.panelAlt,
+          }}
+        >
+          <span style={{ fontSize: 11.5, color: theme.textDim, marginRight: 2 }}>{t('快捷键方案')}</span>
+          <div style={{ display: 'inline-flex', gap: 4, padding: 3, borderRadius: 999, background: theme.bg, border: `0.5px solid ${theme.border}` }}>
+            {SHORTCUT_PRESETS.map((preset) => {
+              const selected = activePreset === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => {
+                    setCapturingId(null);
+                    setPending(null);
+                    setShortcutPreset(preset.id);
+                  }}
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: selected ? 650 : 500,
+                    padding: '4px 12px',
+                    borderRadius: 999,
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: selected ? theme.accent : 'transparent',
+                    color: selected ? theme.onAccent : theme.textMuted,
+                  }}
+                >
+                  {t(preset.label)}
+                </button>
+              );
+            })}
+          </div>
+          <span style={{ fontSize: 11, color: theme.textDim, marginLeft: 'auto' }}>
+            {t(activePresetMeta.summary)}
+          </span>
         </div>
         <div style={{ overflowY: 'auto', padding: '8px 12px 16px' }}>
           {SHORTCUT_GROUPS.map((g) => {
@@ -119,12 +162,12 @@ export function ShortcutsDialog({ onClose }: ShortcutsDialogProps) {
                             borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap', cursor: 'pointer', minWidth: 90, textAlign: 'center',
                           }}
                         >
-                          {capturing ? t('按下按键… (Esc)') : showKeys(a.keys)}
+                          {capturing ? t('按下按键… (Esc)') : formatShortcutKeys(a.keys)}
                         </button>
                         {conflicting && pending && (
       <div style={{ position: 'absolute', right: 24, marginTop: 40, zIndex: 1, background: theme.panel, border: `0.5px solid ${theme.accent}`, borderRadius: 4, padding: 10, boxShadow: `0 8px 24px ${themeAlpha.shadow(0.67)}`, maxWidth: 300 }}>
                             <div style={{ fontSize: 11.5, marginBottom: 6 }}>
-                              <b>{showKeys(pending.keys)}</b> {t('已被占用：')}{pending.conflicts.map(actionLabel).join('、')}
+                              <b>{formatShortcutKeys(pending.keys)}</b> {t('已被占用：')}{pending.conflicts.map(actionLabel).join('、')}
                             </div>
                             <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                               <button type="button" onClick={() => setPending(null)} style={{ fontSize: 11, background: 'none', border: `0.5px solid ${theme.border}`, borderRadius: 6, padding: '3px 8px', color: theme.text, cursor: 'pointer' }}>{t('取消')}</button>

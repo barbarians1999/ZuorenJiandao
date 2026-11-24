@@ -449,12 +449,27 @@ export interface ProjectPurgeOptions {
   semanticCleanup?: (scopeId: string) => Promise<void>;
 }
 
+const SEMANTIC_CLEANUP_TIMEOUT_MS = 3_000;
+
 async function clearProjectSemanticVectors(id: string, options?: ProjectPurgeOptions): Promise<void> {
   if (options?.semanticCleanup) {
     await options.semanticCleanup(id);
     return;
   }
-  if (typeof indexedDB !== 'undefined') await clearSemanticVectors(id);
+  if (typeof indexedDB === 'undefined') return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      clearSemanticVectors(id),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, SEMANTIC_CLEANUP_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    // Semantic vector index is a derived cache; never block project deletion.
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /** Permanently remove project bytes and every project-owned persistence sidecar.

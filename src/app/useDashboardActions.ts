@@ -70,9 +70,15 @@ export function useDashboardActions(refresh: () => Promise<void>): DashboardActi
       await refresh();
       navigateTo(projectEditorHash(project.id, quickStart));
     },
-    onRename: async (id, name) => { await renameProject(id, name); refresh(); },
-    onDuplicate: async (id) => { await duplicateProject(id); refresh(); },
-    onDelete: async (id) => { await purgeProjectCascade(id); refresh(); },
+    onRename: async (id, name) => { await renameProject(id, name); await refresh(); },
+    onDuplicate: async (id) => { await duplicateProject(id); await refresh(); },
+    onDelete: async (id) => {
+      try {
+        await purgeProjectCascade(id);
+      } finally {
+        await refresh();
+      }
+    },
     onExport: (id, name) => exportProject(t, id, name),
     onImport: (file) => importProject(t, file, refresh),
   };

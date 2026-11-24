@@ -70,7 +70,16 @@ function ProjectToolbar({ projects, model }: { projects: ProjectMeta[]; model: D
         <h1>{t('工程')}</h1>
         <span>{t('继续剪辑，或导入同伴发来的工程')}</span>
       </div>
-      {model.transfer.note && <span style={{ color: theme.textDim, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.transfer.note}</span>}
+      {model.transfer.note && (
+        <span
+          role={model.transfer.isError ? 'alert' : 'status'}
+          title={model.transfer.note}
+          className={model.transfer.isError ? 'cc-dashboard-status cc-dashboard-status--error' : 'cc-dashboard-status'}
+          style={{ color: model.transfer.isError ? theme.danger : theme.textDim, fontSize: 12.5 }}
+        >
+          {model.transfer.note}
+        </span>
+      )}
       <span className="cc-dashboard-toolbar-actions">
         <ProjectSearch value={model.query} onChange={model.setQuery} />
         <button className="cc-dashboard-action" onClick={() => model.setDialog('cleanup', true)} style={importBtn} title={t('清理所有工程都不引用的上传素材(测试/已删工程残留)')}><Icon name="trash" size={13} /> {t('清理素材')}</button>
@@ -113,25 +122,54 @@ function ProjectName({ project, model, onOpen }: { project: ProjectMeta; model: 
 
 function ProjectActions({ project, props, model }: { project: ProjectMeta; props: DashboardProps; model: DashboardModel }) {
   const t = useT();
+  if (model.transfer.deletingId === project.id) {
+    return (
+      <button
+        type="button"
+        disabled
+        className="cc-project-confirm-busy"
+        aria-label={`${t('删除中…')}: ${project.name}`}
+      >
+        {t('删除中…')}
+      </button>
+    );
+  }
   if (model.rename.confirmId === project.id) {
-    return <button
-      type="button"
-      onClick={() => {
-        void model.transfer.run(props.onDelete(project.id).then(() => t('已永久删除「{name}」', { name: project.name })));
-        model.rename.setConfirmId(null);
-      }}
-      disabled={model.transfer.busy}
-      aria-label={`${t('确认删除')}: ${project.name}`}
-      style={{ ...miniBtn, color: theme.danger }}
-      title={t('彻底删除工程,并清掉只有它引用的素材文件')}
-    >{t('确认删除')}</button>;
+    return (
+      <>
+        <button
+          type="button"
+          className="cc-project-confirm-cancel"
+          onClick={() => model.rename.setConfirmId(null)}
+          disabled={model.transfer.busy}
+        >
+          {t('取消')}
+        </button>
+        <button
+          type="button"
+          className="cc-project-confirm-delete"
+          onClick={() => {
+            model.rename.setConfirmId(null);
+            void model.transfer.runDelete(
+              project.id,
+              props.onDelete(project.id).then(() => t('已永久删除「{name}」', { name: project.name })),
+            );
+          }}
+          disabled={model.transfer.busy}
+          aria-label={`${t('确认删除')}: ${project.name}`}
+          title={t('彻底删除工程,并清掉只有它引用的素材文件')}
+        >
+          {t('确认删除')}
+        </button>
+      </>
+    );
   }
   return (
     <>
       <button type="button" className="cc-project-mini-action" onClick={() => model.rename.start(project)} style={miniBtn} title={t('重命名')} aria-label={`${t('重命名')}: ${project.name}`}><Icon name="pencil" size={13} /></button>
-      <button type="button" className="cc-project-mini-action" onClick={() => props.onDuplicate(project.id)} style={miniBtn} title={t('复制')} aria-label={`${t('复制')}: ${project.name}`}><Icon name="copy" size={13} /></button>
+      <button type="button" className="cc-project-mini-action" onClick={() => props.onDuplicate(project.id)} disabled={model.transfer.busy} style={miniBtn} title={t('复制')} aria-label={`${t('复制')}: ${project.name}`}><Icon name="copy" size={13} /></button>
       <button type="button" className="cc-project-mini-action" onClick={() => void model.transfer.run(props.onExport(project.id, project.name))} disabled={model.transfer.busy} style={miniBtn} title={t('导出为流式 .ccproj(含素材,可在桌面版/其它机器导入)')} aria-label={`${t('导出为流式 .ccproj(含素材,可在桌面版/其它机器导入)')}: ${project.name}`}><Icon name="download" size={13} /></button>
-      <button type="button" className="cc-project-mini-action" onClick={() => model.rename.setConfirmId(project.id)} style={miniBtn} title={t('删除')} aria-label={`${t('删除')}: ${project.name}`}><Icon name="trash" size={13} /></button>
+      <button type="button" className="cc-project-mini-action" onClick={() => model.rename.setConfirmId(project.id)} disabled={model.transfer.busy} style={miniBtn} title={t('删除')} aria-label={`${t('删除')}: ${project.name}`}><Icon name="trash" size={13} /></button>
     </>
   );
 }

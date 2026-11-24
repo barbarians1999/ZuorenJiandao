@@ -14,7 +14,7 @@ assert.doesNotMatch(
   /title=\{t\('生成任务'\)\}/,
   '生成任务按钮不应使用样式不可控的原生 title',
 );
-assert.match(topBarButton, /className="cc-tip cc-tip-r"/, '共享按钮应使用即时 tooltip');
+assert.match(topBarButton, /className="[^"]*\bcc-tip cc-tip-r\b[^"]*"/, '共享按钮应使用即时 tooltip');
 assert.match(topBarButton, /data-tip=\{label\}/, '共享按钮应将本地化标签用于 tooltip');
 assert.match(topBarButton, /onMouseEnter=/, '共享按钮应提供统一的 hover 反馈');
 assert.match(topBarButton, /onMouseLeave=/, '共享按钮应在离开 hover 后恢复样式');

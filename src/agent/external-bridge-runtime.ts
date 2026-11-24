@@ -26,6 +26,7 @@ import { redactTextForAgentRuntime } from './runtime-artifact';
 import { effectiveToolInvocationArgs } from './execution-policy';
 import { executeExternalGlobalReadTool } from './external-global-read';
 import { discardOrphanedExternalSessions, executeExternalSessionRecovery } from './external-session-recovery';
+import { getExternalAutoApprove } from './external-auto-approve';
 export interface ExternalProposalSnapshot { proposal: Proposal | null; stale: boolean }
 /** Confirmation request for a real-project tool (generation/export/import/…)
  * issued from an external session; the user decides in the OpenChatCut UI. */
@@ -38,6 +39,7 @@ export class ExternalBridgeRuntime {
   private readonly getContext: () => AgentContext;
   private readonly publish: (snapshot: ExternalProposalSnapshot) => void;
   private readonly persistence: ExternalBridgePersistence;
+  private readonly isAutoApprove: () => boolean;
   private readonly runs = new Map<string, ExternalSessionRunLedger>();
   private readonly approvalGate = new ExternalApprovalGate();
   onGuardRequest: ((request: ExternalGuardRequest) => void) | null = null;
@@ -45,9 +47,11 @@ export class ExternalBridgeRuntime {
     projectId: string, editorInstanceId: string, getContext: () => AgentContext,
     publish: (snapshot: ExternalProposalSnapshot) => void,
     persistence: ExternalBridgePersistence = DEFAULT_EXTERNAL_BRIDGE_PERSISTENCE,
+    isAutoApprove: () => boolean = getExternalAutoApprove,
   ) {
     this.projectId = projectId; this.editorInstanceId = editorInstanceId;
     this.getContext = getContext; this.publish = publish; this.persistence = persistence;
+    this.isAutoApprove = isAutoApprove;
   }
 
   binding(): ExternalBridgeBinding {
@@ -73,6 +77,7 @@ export class ExternalBridgeRuntime {
       applyAutomatic: async (count) => this.apply(
         new Set(Array.from({ length: count }, (_, index) => index)), false, false,
       ),
+      autoApprove: this.isAutoApprove(),
     });
   }
 
@@ -175,9 +180,9 @@ export class ExternalBridgeRuntime {
       sessionId: session.id, runId: run.runId, tool: name, args, operationId,
     });
     if (!approved) {
-      // auto (YOLO) sessions skip the confirmation card entirely — the
-      // client explicitly opted into unapproved real-project execution.
-      if (session.approvalMode === 'auto') {
+      // auto (YOLO) sessions or the user's master auto-approve toggle skip
+      // the confirmation card entirely and execute real-project tools directly.
+      if (session.approvalMode === 'auto' || this.isAutoApprove()) {
         const invocation = await run.requested(name, args);
         return run.executeApprovedTool(invocation, args, this.getContext(), signal);
       }
@@ -231,6 +236,24 @@ export class ExternalBridgeRuntime {
       }
       await run.approvalDecision(binding, decision);
     });
+  }
+  async approveAllPending(): Promise<void> {
+    while (true) {
+      const guard = this.approvalGate.pending();
+      if (!guard) break;
+      await this.confirmRealTool(guard.guardId, true);
+      if (this.approvalGate.pending()?.guardId === guard.guardId) break;
+    }
+    const session = this.currentProposalSession();
+    const proposal = session?.proposal;
+    if (session && proposal && !isProposalStale(proposal, this.getContext().getDoc())) {
+      const count = proposal.options[0].operations.length;
+      await this.apply(
+        new Set(Array.from({ length: count }, (_, index) => index)),
+        false,
+        false,
+      );
+    }
   }
   pendingGuard(): ExternalGuardRequest | null {
     const pending = this.approvalGate.pending();
@@ -343,7 +366,7 @@ export class ExternalBridgeRuntime {
     }
     this.sessions.set(session.id, reviewed);
     this.proposalSessionId = reviewed.id;
-    if (reviewed.approvalMode === 'auto') {
+    if (reviewed.approvalMode === 'auto' || this.isAutoApprove()) {
       const count = reviewed.proposal?.options[0].operations.length ?? 0;
       await this.apply(
         new Set(Array.from({ length: count }, (_, index) => index)),

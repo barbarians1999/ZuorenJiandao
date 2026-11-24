@@ -260,11 +260,7 @@ export function ResourceBrowser({
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const clickable = applicable && !disabledNote;
   const canDrag = !!dragKind && !disabledNote;
-  const hintText = disabledNote
-    ? t(disabledNote)
-    : applicable
-      ? `${t(hint)}${canDrag ? t(' · 也可拖到时间线片段上') : ''}`
-      : `${t(hint)}${t('（先在时间线选中，或直接拖到片段上）')}`;
+  void hint;
   const onDragStart = useCallback((event: DragEvent<HTMLButtonElement>, item: ResourceItem) => {
     if (!canDrag || !dragKind) return;
     setLibraryDrag(event, {
@@ -276,10 +272,12 @@ export function ResourceBrowser({
     <PreviewCleanupContext.Provider value={registerCleanup}>
       <div className={layout === 'grid' ? 'cc-resource-browser' : undefined}
         style={layout === 'list' ? { display: 'flex', flexDirection: 'column', gap: 8 } : undefined}>
-        <div className={layout === 'grid' ? 'cc-resource-hint' : undefined}
-          style={{ color: disabledNote ? theme.accent : theme.textDim }}>
-          {hintText}
-        </div>
+        {disabledNote && (
+          <div className={layout === 'grid' ? 'cc-resource-hint' : undefined}
+            style={{ color: theme.accent }}>
+            {t(disabledNote)}
+          </div>
+        )}
         {layout === 'grid' ? (
           <ResourceGrid items={items} activeId={activeId} draggedId={draggedId}
             clickable={clickable} canDrag={canDrag} renderThumb={renderThumb} thumb={thumb}

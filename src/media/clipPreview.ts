@@ -48,6 +48,40 @@ type Entry = {
 const MAX_IDLE_PREVIEW_ENTRIES = 40;
 const entries = new Map<string, Entry>();
 
+// Cold derivative requests can hold their HTTP connections until FFmpeg finishes.
+// Leave connections available for video, audio and project assets.
+const pendingDerivatives = new Set<() => void>();
+let activeDerivatives = 0;
+
+function startNextDerivative(): void {
+  if (activeDerivatives >= 2) return;
+  const next = pendingDerivatives.values().next().value;
+  if (!next) return;
+  pendingDerivatives.delete(next);
+  next();
+}
+
+function requestDerivative<T>(signal: AbortSignal, request: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    signal.throwIfAborted();
+    const abort = () => {
+      pendingDerivatives.delete(start);
+      reject(signal.reason);
+    };
+    const start = () => {
+      signal.removeEventListener('abort', abort);
+      activeDerivatives++;
+      void Promise.resolve().then(request).then(resolve, reject).finally(() => {
+        activeDerivatives--;
+        startNextDerivative();
+      });
+    };
+    pendingDerivatives.add(start);
+    signal.addEventListener('abort', abort, { once: true });
+    startNextDerivative();
+  });
+}
+
 /** Drop the oldest listener-less entries once the idle set exceeds the cap.
  * Map iteration is insertion-ordered, which is a good enough LRU proxy here. */
 function evictIdlePreviews(): void {
@@ -236,8 +270,8 @@ async function load(src: string, sourceRevision: string | undefined, wantStrip: 
     ...(sourceRevision ? { sourceRevision } : {}),
   }).toString();
   const [wave, strip] = await Promise.all([
-    fetchWaveform(query, signal),
-    wantStrip ? fetchFilmstrip(query, signal) : Promise.resolve<StripResult>({ url: null }),
+    requestDerivative(signal, () => fetchWaveform(query, signal)),
+    wantStrip ? requestDerivative(signal, () => fetchFilmstrip(query, signal)) : Promise.resolve<StripResult>({ url: null }),
   ]);
   if (signal.aborted) {
     if (strip.url?.startsWith('blob:')) URL.revokeObjectURL(strip.url);

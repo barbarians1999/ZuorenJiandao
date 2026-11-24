@@ -139,6 +139,7 @@ export async function inspectTimelineDirectExport(options) {
   const hybrid = await inspectOverlayHybridExport({
     ...options,
     scale: options.scale ?? 1,
+    allowCompatSpans: true,
     uploadsDirectory,
     assetsDirectory: ASSETS_DIR,
   });
@@ -263,8 +264,9 @@ async function renderOverlayPlates({ overlayState, plan, platesDir, onPhaseProgr
       plateFiles: new Map(),
     };
   }
+  const excludeRanges = (plan.compatSpans ?? []).map((s) => [s.from, s.to]);
   if (!plan.hasCaptions) {
-    const precomputed = buildSparseOverlayPlan(overlayState, plan.rangeStart, plan.rangeEnd, null);
+    const precomputed = buildSparseOverlayPlan(overlayState, plan.rangeStart, plan.rangeEnd, null, excludeRanges);
     if (!precomputed.framesToRender.length) {
       return { spans: precomputed.spans, plateFiles: new Map() };
     }
@@ -289,7 +291,7 @@ async function renderOverlayPlates({ overlayState, plan, platesDir, onPhaseProgr
     },
     run: async (composition, browser) => {
       const captionSummary = plan.hasCaptions ? composition.props?.__overlayCaptionInfo ?? null : null;
-      const { spans, framesToRender } = buildSparseOverlayPlan(overlayState, plan.rangeStart, plan.rangeEnd, captionSummary);
+      const { spans, framesToRender } = buildSparseOverlayPlan(overlayState, plan.rangeStart, plan.rangeEnd, captionSummary, excludeRanges);
       const plateFiles = new Map();
       if (!framesToRender.length) return { spans, plateFiles };
 
@@ -345,6 +347,7 @@ export async function renderTimeline({
   separateAudioTo,
   directMediaBinaries,
   disableFastExport = false,
+  muted = false,
 }) {
   if (!state || typeof state !== 'object' || !Array.isArray(state.items)) {
     throw new Error('renderTimeline: a valid TimelineState (with items[]) is required');
@@ -357,6 +360,22 @@ export async function renderTimeline({
   signal?.throwIfAborted();
   assertMaterializedRenderSnapshot(state, 'renderTimeline');
   if (project) assertMaterializedRenderSnapshot(project, 'renderTimeline', timelineId);
+  const startedAt = Date.now();
+  let directCutDeclined;
+  let hybridDeclined;
+  const logExportSummary = (diagnostics, encoder) => {
+    const t = diagnostics.timingsMs ?? {};
+    const parts = [`route=${diagnostics.route}`, `encoder=${encoder?.id ?? 'default'}`, `totalMs=${t.total ?? 0}`];
+    if (t.plates !== undefined) parts.push(`platesMs=${t.plates}`);
+    if (t.encode !== undefined) parts.push(`encodeMs=${t.encode}`);
+    if (t.audio !== undefined) parts.push(`audioMs=${t.audio}`);
+    if (t.mux !== undefined) parts.push(`muxMs=${t.mux}`);
+    if (diagnostics.workers !== undefined) parts.push(`workers=${diagnostics.workers}${diagnostics.concurrencyFallback ? '(fallback)' : ''}`);
+    if (diagnostics.fallbackReasons?.directCut) parts.push(`directDeclined=${diagnostics.fallbackReasons.directCut}`);
+    if (diagnostics.fallbackReasons?.hybrid) parts.push(`hybridDeclined=${diagnostics.fallbackReasons.hybrid}`);
+    console.info(`[render] export summary: ${parts.join(' ')}`);
+  };
+
   const direct = !disableFastExport && await tryDirectCutExport({
     state, project, timelineId, outputLocation, onProgress, codec, frameRange, scale,
     videoBitrate, h264Profile: directMediaBinaries?.profile ?? h264Profile, vaapiDevice, signal, separateAudioTo,
@@ -370,8 +389,16 @@ export async function renderTimeline({
     resolveMediaSource: directMediaBinaries?.resolveSource,
     ffprobeExecutable: directMediaBinaries?.ffprobe ?? RenderInternals.getExecutablePath({ type: 'ffprobe', indent: false,
       logLevel: 'error', binariesDirectory: binariesDirectory() }),
-  });
-  if (direct) return direct;
+  }, { onDecline: (reason) => { directCutDeclined = reason; } });
+  if (direct) {
+    const diagnostics = {
+      route: direct.renderRoute ?? 'direct-cut',
+      timingsMs: direct.timingsMs ?? { total: Date.now() - startedAt },
+      ...(direct.totalFrames !== undefined ? { totalFrames: direct.totalFrames } : {}),
+    };
+    logExportSummary(diagnostics, direct.encoder);
+    return { ...direct, diagnostics };
+  }
   const hybridOverlay = !disableFastExport && await tryOverlayHybridExport({
     state,
     project,
@@ -382,6 +409,7 @@ export async function renderTimeline({
     codec,
     frameRange,
     scale: scale ?? 1,
+    allowCompatSpans: true,
     videoBitrate,
     h264Profile: directMediaBinaries?.profile ?? h264Profile,
     vaapiDevice,
@@ -390,12 +418,53 @@ export async function renderTimeline({
     uploadsDirectory: uploadsDirProvider(),
     assetsDirectory: ASSETS_DIR,
     renderOverlayPlates,
+    renderCompatRange: async ({
+      frameRange: compatRange,
+      outputPath: compatOut,
+      includeAudio,
+      h264Profile: compatProfile,
+      signal: compatSignal,
+    }) => {
+      await renderTimeline({
+        state,
+        project,
+        timelineId,
+        outputLocation: compatOut,
+        codec: 'h264',
+        frameRange: compatRange,
+        scale: scale ?? 1,
+        videoBitrate,
+        h264Profile: compatProfile ?? directMediaBinaries?.profile ?? h264Profile,
+        vaapiDevice,
+        signal: compatSignal,
+        muted: !includeAudio,
+        offthreadVideoCacheSizeInBytes,
+        mediaCacheSizeInBytes,
+        offthreadVideoThreads,
+        disableFastExport: true,
+      });
+    },
     ffmpegExecutable: directMediaBinaries?.ffmpeg,
     resolveMediaSource: directMediaBinaries?.resolveSource,
     ffprobeExecutable: directMediaBinaries?.ffprobe ?? RenderInternals.getExecutablePath({ type: 'ffprobe', indent: false,
       logLevel: 'error', binariesDirectory: binariesDirectory() }),
-  });
-  if (hybridOverlay) return hybridOverlay;
+  }, { onDecline: (reason) => { hybridDeclined = reason; } });
+  if (hybridOverlay) {
+    const diagnostics = {
+      route: 'hybrid',
+      ...(hybridOverlay.hybridMode ? { hybridMode: hybridOverlay.hybridMode } : {}),
+      ...(hybridOverlay.compatFrames ? { compatFrames: hybridOverlay.compatFrames } : {}),
+      ...(hybridOverlay.compatReasons?.length ? { compatReasons: hybridOverlay.compatReasons } : {}),
+      ...(directCutDeclined ? { fallbackReasons: { directCut: directCutDeclined } } : {}),
+      timingsMs: hybridOverlay.timingsMs ?? { total: Date.now() - startedAt },
+      ...(hybridOverlay.workers !== undefined ? { workers: hybridOverlay.workers } : {}),
+      ...(hybridOverlay.concurrencyFallback !== undefined ? { concurrencyFallback: hybridOverlay.concurrencyFallback } : {}),
+      ...(hybridOverlay.plateCount !== undefined ? { plateCount: hybridOverlay.plateCount } : {}),
+      ...(hybridOverlay.totalFrames !== undefined ? { totalFrames: hybridOverlay.totalFrames } : {}),
+    };
+    logExportSummary(diagnostics, hybridOverlay.encoder);
+    return { ...hybridOverlay, diagnostics };
+  }
   const cancelSignal = remotionCancelSignal(signal);
 
   const serveUrl = await getServeUrl();
@@ -428,6 +497,7 @@ export async function renderTimeline({
       mediaCacheSizeInBytes,
       offthreadVideoThreads,
       separateAudioTo,
+      ...(muted ? { muted: true } : {}),
       scale: scale && Number.isFinite(scale) && scale > 0 ? scale : 1,
       videoBitrate: codec === 'prores'
         ? undefined
@@ -445,12 +515,23 @@ export async function renderTimeline({
     }),
   });
   signal?.throwIfAborted();
+  const fallbackReasons = {
+    ...(directCutDeclined ? { directCut: directCutDeclined } : {}),
+    ...(hybridDeclined ? { hybrid: hybridDeclined } : {}),
+  };
+  const diagnostics = {
+    route: 'remotion',
+    ...(Object.keys(fallbackReasons).length ? { fallbackReasons } : {}),
+    timingsMs: { total: Date.now() - startedAt },
+  };
+  logExportSummary(diagnostics, rendered.encoder);
   return {
     outputLocation,
     ...(rendered.encoder ? { encoder: rendered.encoder } : {}),
     ...(rendered.encoderFallbackReason
       ? { encoderFallbackReason: rendered.encoderFallbackReason }
       : {}),
+    diagnostics,
   };
 }
 

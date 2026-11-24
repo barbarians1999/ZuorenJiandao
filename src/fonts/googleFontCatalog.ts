@@ -1,4 +1,4 @@
-import { LOCAL_CJK_FONTS, normalizeFontKey } from './localFonts';
+import { LOCAL_FONTS, normalizeFontKey } from './localFonts';
 
 export interface FontCatalogEntry {
   family: string;
@@ -23,7 +23,6 @@ export const GOOGLE_FONT_CATALOG: readonly GoogleFontCatalogEntry[] = [
   { family: 'Dancing Script', aliases: [], loadable: true, source: 'google' },
   { family: 'Fraunces', aliases: [], loadable: true, source: 'google' },
   { family: 'Fredoka', aliases: [], loadable: true, source: 'google' },
-  { family: 'Inter', aliases: [], loadable: true, source: 'google' },
   { family: 'Inter Tight', aliases: [], loadable: true, source: 'google' },
   { family: 'LXGW WenKai TC', aliases: ['LXGW WenKai', '霞鹜文楷'], loadable: true, source: 'google' },
   { family: 'Libre Baskerville', aliases: [], loadable: true, source: 'google' },
@@ -47,7 +46,7 @@ export const GOOGLE_FONT_CATALOG: readonly GoogleFontCatalogEntry[] = [
 
 export const FONT_CATALOG: readonly FontCatalogEntry[] = [
   ...GOOGLE_FONT_CATALOG,
-  ...LOCAL_CJK_FONTS.map((font) => ({
+  ...LOCAL_FONTS.map((font) => ({
     family: font.family,
     aliases: [...font.aliasZh, font.importName],
     loadable: true as const,

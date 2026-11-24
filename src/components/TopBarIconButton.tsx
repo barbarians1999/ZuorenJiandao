@@ -7,17 +7,19 @@ interface TopBarIconButtonProps {
   label: string;
   onClick?: () => void;
   disabled?: boolean;
+  pressed?: boolean;
   badge?: ReactNode;
 }
 
 /** Shared right-side top-bar icon button: instant tooltip and consistent hover feedback. */
-export function TopBarIconButton({ icon, label, onClick, disabled = false, badge }: TopBarIconButtonProps) {
+export function TopBarIconButton({ icon, label, onClick, disabled = false, pressed, badge }: TopBarIconButtonProps) {
   return (
     <button
       type="button"
       className="cc-topbar-icon-button cc-tip cc-tip-r"
       data-tip={label}
       aria-label={label}
+      aria-pressed={pressed}
       onClick={onClick}
       disabled={disabled}
       style={{ position: 'relative', width: 36, height: 36, background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', padding: 0, borderRadius: 6, lineHeight: 0, display: 'grid', placeItems: 'center', color: theme.textDim, opacity: disabled ? 0.35 : 1 }}

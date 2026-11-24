@@ -67,18 +67,17 @@ export function TrackHead({
   const isCaption = kind === 'caption';
   const deleteTitle = trackDeleteTitle(deleteBlockedReason, t);
   const tagColor = isText ? theme.clipText : isEffect ? theme.clipMg : kind === 'video' ? theme.trackVideo : kind === 'audio' ? theme.trackAudioA1 : theme.trackCaption;
-  const nameTitle = config.role === 'anchor' ? `${trackName} · ${t('人声')}`
-    : config.role === 'follower' ? `${trackName} · ${t('配乐（说话时压低）')}`
-      : trackName;
+  const baseTitle = customName && customName !== trackName ? `${trackName} · ${customName}` : trackName;
+  const nameTitle = config.role === 'anchor' ? `${baseTitle} · ${t('人声')}`
+    : config.role === 'follower' ? `${baseTitle} · ${t('配乐（说话时压低）')}`
+      : baseTitle;
   return (
       
 
     <div className={`cc-track-head${isReorderSource ? ' is-reorder-source' : ''}`} style={{ width, cursor: onStartReorder ? 'grab' : undefined, ...(menuElevated ? { zIndex: 40 } : {}) }} title={t('按住上下拖动调整轨道顺序')} onPointerDown={(event) => { if (!onStartReorder || event.button !== 0) return; const target = event.target instanceof Element ? event.target : null; if (target?.closest('button, input, select, textarea, [role="menu"], .cc-caption-style-menu, .cc-duck-menu')) return; onStartReorder(event); }}>
       <div className="cc-track-head-controls">
         <span className={`cc-track-name is-${kind}${isText ? ' is-text' : ''}${isEffect ? ' is-effect' : ''}`} title={t('{name}（{id}）', { name: nameTitle, id: trackId })} style={{ background: tagColor }}>
-
           <span className="cc-track-name-title">{trackName}</span>
-          {customName && <span className="cc-track-name-custom">{customName}</span>}
         </span>
         <button style={flagBtn(hidden)} title={hidden ? t('显示轨道') : t('隐藏轨道')} aria-label={hidden ? t('显示轨道') : t('隐藏轨道')} aria-pressed={hidden} onClick={isCaption ? onToggleCaptions : () => commands.toggleTrackFlag(trackId, 'hidden')}><Icon name={hidden ? 'eyeOff' : 'eye'} size={14} /></button>
         {!isCaption && <button style={flagBtn(muted)} title={muted ? t('取消静音') : t('静音轨道')} aria-label={muted ? t('取消静音') : t('静音轨道')} aria-pressed={muted} onClick={() => commands.toggleTrackFlag(trackId, 'muted')}><Icon name={muted ? 'volumeOff' : 'volume'} size={14} /></button>}

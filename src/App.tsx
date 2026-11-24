@@ -8,6 +8,7 @@ import {
 import { AppSplash, DashboardRoute, EditorRoute } from './app/AppViews';
 import { useInferenceWarmup } from './hooks/useInferenceWarmup';
 import { useUiScaleShortcuts } from './hooks/useUiScaleShortcuts';
+import { WindowCloseConfirmDialog } from './components/WindowCloseConfirmDialog';
 
 export default function App() {
   const t = useT();
@@ -17,9 +18,14 @@ export default function App() {
   useUiScaleShortcuts();
   const { projects, refresh } = useProjects();
 
-  if (!projects) return <AppSplash text={t('加载中…')} />;
-  if (route.name === 'editor') {
-    return <EditorRoute route={route} projects={projects} refresh={refresh} />;
-  }
-  return <DashboardRoute projects={projects} refresh={refresh} />;
+  return (
+    <>
+      {!projects
+        ? <AppSplash text={t('加载中…')} />
+        : route.name === 'editor'
+          ? <EditorRoute route={route} projects={projects} refresh={refresh} />
+          : <DashboardRoute projects={projects} refresh={refresh} />}
+      <WindowCloseConfirmDialog />
+    </>
+  );
 }

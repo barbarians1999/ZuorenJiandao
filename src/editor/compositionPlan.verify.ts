@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { compositionPlan } from './compositionPlan';
+import { compositionPlan, previewLayerWindow, previewVideoMounts } from './compositionPlan';
 import type { TimelineItem, TimelineState } from './types';
 import { sharedVisualFrame } from './transitionAudio';
+import { appearanceAt } from './clipFade';
 import { appendManualCue, newManualCaptions } from '../captions/manualCaptions';
 
 const clip = (id: string, startFrame: number, srcInFrame: number, track = 'V1'): TimelineItem => ({
@@ -18,6 +19,52 @@ const state: TimelineState = {
     { ...clip('music', 0, 0, 'A1'), kind: 'audio', durationInFrames: 900 }],
 };
 const before = JSON.stringify(state);
+const previewWindows = [
+  { key: 'past-outside', from: 0, to: 69 },
+  { key: 'past-third', from: 69, to: 70 },
+  { key: 'past-second', from: 70, to: 80 },
+  { key: 'past-nearest', from: 80, to: 95 },
+  { key: 'playing-a', from: 95, to: 110 },
+  { key: 'playing-b', from: 0, to: 180 },
+  { key: 'future-nearest', from: 110, to: 118 },
+  { key: 'future-second', from: 118, to: 122 },
+  { key: 'future-third', from: 122, to: 130 },
+  { key: 'future-outside', from: 131, to: 170 },
+  { key: 'selected', from: 200, to: 220, selected: true },
+];
+assert.deepEqual(previewLayerWindow(previewWindows, 100, 30), new Set([
+  'playing-a', 'playing-b', 'selected', 'past-nearest', 'past-second', 'future-nearest', 'future-second',
+]), 'keep two nearby layers per direction, plus every active or selected layer');
+assert.deepEqual(previewLayerWindow(previewWindows, 100, 30, 1), new Set([
+  'playing-a', 'playing-b', 'selected', 'past-nearest', 'future-nearest',
+]), 'limit expensive offscreen transitions to the nearest one per direction');
+assert.deepEqual(previewLayerWindow(previewWindows, 180, 30), new Set([
+  'playing-b', 'future-outside', 'selected',
+]), 'keep the recently exited layers at an exclusive cut even when seeking backward');
+const videoWindows = [
+  { key: 'past', from: 0, to: 69, decoderSource: '/a.mp4' },
+  { key: 'current', from: 80, to: 150, decoderSource: '/b.mp4' },
+  { key: 'future', from: 145, to: 170, decoderSource: '/c.mp4' },
+  { key: 'effect', from: 68, to: 69 },
+];
+const playingWindow = previewLayerWindow(videoWindows, 107, 30);
+assert.deepEqual(previewVideoMounts(videoWindows, playingWindow, 107, 30, 120), {
+  mounted: new Set(['current']), retained: undefined, visitedSources: new Set(['/b.mp4']),
+}, 'a fresh seek never opens additional video');
+const mountedHistory = { mounted: new Set(['past', 'future', 'effect']), visitedSources: new Set(['/a.mp4']) };
+assert.equal(previewVideoMounts(videoWindows, playingWindow, 107, 30, 120, mountedHistory).retained, undefined,
+  'the first visit to a source frees extra video');
+const visitedHistory = { ...mountedHistory, visitedSources: new Set(['/a.mp4', '/b.mp4']) };
+assert.deepEqual(previewVideoMounts(videoWindows, playingWindow, 107, 30, 120, visitedHistory), {
+  mounted: new Set(['current', 'future']), retained: 'future', visitedSources: visitedHistory.visitedSources,
+}, 'keep only the closest eligible mounted source when seeking out of its normal window');
+assert.deepEqual(previewVideoMounts(videoWindows, playingWindow, 107, 30, 120, {
+  ...visitedHistory, mounted: new Set(['past', 'effect']),
+}), {
+  mounted: new Set(['current', 'past']), retained: 'past', visitedSources: visitedHistory.visitedSources,
+}, 'never retain effect layers, even when they were mounted');
+assert.equal(previewVideoMounts(videoWindows, new Set(['current', 'future']), 144, 30, 75, visitedHistory).retained, undefined,
+  'release the decoder outside the retention window');
 // Shared decoders must occupy their track's paint slot, not a global underlay.
 const layering = compositionPlan({ ...state, items: [
   clip('lower-single', 90, 0, 'V1'),
@@ -35,6 +82,26 @@ const bothShared = compositionPlan({ ...state, trackOrder: ['V1', 'V2'], items: 
 ] });
 assert.deepEqual(bothShared.visualLayers.map((layer) => layer.map((item) => item.id)),
   [['bottom-a', 'bottom-b'], ['top-a', 'top-b']], 'shared groups follow track order, not lexical track id');
+const previewRun: TimelineState = { ...state, items: [
+  { ...clip('edge-off', 30, 240), pictureDisabled: true },
+  { ...clip('a', 90, 300), transform: { x: 6 } },
+  { ...clip('audio-only', 150, 360), pictureDisabled: true },
+  { ...clip('b', 210, 420), filters: { brightness: 0.5 } },
+] };
+const previewPlan = compositionPlan(previewRun, { mode: 'player' });
+assert.deepEqual(previewPlan.ordered.map((item) => item.id), ['a', 'b']);
+assert.deepEqual(previewPlan.visualLayers.map((group) => group.map((item) => item.id)), [['a', 'audio-only', 'b']]);
+assert.deepEqual(compositionPlan(previewRun).visualLayers.map((group) => group.map((item) => item.id)), [['a'], ['b']]);
+const [run] = previewPlan.sharedVisualGroups;
+const audioOnly = sharedVisualFrame(run!, 179)!;
+assert.equal(appearanceAt(audioOnly.item, audioOnly.localFrame, audioOnly.item.pictureDisabled === true).opacity, 0);
+const nextPicture = sharedVisualFrame(run!, 210)!;
+assert.match(appearanceAt(nextPicture.item, nextPicture.localFrame, false).foregroundStyle.filter!, /brightness\(0\.5\)/);
+const interveningLayer: TimelineItem = { ...clip('overlay', 170, 0), kind: 'image', src: '/overlay.png' };
+assert.deepEqual(compositionPlan({ ...previewRun, items: [...previewRun.items, interveningLayer] }, { mode: 'player' })
+  .visualLayers.map((group) => group[0]!.id), ['a', 'overlay', 'b']);
+const differentClock = previewRun.items.map((item) => item.id === 'b' ? { ...item, srcInFrame: 421 } : item);
+assert.equal(compositionPlan({ ...previewRun, items: differentClock }, { mode: 'player' }).sharedVisualGroups.length, 0);
 const plan = compositionPlan(state);
 assert.deepEqual(plan.ordered.map((item) => item.id), ['a', 'b', 'top']);
 assert.deepEqual(plan.audio.map((item) => item.id), ['music']);

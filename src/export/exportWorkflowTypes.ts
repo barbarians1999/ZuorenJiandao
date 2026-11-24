@@ -53,6 +53,30 @@ export interface ExportJobSnapshot {
   failure?: ExportFailure;
 }
 
+export interface ExportRenderTimingsMs {
+  total: number;
+  plates?: number;
+  encode?: number;
+  audio?: number;
+  mux?: number;
+}
+
+export interface ExportRenderDiagnostics {
+  route: 'direct-cut' | 'hybrid' | 'remotion';
+  hybridMode?: string;
+  compatFrames?: number;
+  compatReasons?: string[];
+  fallbackReasons?: {
+    directCut?: string;
+    hybrid?: string;
+  };
+  timingsMs: ExportRenderTimingsMs;
+  workers?: number;
+  concurrencyFallback?: boolean;
+  plateCount?: number;
+  totalFrames?: number;
+}
+
 export interface ExportJobResult {
   path?: string;
   name?: string;
@@ -64,6 +88,7 @@ export interface ExportJobResult {
   sourceStartSeconds?: number;
   encoder?: ExportEngineInfo;
   encoderFallbackReason?: string;
+  diagnostics?: ExportRenderDiagnostics;
 }
 
 export interface UseExportWorkflowOptions {

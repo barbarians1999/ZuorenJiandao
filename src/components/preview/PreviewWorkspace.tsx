@@ -16,6 +16,8 @@ export function PreviewWorkspace({ preview, inspector, text, textVisible, onRigh
 }) {
   const t = useT();
   const [activeTab, setActiveTab] = useState<InspectorTab>('basic');
+  const [textOpened, setTextOpened] = useState(textVisible);
+  if (textVisible && !textOpened) setTextOpened(true);
   const isMosaicItem = inspector?.selectedItem?.kind === 'mosaic';
   const maskEditing = !textVisible && !!inspector && !inspector.collapsed && !inspector.selectedCaption && !isMosaicItem && activeTab === 'mask';
   const mosaicEditing = !textVisible && !!inspector && !inspector.collapsed && !inspector.selectedCaption && !isMosaicItem && activeTab === 'mosaic';
@@ -46,9 +48,9 @@ export function PreviewWorkspace({ preview, inspector, text, textVisible, onRigh
           fit={inspector.selectedItem && isBackgroundFillActive(preview.state, inspector.selectedItem) ? 'contain' : preview.state.fit}
           activeTab={activeTab} onActiveTabChange={setActiveTab} />
       </div>}
-      <div className="cc-text-workspace-host" style={{ display: textVisible ? 'flex' : 'none' }}>
+      {(textVisible || textOpened) && <div className="cc-text-workspace-host" style={{ display: textVisible ? 'flex' : 'none' }}>
         <TextWorkspace {...text} />
-      </div>
+      </div>}
     </div>}
   </div>;
 }

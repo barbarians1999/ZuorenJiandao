@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { historyReduce, projectReduce } from './reduce';
 import { makeDraft } from './store';
-import { timelineItemAssetId, usedMediaAssetIds } from './mediaAssetUsage';
+import { activeTimelineUsedMediaAssetIds, timelineItemAssetId, usedMediaAssetIds } from './mediaAssetUsage';
+import { filterMediaAssets } from '../media/mediaPoolFilter';
 import { verifyMulticamAssetRemoval } from './mediaAssetUsageMulticam.verify-support';
 import { sourceRevisionForTimelineItem } from './mediaSourceRevision';
 import { resolveTimelineRenderPlan } from './sequenceGraph';
@@ -86,6 +87,37 @@ assert.equal(timelineItemAssetId(linkedA, doc.assets), assetA.id);
 assert.equal(timelineItemAssetId(legacyA, doc.assets), assetA.id, 'legacy clips may resolve only when source and name are unambiguous');
 assert.equal(timelineItemAssetId(clip('ambiguous', 'unknown', assetA.src), doc.assets), undefined);
 assert.deepEqual([...usedMediaAssetIds(doc)].sort(), [assetA.id, assetB.id, otherAsset.id]);
+{
+  const timelineOnlyDoc: Pick<ProjectDoc, 'assets' | 'timelines'> = {
+    assets: [assetA, assetB, otherAsset],
+    timelines: [
+      {
+        ...doc.timelines[0]!,
+        id: 'tl-active',
+        items: [
+          clip('v1', assetA.name, assetA.src, assetA.id),
+          { id: 'seq-1', track: 'V1', startFrame: 60, durationInFrames: 30, name: 'Sub', kind: 'sequence', timelineId: 'tl-nested' },
+        ],
+        multicamGroups: [],
+      },
+      {
+        ...doc.timelines[1]!,
+        id: 'tl-nested',
+        items: [clip('nested-b', assetB.name, assetB.src, assetB.id)],
+      },
+      {
+        ...doc.timelines[1]!,
+        id: 'tl-other',
+        items: [clip('other-c', otherAsset.name, otherAsset.src, otherAsset.id)],
+      },
+    ],
+  };
+  assert.deepEqual(
+    [...activeTimelineUsedMediaAssetIds(timelineOnlyDoc, 'tl-active')].sort(),
+    [assetA.id, assetB.id],
+    'activeTimelineUsedMediaAssetIds includes active timeline + nested sequences, excluding unrelated timelines',
+  );
+}
 assert.equal(sourceRevisionForTimelineItem(linkedA, [assetB, assetA, otherAsset]), 'rev-a');
 assert.equal(remainingSourceFrames(linkedA, 30, [assetB, assetA, otherAsset]), 60);
 assert.deepEqual(
@@ -419,5 +451,19 @@ assert.match(
   /if\s*\(!result\.changed\)/,
   'the timeline must not show relink success when the document was unchanged',
 );
+
+{
+  const usageSet = new Set([assetA.id]);
+  const pool = [assetA, assetB, otherAsset];
+  assert.equal(filterMediaAssets({ assets: pool, query: '', semanticResults: null, type: 'all', usage: 'all', usedAssetIds: usageSet, favoritesOnly: false, sort: 'newest' }).visible.length, 3);
+  assert.deepEqual(
+    filterMediaAssets({ assets: pool, query: '', semanticResults: null, type: 'all', usage: 'used', usedAssetIds: usageSet, favoritesOnly: false, sort: 'newest' }).visible.map((a) => a.id),
+    [assetA.id],
+  );
+  assert.deepEqual(
+    filterMediaAssets({ assets: pool, query: '', semanticResults: null, type: 'all', usage: 'unused', usedAssetIds: usageSet, favoritesOnly: false, sort: 'newest' }).visible.map((a) => a.id),
+    [otherAsset.id, assetB.id],
+  );
+}
 
 console.log('mediaAssetUsage.verify: ok');

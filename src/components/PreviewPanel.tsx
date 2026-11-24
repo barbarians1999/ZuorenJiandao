@@ -6,6 +6,7 @@ import type { CompositionMosaic } from '../editor/compositionMosaic';
 import type { SelectedPreviewStatus, SelectedPreviewStatusListener } from '../gl/previewAdapter';
 import {
   captionTrackEntries,
+  type MediaAsset,
   type ProjectDoc,
   type ClipTransform,
   type ClipMask,
@@ -16,6 +17,7 @@ import {
   type TimelineState,
   type TrackId,
 } from '../editor/types';
+import { isTimelineMediaAssetKind } from '../editor/mediaTypes';
 import { useSelectionRefMode } from '../agent/selection-refs';
 import { RegionPickOverlay } from './preview/RegionPickOverlay';
 import { CaptionPreviewEditor } from '../captions/CaptionPreviewEditor';
@@ -29,9 +31,11 @@ import { appendDroppedManualCaption } from '../captions/manualCaptions';
 import { Icon } from './icons';
 import { useT } from '../i18n/locale';
 import { invokeAction } from '../shortcuts/actionRegistry';
-import { ReviewCommentsButton, type ReviewOpenRequest } from '../review/ReviewCommentsButton';
+import { type ReviewOpenRequest } from '../review/ReviewCommentsButton';
 import { usePreviewProjectDoc } from '../media/previewMedia';
-import { PreviewSourceToggle, PreviewProxyStatus } from './preview/PreviewSourceControls';
+import { loadTimelineView } from '../persist/sessionPrefs';
+import { PreviewProxyStatus } from './preview/PreviewSourceControls';
+import { PreviewMonitorBar } from './preview/PreviewMonitorBar';
 import type { SlipPreview } from '../editor/slip';
 import { SlipTwoUpPreview } from './SlipTwoUpPreview';
 import { PREVIEW_SHARED_AUDIO_TAGS } from './previewAudioPool';
@@ -40,7 +44,8 @@ import { PreviewTransformOverlay } from './preview/PreviewTransformOverlay';
 import { PreviewMaskOverlay } from './preview/PreviewMaskOverlay';
 import { PreviewMosaicOverlay } from './preview/PreviewMosaicOverlay';
 import { fitPreviewCanvasSize, previewPaddedClientSize, previewStageContentSize, type PreviewCanvasSize } from './preview/previewCanvasGeometry';
-import { PLAYBACK_RATE_EVENT } from './timeline/shuttle';
+import { SourceAssetPreview } from './preview/SourceAssetPreview';
+import { PLAYBACK_RATE_EVENT, SHUTTLE_STATE_EVENT } from './timeline/shuttle';
 
 const MEDIA_LOADING_NOTICE_DELAY_MS = 160;
 
@@ -83,6 +88,13 @@ interface PreviewPanelProps {
   onSelectedPreviewStatus?: SelectedPreviewStatusListener;
   slipPreview?: SlipPreview | null;
   hoverPreviewFrame?: number | null;
+  timelineScrubbing?: boolean;
+  previewAsset?: MediaAsset | null;
+  onClosePreviewAsset?: () => void;
+  onAddPreviewAsset?: (asset: MediaAsset) => void;
+  zoneIn?: number | null;
+  zoneOut?: number | null;
+  projectName?: string;
 }
 
 export const PreviewPanel = memo(function PreviewPanel({
@@ -90,9 +102,11 @@ export const PreviewPanel = memo(function PreviewPanel({
   state, project, playerRef, onImport, offlineSrcs, onUpdateCaptions, onLiveCaptionsPreview, onSelectCaption, activeCaptionSelection,
   onSelectItem, onSetItemTransform, onSetItemKeyframe, onRemoveItemKeyframe, onSeek, onBeginHistoryGesture, onEndHistoryGesture,
   onItemPropChange,
-  projectId, timelineId, reviewState, selectedItem, reviewRequest, inspectorOpen, onToggleInspector,
+  projectId, timelineId, reviewState: _reviewState, selectedItem, reviewRequest: _reviewRequest, inspectorOpen: _inspectorOpen, onToggleInspector: _onToggleInspector,
   selectedPreviewStatuses, onSelectedPreviewStatus, slipPreview,
-  hoverPreviewFrame = null,
+  hoverPreviewFrame = null, timelineScrubbing = false,
+  previewAsset = null, onClosePreviewAsset, onAddPreviewAsset,
+  zoneIn = null, zoneOut = null, projectName,
 }: PreviewPanelProps) {
   const t = useT();
   const renderProject = useMemo<ProjectDoc>(() => ({
@@ -103,6 +117,11 @@ export const PreviewPanel = memo(function PreviewPanel({
   }), [project, state, timelineId]);
   const preview = usePreviewProjectDoc(renderProject, timelineId);
   const duration = preview.plan.durationInFrames;
+  const hasItems = state.items.length > 0;
+  const savedPlayhead = useMemo(
+    () => hasItems ? loadTimelineView(projectId, timelineId)?.playhead ?? 0 : 0,
+    [hasItems, projectId, timelineId],
+  );
   const [hiddenCaptionKeys, setHiddenCaptionKeys] = useState<Record<string, string | null>>({});
   const playerInputProps = useMemo(() => ({
     state: preview.state,
@@ -111,12 +130,14 @@ export const PreviewPanel = memo(function PreviewPanel({
     selectedItemId: selectedItem?.id,
     hiddenCaptionKeys,
     onSelectedPreviewStatus,
-  }), [preview.state, preview.project, timelineId, selectedItem?.id, hiddenCaptionKeys, onSelectedPreviewStatus]);
+    previewAudioEnabled: !timelineScrubbing,
+  }), [preview.state, preview.project, timelineId, selectedItem?.id, hiddenCaptionKeys, onSelectedPreviewStatus, timelineScrubbing]);
   const thumbnailInputProps = useMemo(() => ({
     state: preview.state,
     project: preview.project,
     timelineId,
     hiddenCaptionKeys,
+    previewAudioEnabled: false,
   }), [preview.state, preview.project, timelineId, hiddenCaptionKeys]);
   const inputRef = useRef<HTMLInputElement>(null);
   const videoBoxRef = useRef<HTMLDivElement>(null);
@@ -124,14 +145,23 @@ export const PreviewPanel = memo(function PreviewPanel({
   const [stageSize, setStageSize] = useState<PreviewCanvasSize>({ width: 0, height: 0 });
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [shuttleRate, setShuttleRate] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
   useEffect(() => {
     const onRate = (event: Event) => {
       const rate = (event as CustomEvent<{ rate?: number }>).detail?.rate;
       setPlaybackRate(typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : 1);
     };
+    const onShuttle = (event: Event) => {
+      const rate = (event as CustomEvent<{ rate?: number }>).detail?.rate;
+      setShuttleRate(typeof rate === 'number' && Number.isFinite(rate) ? rate : 0);
+    };
     window.addEventListener(PLAYBACK_RATE_EVENT, onRate);
-    return () => window.removeEventListener(PLAYBACK_RATE_EVENT, onRate);
+    window.addEventListener(SHUTTLE_STATE_EVENT, onShuttle);
+    return () => {
+      window.removeEventListener(PLAYBACK_RATE_EVENT, onRate);
+      window.removeEventListener(SHUTTLE_STATE_EVENT, onShuttle);
+    };
   }, []);
   const [showSafe, setShowSafe] = useState(false);
   const [autoEditCaption, setAutoEditCaption] = useState<{ trackId: TrackId; laneId: string } | null>(null);
@@ -155,7 +185,6 @@ export const PreviewPanel = memo(function PreviewPanel({
 
     }
     : null;
-  const hasItems = state.items.length > 0;
   const previewCanvasSize = fitPreviewCanvasSize(stageSize, {
     width: state.width,
     height: state.height,
@@ -236,6 +265,7 @@ export const PreviewPanel = memo(function PreviewPanel({
     const stage = stageRef.current;
     if (!stage || typeof ResizeObserver === 'undefined') return undefined;
     const apply = (next: PreviewCanvasSize) => {
+      if (next.width <= 0 || next.height <= 0) return;
       setStageSize((current) => (
         current.width === next.width && current.height === next.height ? current : next
       ));
@@ -259,6 +289,11 @@ export const PreviewPanel = memo(function PreviewPanel({
   }, []);
   // Selection mode (canvas-region-marked): drag a marquee → region reference
   const pickMode = useSelectionRefMode();
+  useEffect(() => {
+    if (!previewAsset) return;
+    invokeAction('shuttle-pause', undefined, 'toolbar');
+    playerRef.current?.pause();
+  }, [previewAsset, playerRef]);
   const importFiles = async (files: FileList | File[]) => {
     if (!files.length || busy) return;
     setBusy(true);
@@ -290,52 +325,76 @@ export const PreviewPanel = memo(function PreviewPanel({
   return (
     <section className="cc-preview-panel" data-cc-shortcut-surface="preview" style={{ display: 'flex', flex: 1, flexDirection: 'column', background: theme.panel, minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
       <div className="cc-preview-header" style={{ height: 30, padding: '0 12px', display: 'flex', alignItems: 'center', borderBottom: `0.5px solid ${theme.border}`, flexShrink: 0 }}>
-        <span style={{ fontSize: 12, color: theme.text }}>{t('预览')}</span>
-        {pickMode && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginLeft: 10, fontSize: 11, color: theme.accent }}>
-            <Icon name="cursor" size={11} />
-            {t('选择模式：在画面上拖框选区作为引用')}
-          </span>
+        {previewAsset ? (
+          <>
+            <span className="cc-preview-source-pill">{t('素材预览')}</span>
+            <span className="cc-preview-spec cc-preview-source-name" title={previewAsset.name} style={{ marginLeft: 8, fontSize: 11.5, color: theme.text }}>
+              {previewAsset.name}
+            </span>
+            {previewAsset.width && previewAsset.height ? (
+              <span className="cc-preview-spec" style={{ marginLeft: 8, fontSize: 11, color: theme.textDim, fontVariantNumeric: 'tabular-nums' }}>
+                {previewAsset.width} × {previewAsset.height}
+              </span>
+            ) : null}
+            <div className="cc-preview-header-actions" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {onAddPreviewAsset && isTimelineMediaAssetKind(previewAsset.kind) && (
+                <button
+                  type="button"
+                  className="cc-preview-source-btn is-primary"
+                  onClick={() => onAddPreviewAsset(previewAsset)}
+                >
+                  {t('加入时间线')}
+                </button>
+              )}
+              <button
+                type="button"
+                className="cc-preview-source-btn"
+                onClick={() => onClosePreviewAsset?.()}
+              >
+                {t('返回时间线')}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <span style={{ fontSize: 12, color: theme.text }}>{t('预览')}</span>
+            <span className="cc-preview-spec" style={{ marginLeft: 10, fontSize: 11, color: theme.textDim, fontVariantNumeric: 'tabular-nums' }}>
+              {state.width} × {state.height} · {state.fps} fps
+            </span>
+            {pickMode && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginLeft: 10, fontSize: 11, color: theme.accent }}>
+                <Icon name="cursor" size={11} />
+                {t('选择模式：在画面上拖框选区作为引用')}
+              </span>
+            )}
+            <div className="cc-preview-header-actions" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {state.items.length > 0 && (
+                <button type="button" onClick={() => setShowSafe((v) => !v)} aria-pressed={showSafe}
+                  title={t('切换安全区参考框')}
+                  style={{
+                    fontSize: 11, lineHeight: 1, padding: '3px 8px', borderRadius: 5, cursor: 'pointer',
+                    border: `0.5px solid ${theme.border}`, background: showSafe ? theme.panelAlt : 'transparent',
+                    color: showSafe ? theme.text : theme.textDim,
+                  }}>
+                  {t('安全框')}
+                </button>
+              )}
+            </div>
+          </>
         )}
-        <div className="cc-preview-header-actions" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <ReviewCommentsButton
-            projectId={projectId}
-            timelineId={timelineId}
-            state={reviewState}
-            selectedItem={selectedItem}
-            openRequest={reviewRequest}
-            getCurrentFrame={() => playerRef.current?.getCurrentFrame() ?? 0}
-            onSeek={(frame) => playerRef.current?.seekTo(frame)}
-          />
-          {state.items.length > 0 && (
-            <PreviewSourceToggle />
-          )}
-          {state.items.length > 0 && (
-            <button type="button" onClick={() => setShowSafe((v) => !v)} aria-pressed={showSafe}
-              title={t('切换标题/动作安全区参考框（竖屏成片构图辅助）')}
-              style={{
-                fontSize: 11, lineHeight: 1, padding: '3px 8px', borderRadius: 5, cursor: 'pointer',
-                border: `0.5px solid ${theme.border}`, background: showSafe ? theme.panelAlt : 'transparent',
-                color: showSafe ? theme.text : theme.textDim,
-              }}>
-              {t('安全框')}
-            </button>
-          )}
-          {selectedItem && (
-            <button type="button" onClick={onToggleInspector} aria-pressed={inspectorOpen}
-              title={inspectorOpen ? t('收起属性') : t('展开属性')}
-              style={{
-                fontSize: 11, lineHeight: 1, padding: '3px 8px', borderRadius: 5, cursor: 'pointer',
-                border: `0.5px solid ${theme.border}`, background: inspectorOpen ? theme.panelAlt : 'transparent',
-                color: inspectorOpen ? theme.text : theme.textDim,
-              }}>
-              {t('属性')}
-            </button>
-          )}
-        </div>
       </div>
-      <PreviewProxyStatus proxies={preview.proxies} />
+      {previewAsset && (
+        <SourceAssetPreview
+          key={previewAsset.id}
+          asset={previewAsset}
+          fps={state.fps}
+          onClose={() => onClosePreviewAsset?.()}
+          onAdd={onAddPreviewAsset}
+        />
+      )}
+      {!previewAsset && <PreviewProxyStatus proxies={preview.proxies} />}
       <div ref={stageRef} className="cc-preview-stage"
+        style={previewAsset ? { display: 'none' } : undefined}
         // Suppress the browser's native <video> context menu (download / picture-in-picture
         // / loop) because the preview is a canvas, not an exposed HTML5 video element.
         onContextMenu={(event) => event.preventDefault()}
@@ -371,6 +430,7 @@ export const PreviewPanel = memo(function PreviewPanel({
               component={TimelineComposition}
               inputProps={playerInputProps}
               durationInFrames={duration}
+              initialFrame={Math.min(savedPlayhead, duration - 1)}
               fps={state.fps}
               compositionWidth={state.width}
               compositionHeight={state.height}
@@ -437,8 +497,8 @@ export const PreviewPanel = memo(function PreviewPanel({
                 background: themeAlpha.shadow(0.88), color: theme.text, fontSize: 10,
               }}>
                 {selectedItem?.kind === 'sequence'
-                  ? t('嵌套序列当前使用轻量预览；需导出检查完整效果')
-                  : t('轻量预览 · 未选中效果不代表成片；选中片段可检查精确效果')}
+                  ? t('嵌套序列轻量预览')
+                  : t('轻量预览 · 选中片段看精确效果')}
               </div>
             )}
             {showSafe && <SafeZoneOverlay />}
@@ -470,18 +530,20 @@ export const PreviewPanel = memo(function PreviewPanel({
           </div>
         )}
       </div>
-      <div className="cc-preview-transport">
-        <button
-          type="button"
-          className="cc-timeline-play-button cc-preview-play-button cc-tip"
-          data-tip={playing ? t('暂停 (空格)') : t('播放 (空格)')}
-          aria-label={playing ? t('暂停 (空格)') : t('播放 (空格)')}
-          aria-pressed={playing}
-          onClick={() => invokeAction('play-pause', undefined, 'toolbar')}
-        >
-          <Icon name={playing ? 'pause' : 'play'} size={15} />
-        </button>
-      </div>
+      <PreviewMonitorBar
+        state={state}
+        project={project}
+        projectName={projectName}
+        timelineId={timelineId}
+        playerRef={playerRef}
+        duration={duration}
+        playing={playing}
+        shuttleRate={shuttleRate}
+        zoneIn={zoneIn}
+        zoneOut={zoneOut}
+        hidden={Boolean(previewAsset)}
+        onSeek={onSeek}
+      />
     </section>
   );
 });

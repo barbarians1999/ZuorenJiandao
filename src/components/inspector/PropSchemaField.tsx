@@ -1,10 +1,11 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { useRef, type CSSProperties, type ReactNode } from 'react';
 import { theme } from '../../theme';
 import type { PropSpec } from '../../types';
 import { FONT_CATALOG } from '../../fonts/googleFonts';
 import { useT } from '../../i18n/locale';
 import { importMedia } from '../../media/upload';
 import { resolveInspectorTextAreaRows } from './inspectorTextArea';
+import { useInspectorWheel } from './useInspectorWheel';
 
 interface PropSchemaFieldProps {
   spec: PropSpec;
@@ -46,11 +47,18 @@ function PropControl({ spec, value, onChange }: PropSchemaFieldProps): ReactNode
 
 function NumberField({ spec, value, onChange }: PropSchemaFieldProps) {
   const bounded = typeof spec.min === 'number' && typeof spec.max === 'number';
+  const current = Number(value ?? spec.defaultValue ?? spec.min ?? 0);
+  const min = spec.min ?? -Infinity;
+  const max = spec.max ?? Infinity;
+  const step = spec.step ?? 1;
+  const numberRef = useRef<HTMLInputElement>(null);
+  useInspectorWheel(numberRef, { value: current, min, max, step, onChange });
   const input = <input
+    ref={numberRef}
     type="number"
     min={spec.min}
     max={spec.max}
-    step={spec.step ?? 1}
+    step={step}
     value={value == null ? '' : Number(value)}
     onChange={(event) => onChange(event.target.value === '' ? 0 : Number(event.target.value))}
     style={bounded ? { ...FIELD_STYLE, width: 72, flex: 'none' } : FIELD_STYLE}
@@ -62,8 +70,8 @@ function NumberField({ spec, value, onChange }: PropSchemaFieldProps) {
         type="range"
         min={spec.min}
         max={spec.max}
-        step={spec.step ?? 1}
-        value={Number(value ?? spec.defaultValue ?? spec.min)}
+        step={step}
+        value={current}
         onChange={(event) => onChange(Number(event.target.value))}
         style={{ flex: 1, minWidth: 0 }}
       />

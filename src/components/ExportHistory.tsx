@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { theme, themeAlpha } from '../theme';
 import { Icon } from './icons';
 import { TopBarIconButton } from './TopBarIconButton';
@@ -52,60 +53,61 @@ export function ExportHistory() {
     setRecords([]);
   };
 
+  const modal = open ? (
+    <div onClick={() => setOpen(false)} style={backdrop}>
+      <div className="cc-modal" onClick={(e) => e.stopPropagation()} style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '13px 16px', borderBottom: `0.5px solid ${theme.border}` }}>
+          <span style={{ color: theme.accent, lineHeight: 0 }}><Icon name="download" size={17} /></span>
+          <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{t('导出历史')}</span>
+          <button onClick={() => setOpen(false)} title={t('关闭')} style={iconBtn}><Icon name="x" size={15} /></button>
+        </div>
+
+        <div style={{ padding: 12, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, minHeight: 120 }}>
+          {loading ? (
+            <div style={emptyState}>{t('加载中…')}</div>
+          ) : records.length === 0 ? (
+            <div style={emptyState}>{t('还没有导出记录')}</div>
+          ) : (
+            records.map((r) => (
+              <div key={r.id} style={row}>
+                <span style={{ color: theme.textDim, lineHeight: 0 }}><Icon name="clock" size={14} /></span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
+                  <div style={{ fontSize: 11, color: theme.textDim }}>{meta(r)} · {relTime(r.createdAt)}</div>
+                </div>
+                {r.destinationId && window.openChatCutDesktop?.revealExport && (
+                  <button type="button" onClick={() => {
+                    void window.openChatCutDesktop?.revealExport(r.destinationId!, r.name).catch(() => undefined);
+                  }}
+                    aria-label={t('打开文件夹')} title={t('打开文件夹')} style={folderBtn}>
+                    <Icon name="folder" size={14} />
+                    <span>{t('打开文件夹')}</span>
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 16px', borderTop: `0.5px solid ${theme.border}` }}>
+          <button onClick={handleClear} disabled={records.length === 0} style={{ ...ghostBtn, opacity: records.length === 0 ? 0.4 : 1, cursor: records.length === 0 ? 'default' : 'pointer' }}>
+            {t('清空历史')}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <>
       <TopBarIconButton icon="download" label={t('导出历史')} onClick={() => setOpen(true)} />
-
-      {open && (
-        <div onClick={() => setOpen(false)} style={backdrop}>
-          <div onClick={(e) => e.stopPropagation()} style={card}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '13px 16px', borderBottom: `0.5px solid ${theme.border}` }}>
-              <span style={{ color: theme.accent, lineHeight: 0 }}><Icon name="download" size={17} /></span>
-              <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{t('导出历史')}</span>
-              <button onClick={() => setOpen(false)} title={t('关闭')} style={iconBtn}><Icon name="x" size={15} /></button>
-            </div>
-
-            <div style={{ padding: 12, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, minHeight: 120 }}>
-              {loading ? (
-                <div style={emptyState}>{t('加载中…')}</div>
-              ) : records.length === 0 ? (
-                <div style={emptyState}>{t('还没有导出记录')}</div>
-              ) : (
-                records.map((r) => (
-                  <div key={r.id} style={row}>
-                    <span style={{ color: theme.textDim, lineHeight: 0 }}><Icon name="clock" size={14} /></span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
-                      <div style={{ fontSize: 11, color: theme.textDim }}>{meta(r)} · {relTime(r.createdAt)}</div>
-                    </div>
-                    {r.destinationId && window.openChatCutDesktop?.revealExport && (
-                      <button type="button" onClick={() => {
-                        void window.openChatCutDesktop?.revealExport(r.destinationId!, r.name).catch(() => undefined);
-                      }}
-                        aria-label={t('打开文件夹')} title={t('打开文件夹')} style={folderBtn}>
-                        <Icon name="folder" size={14} />
-                        <span>{t('打开文件夹')}</span>
-                      </button>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 16px', borderTop: `0.5px solid ${theme.border}` }}>
-              <button onClick={handleClear} disabled={records.length === 0} style={{ ...ghostBtn, opacity: records.length === 0 ? 0.4 : 1, cursor: records.length === 0 ? 'default' : 'pointer' }}>
-                {t('清空历史')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {modal && (typeof document !== 'undefined' ? createPortal(modal, document.body) : modal)}
     </>
   );
 }
 
 const backdrop: React.CSSProperties = {
-  position: 'fixed', inset: 0, background: themeAlpha.shadow(0.55), zIndex: 60,
+  position: 'fixed', inset: 0, background: themeAlpha.shadow(0.55), zIndex: 2000,
   display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
 };
 const card: React.CSSProperties = {

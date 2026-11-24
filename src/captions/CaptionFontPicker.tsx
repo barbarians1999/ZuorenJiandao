@@ -13,6 +13,5 @@ export function CaptionFontPicker({ captions, onUpdate }: {
     <div className="cc-cap-label">{t('字体 · 整个字幕轨道')}</div>
     <FontPicker value={current} fontAssetId={captions.styleOverride?.fontAssetId}
       onChange={(choice) => onUpdate(captionFontPatch(captions, choice, 'track'))} />
-    <div className="cc-cap-hint">{t('应用到这个字幕轨道；只换字体，保留白字黑边和其他设置。')}</div>
   </div>;
 }

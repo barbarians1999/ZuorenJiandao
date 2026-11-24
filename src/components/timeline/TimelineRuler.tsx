@@ -23,6 +23,7 @@ interface TimelineRulerProps {
   pickMode: boolean;
   startPick: (e: React.PointerEvent, origin: TimelinePickDrag['origin']) => void;
   seekTo: (clientX: number) => void;
+  scrubTo: (clientX: number) => void;
   rulerTimecodeRef: RefObject<HTMLSpanElement | null>;
   playheadFrame: number;
   zoneIn: number | null;
@@ -34,7 +35,7 @@ interface TimelineRulerProps {
 
 export const TimelineRuler = memo(function TimelineRuler({
   state, empty, px, majorFrames, minorFrames, minorTicksPerMajor, rulerEndFrame, visibleWindow,
-  pickMode, startPick, seekTo, rulerTimecodeRef, playheadFrame, zoneIn, zoneOut,
+  pickMode, startPick, seekTo, scrubTo, rulerTimecodeRef, playheadFrame, zoneIn, zoneOut,
   markers, onEditMarker, pinnedMarkerId,
 }: TimelineRulerProps) {
   const t = useT();
@@ -68,10 +69,9 @@ export const TimelineRuler = memo(function TimelineRuler({
         onPointerMove={(e) => {
           if (pickMode || !e.currentTarget.hasPointerCapture(e.pointerId) || lastScrubX.current === e.clientX) return;
           lastScrubX.current = e.clientX;
-          seekTo(e.clientX);
+          scrubTo(e.clientX);
         }}
         onPointerUp={(e) => {
-          if (!pickMode && e.currentTarget.hasPointerCapture(e.pointerId) && lastScrubX.current !== e.clientX) seekTo(e.clientX);
           lastScrubX.current = null;
           e.currentTarget.style.cursor = '';
         }}

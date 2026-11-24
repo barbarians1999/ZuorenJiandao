@@ -4,9 +4,9 @@ import { theme } from '../../theme';
 import { SliderRow } from '../inspector/InspectorKeyframeControls';
 
 const ROLE_OPTIONS: ReadonlyArray<{ role: TrackRole | null; label: string; hint: string }> = [
-  { role: null, label: '普通音频', hint: '不自动压低其他轨道，也不跟随人声变化。' },
-  { role: 'anchor', label: '人声', hint: '人声片段播放时，让配乐轨道降低音量。' },
-  { role: 'follower', label: '配乐（说话时压低）', hint: '另一个轨道设为人声后，配乐会在其片段播放时压低。' },
+  { role: null, label: '普通音频', hint: '不自动压低其他轨道，也不跟随人声变化' },
+  { role: 'anchor', label: '人声', hint: '播放人声时自动压低配乐轨道' },
+  { role: 'follower', label: '配乐压低', hint: '检测到人声轨道说话时自动降低音量' },
 ];
 
 const DEPTH_OPTIONS = [
@@ -36,21 +36,21 @@ export function TrackAudioControlView({ config, onChange, onRoleChosen, translat
   const gainDb = config.audioRouting?.gainDb ?? 0;
   return (
     <div className="cc-track-audio-control" style={{ display: 'grid', gap: 10, fontSize: 14, lineHeight: 1.5 }}>
-      <div role="group" aria-label={t('轨道用途')} style={{ display: 'grid', gap: 6 }}>
+      <div role="group" aria-label={t('轨道用途')} style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6 }}>
         {ROLE_OPTIONS.map((option) => <button
           key={option.label}
           type="button"
           className="cc-insp-btn"
           aria-pressed={currentRole === option.role}
-          style={{ textAlign: 'left', padding: '8px 10px', fontSize: 14, whiteSpace: 'normal',
+          title={t(option.hint)}
+          style={{ textAlign: 'center', padding: '6px', fontSize: 14, whiteSpace: 'nowrap',
             borderColor: currentRole === option.role ? theme.accent : undefined }}
           onClick={() => {
             onChange({ role: option.role });
             onRoleChosen?.(option.role);
           }}
         >
-          <strong style={{ display: 'block' }}>{t(option.label)}</strong>
-          <span style={{ display: 'block', color: theme.textMuted, fontSize: 14 }}>{t(option.hint)}</span>
+          {t(option.label)}
         </button>)}
       </div>
       {currentRole === 'follower' && <div>
@@ -79,7 +79,6 @@ export function TrackAudioControlView({ config, onChange, onRoleChosen, translat
           onReset={() => onChange({ audioRouting: { gainDb: null } })}
           resetDisabled={gainDb === 0}
         />
-        <div style={{ marginTop: 6, color: theme.textMuted, fontSize: 14 }}>{t('作用于这个轨道的所有片段，不修改源文件。')}</div>
       </div>
     </div>
   );

@@ -20,7 +20,7 @@ assert.doesNotMatch(persistence, /seekTo\(0\)/, 'saving must not override per-dr
 const playhead = readFileSync(new URL('./timeline/usePlayheadPaint.ts', import.meta.url), 'utf8');
 assert.match(playhead, /if \(!isCurrentTimeline\(\)\) return;/);
 assert.match(playhead, /persistHead\(playheadRef.current\)/);
-assert.match(playhead, /\}, \[playerRef, projectId, timelineId\]\)/);
+assert.match(playhead, /\}, \[playerRef, projectId, timelineId, scrubSeek, persistHead\]\)/);
 const feedbackCss = readFileSync(new URL('./editorFeedback.css', import.meta.url), 'utf8');
 assert.ok([...feedbackCss.matchAll(/font-size:\s*(\d+)px/g)].every((match) => Number(match[1]) >= 14),
   'new save and attachment feedback must not reintroduce tiny secondary UI');

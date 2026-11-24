@@ -9,6 +9,72 @@ import { selectTransitionPreviewAdapter, staticEffectPreviewStatus, staticPrevie
 import { hasPrivacyMosaic } from './mosaic';
 import type { SelectedPreviewStatus } from '../gl/previewAdapter';
 
+export interface PreviewLayerRange {
+  key: string;
+  from: number;
+  to: number;
+  selected?: boolean;
+  decoderSource?: string;
+}
+
+/** The Player always renders active layers. Only the hidden neighbors have a budget. */
+export function previewLayerWindow(
+  ranges: readonly PreviewLayerRange[],
+  frame: number,
+  radius: number,
+  neighborsPerDirection = 2,
+): Set<string> {
+  const active = new Set<string>();
+  const before = [];
+  const after = [];
+  for (const range of ranges) {
+    if (range.selected || (frame >= range.from && frame < range.to)) active.add(range.key);
+    else if (range.to <= frame && frame - range.to < radius) before.push(range);
+    else if (range.from > frame && range.from - frame <= radius) after.push(range);
+  }
+  before.sort((a, b) => b.to - a.to);
+  after.sort((a, b) => a.from - b.from);
+  for (const range of before.slice(0, neighborsPerDirection)) active.add(range.key);
+  for (const range of after.slice(0, neighborsPerDirection)) active.add(range.key);
+  return active;
+}
+
+/** Extend the lifetime of at most one already mounted video near a cut. */
+export function previewVideoMounts(
+  ranges: readonly PreviewLayerRange[],
+  windowKeys: ReadonlySet<string>,
+  frame: number,
+  radius: number,
+  retentionRadius: number,
+  history?: { mounted: ReadonlySet<string>; visitedSources: ReadonlySet<string> },
+) {
+  const activeSources = ranges.flatMap(({ from, to, decoderSource }) =>
+    decoderSource && frame >= from && frame < to ? [decoderSource] : []);
+  const visited = history?.visitedSources ?? new Set<string>();
+  const visitingNewSource = activeSources.some((src) => !visited.has(src));
+  // A cold source gets the normal window without an extra decoder competing for its first reads.
+  const previousKeys = activeSources.length && !visitingNewSource ? history?.mounted : undefined;
+  const mounted = new Set<string>();
+  let retained: string | undefined;
+  let nearest = retentionRadius + 1;
+  for (const { key, from, to, decoderSource } of ranges) {
+    if (!decoderSource) continue;
+    const distance = Math.max(0, from - frame, frame - to + 1);
+    if (windowKeys.has(key)) {
+      if (distance <= radius) mounted.add(key);
+    } else if (distance > radius && distance < nearest && previousKeys?.has(key)) {
+      retained = key;
+      nearest = distance;
+    }
+  }
+  if (retained !== undefined) mounted.add(retained);
+  return {
+    mounted,
+    retained,
+    visitedSources: visitingNewSource ? new Set([...visited, ...activeSources]) : visited,
+  };
+}
+
 /**
  * Pure structural plan shared by the Player, WebCodecs and local renderer.
  * Inputs are immutable timeline data and an explicit shader-registry snapshot.
@@ -33,9 +99,11 @@ export function compositionPlan(state: TimelineState, {
   // A picture-disabled nested sequence is unsupported: its child picture and sound share one renderer.
   const visual = visualCandidates.filter((it) => it.kind === 'sequence' || it.pictureDisabled !== true);
   // Paint visual bottom-to-top. Timeline rows are stored top-to-bottom.
-  const ordered = [...visual].sort((a, b) => a.track === b.track
+  const paintOrder = (a: TimelineItem, b: TimelineItem) => a.track === b.track
     ? a.startFrame - b.startFrame
-    : visualTracks.indexOf(b.track) - visualTracks.indexOf(a.track));
+    : visualTracks.indexOf(b.track) - visualTracks.indexOf(a.track);
+  const ordered = visual.sort(paintOrder);
+  const player = mode === 'player';
   // Existing projects retain their established paint order until they use an adjustment layer.
   const usesTrackCompositing = state.compositingOrder === 'tracks' || state.items.some((item) => item.kind === 'mosaic');
   const audio = state.items.filter((it) => it.kind === 'audio' && it.src && !isHidden(it.track));
@@ -55,7 +123,10 @@ export function compositionPlan(state: TimelineState, {
   // does not remove its sound. Disabled singletons need an explicit audio renderer too.
   const videoAudioGroups = continuousVideoAudioGroups(visualCandidates.filter((item) => item.kind === 'video'), state.transitions);
   const groupedVideoIds = new Set(videoAudioGroups.flatMap((group) => group.map((item) => item.id)));
-  const visualVideoGroups = continuousVideoAudioGroups(ordered, state.transitions);
+  const visualVideoGroups = player ? videoAudioGroups : continuousVideoAudioGroups(ordered, state.transitions);
+  const playerPaintPositions = player
+    ? new Map(visualCandidates.toSorted(paintOrder).map((item, index) => [item.id, index]))
+    : undefined;
 
   // In the Player, only the transition into the selected clip pays the dual
   // decoder + WebGL cost. It uses the same GlTransition component as export.
@@ -159,33 +230,42 @@ export function compositionPlan(state: TimelineState, {
     durationInFrames: window.L,
     itemIds: [window.outgoing.id, window.incoming.id],
   }));
+  const isShareableVideo = (item: TimelineItem) => shareableVisualItem({
+    item,
+    player,
+    hasGlEffect: (player && hasPrivacyMosaic(item))
+      || (item.effects ?? []).some((effect) => Object.prototype.hasOwnProperty.call(registeredEffects, effect.assetId)),
+    hasBackgroundFill: isBackgroundFillActive(state, item),
+    hasExtendBefore: !!extendBefore.get(item.id),
+    hasExtendAfter: !!extendAfter.get(item.id),
+    hasEntrance: !!entranceOf.get(item.id),
+  });
 
-  // Consecutive same-source video clips share ONE decoding video element per
-  // group (audio already shares via ContinuousVideoAudio). Any per-clip
-  // rendering concern (GL effects, background fill, transitions, denoise)
-  // keeps the clip on its own element.
+  // Keep one preview decoder for a continuous source clock, including
+  // picture-disabled clips between visible ones. The paint positions prevent
+  // grouping across a layer that needs its own slot on the same track.
   const sharedVisualGroups = visualVideoGroups.flatMap((group) => {
-    // Split each audio-continuous group into shareable runs: a clip with GL
-    // effects/transitions/animations keeps its own element and breaks the run.
     const runs: TimelineItem[][] = [];
     for (const item of group) {
-      const shareable = shareableVisualItem({
-        item,
-        hasGlEffect: (item.effects ?? []).some((effect) => Object.prototype.hasOwnProperty.call(registeredEffects, effect.assetId)),
-        hasBackgroundFill: isBackgroundFillActive(state, item),
-        hasExtendBefore: !!extendBefore.get(item.id),
-        hasExtendAfter: !!extendAfter.get(item.id),
-        hasEntrance: !!entranceOf.get(item.id),
-      });
-      if (shareable) {
+      if (isShareableVideo(item)) {
         const run = runs.at(-1);
-        if (run) run.push(item);
+        const first = run?.[0];
+        const previous = run?.at(-1);
+        const samePlayerSurface = !playerPaintPositions || (first && previous
+          && playerPaintPositions.get(item.id) === playerPaintPositions.get(previous.id)! + 1
+          && Math.abs(sourceFrameAt(item, 0) - sourceFrameAt(first, item.startFrame - first.startFrame)) < 1e-6);
+        if (run && samePlayerSurface) run.push(item);
         else runs.push([item]);
       } else {
         runs.push([]);
       }
     }
-    return runs.filter((run) => run.length > 1);
+    return runs.map((run) => {
+      if (!player) return run;
+      const first = run.findIndex((item) => item.pictureDisabled !== true);
+      const last = run.findLastIndex((item) => item.pictureDisabled !== true);
+      return first === -1 ? [] : run.slice(first, last + 1);
+    }).filter((run) => run.length > 1);
   });
   const sharedVisualIds = new Set(sharedVisualGroups.flatMap((group) => group.map((item) => item.id)));
   const sharedAt = new Map(sharedVisualGroups.map((group) => [group[0]!.id, group]));
@@ -194,7 +274,11 @@ export function compositionPlan(state: TimelineState, {
     const group = sharedAt.get(item.id);
     return group ? [group] : sharedVisualIds.has(item.id) ? [] : [[item]];
   });
-  const visualNode = (items: TimelineItem[]) => ({ kind: 'visual' as const, items });
+  const visualNode = (items: TimelineItem[]) => ({
+    kind: 'visual' as const,
+    items,
+    retainDecoder: player && Boolean(items[0]?.src?.startsWith('/media/uploads/')) && items.every(isShareableVideo),
+  });
   const transitionNode = (window: GlWindow) => ({ kind: 'transition' as const, window });
   const captionNode = (entry: typeof captionEntries[number]) => ({ kind: 'captions' as const, entry });
   const pictureLayers = usesTrackCompositing ? [

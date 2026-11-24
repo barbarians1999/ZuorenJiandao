@@ -47,6 +47,7 @@ export function registerRenderStillRoute(server: ViteDevServer): void {
         frames?: unknown;
         grid?: boolean;
         fps?: number;
+        fullResolution?: boolean;
       } | null;
       requestAbort.controller.signal.throwIfAborted();
       const frames = body?.frames;
@@ -77,6 +78,7 @@ export function registerRenderStillRoute(server: ViteDevServer): void {
         project: plan.project,
         timelineId: plan.timelineId,
         frames,
+        fullResolution: body?.fullResolution === true,
         signal: requestAbort.controller.signal,
       }) as Array<{ frame: number; base64: string }>;
       const fps = typeof body?.fps === 'number' && body.fps > 0 ? body.fps : plan.state.fps;

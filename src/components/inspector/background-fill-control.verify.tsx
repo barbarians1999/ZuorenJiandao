@@ -19,7 +19,7 @@ assert.equal((markup.match(/role="radio"/g) ?? []).length, 4, 'four percentage s
 assert.match(markup, />强烈 75%<\/small>/, 'quick shortcuts expose their exact percentages');
 assert.match(markup, /aria-checked="true"[^>]*class="selected"/);
 assert.match(markup, />全部应用<\/button>/);
-assert.match(markup, /用片段副本填满画布空白/);
+assert.doesNotMatch(markup, /用片段副本填满画布空白/);
 
 const disabled = renderToStaticMarkup(
   <BackgroundFillControlView enabled={false} strength={50} translate={(key) => key}

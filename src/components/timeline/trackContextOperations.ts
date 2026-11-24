@@ -6,7 +6,7 @@ import { captionsOnTrack, timelineTrackIds, type TimelineState, type TrackId, ty
 export function trackContextMenuLabels(kind: TrackKind): string[] {
   const insert = kind === 'audio' ? '插入音频' : kind === 'caption' ? '插入字幕' : '插入素材';
   return [
-    insert, '闭合缝隙', '全选', '清空', '隐藏轨道',
+    insert, '闭合缝隙', '全选', '向左全选', '向右全选', '清空', '隐藏轨道',
     ...(kind === 'caption' ? [] : ['静音轨道']),
     '锁定轨道',
     ...(kind === 'caption' ? ['字幕样式', '翻译全部'] : ['人声与配乐']),

@@ -15,10 +15,14 @@ interface TrackContextMenuProps {
   canTighten: boolean;
   hasContents: boolean;
   hasSelectable: boolean;
+  hasSelectableLeft: boolean;
+  hasSelectableRight: boolean;
   deleteBlockedReason: TrackDeletePlan['blockedReason'];
   onInsert: () => void;
   onTighten: () => void;
   onSelectAll: () => void;
+  onSelectLeft: () => void;
+  onSelectRight: () => void;
   onClear: () => void;
   onToggleHidden: () => void;
   onToggleMuted: () => void;
@@ -66,8 +70,8 @@ function insertMenuItem(kind: TrackKind, t: (text: string) => string): { label: 
 }
 
 export function TrackContextMenu({
-  kind, x, y, hidden, muted, soloed, locked, canTighten, hasContents, hasSelectable, deleteBlockedReason,
-  onInsert, onTighten, onSelectAll, onClear, onToggleHidden, onToggleMuted, onToggleSolo, onToggleLocked,
+  kind, x, y, hidden, muted, soloed, locked, canTighten, hasContents, hasSelectable, hasSelectableLeft, hasSelectableRight, deleteBlockedReason,
+  onInsert, onTighten, onSelectAll, onSelectLeft, onSelectRight, onClear, onToggleHidden, onToggleMuted, onToggleSolo, onToggleLocked,
   onRename, onOpenDuck, onOpenCaptionStyle, onDelete, onClose,
 }: TrackContextMenuProps) {
   const t = useT();
@@ -116,6 +120,8 @@ export function TrackContextMenu({
       <MenuItem label={t('闭合缝隙')} icon="magnet" disabled={locked || !canTighten} onClick={run(onTighten)} />
       <Separator />
       <MenuItem label={t('全选')} icon="check" disabled={!hasSelectable} onClick={run(onSelectAll)} />
+      <MenuItem label={t('向左全选')} icon="prev" disabled={locked || !hasSelectableLeft} onClick={run(onSelectLeft)} />
+      <MenuItem label={t('向右全选')} icon="next" disabled={locked || !hasSelectableRight} onClick={run(onSelectRight)} />
       <MenuItem label={t('清空')} icon="x" disabled={locked || !hasContents} onClick={run(onClear)} danger />
       <Separator />
       <MenuItem label={t(hidden ? '显示轨道' : '隐藏轨道')} icon={hidden ? 'eyeOff' : 'eye'} checked={hidden} onClick={run(onToggleHidden)} />

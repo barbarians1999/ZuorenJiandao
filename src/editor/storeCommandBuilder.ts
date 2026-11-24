@@ -101,16 +101,20 @@ export function buildCommands(
     pendingTrackCreates.push({ type: 'track.create', track: { id, kind, ...(visualRole ? { visualRole } : {}) } });
     return id;
   };
-  const createVideoTrackAtTop = (name: string, visualRole?: TrackVisualRole): TrackId => {
+  const createVideoTrackAtTop = (name: string | undefined, visualRole?: TrackVisualRole): TrackId => {
     const state = activeTimeline(getDoc());
     const id = uid('track');
     const order = timelineTrackIds(state).filter((track) => trackKind(state, track) === 'video').length;
-    pendingTrackCreates.push({ type: 'track.create', track: { id, kind: 'video', name, ...(visualRole ? { visualRole } : {}) }, order });
+    pendingTrackCreates.push({
+      type: 'track.create',
+      track: { id, kind: 'video', ...(name ? { name } : {}), ...(visualRole ? { visualRole } : {}) },
+      order,
+    });
     return id;
   };
   const pickEffectOverlayTrack = (
     state: TimelineState,
-    name: string,
+    name: string | undefined,
     startFrame: number,
     durationInFrames: number,
     explicitTrack?: TrackId,
@@ -191,6 +195,12 @@ export function buildCommands(
       },
       ...buildMediaPoolCommands(dispatch, getDoc, uid),
       addSolidItem: (at) => {
+        const state = activeTimeline(getDoc());
+        const startFrame = Math.max(0, Math.round(at?.startFrame ?? 0));
+        const durationInFrames = Math.max(1, Math.round(at?.durationInFrames ?? Math.round(5 * state.fps)));
+        const track = at?.mask
+          ? pickEffectOverlayTrack(state, undefined, startFrame, durationInFrames, at?.track)
+          : pickTrack(at?.track, 'video', undefined, 'solid');
         const id = uid('item');
         dispatchWithTracks({
           type: 'add',
@@ -198,13 +208,14 @@ export function buildCommands(
           ripple: at?.ripple,
           item: {
             id,
-            track: pickTrack(at?.track, 'video', undefined, 'solid'),
-            durationInFrames: at?.durationInFrames ?? Math.round(5 * 30),
+            track,
+            durationInFrames,
             kind: 'solid',
             name: at?.name ?? '纯色',
-            width: 1920,
-            height: 1080,
+            width: state.width,
+            height: state.height,
             props: { color: at?.color ?? '#1a1a1a' },
+            ...(at?.mask ? { mask: at.mask } : {}),
           },
         }, 'Add solid');
         return id;
@@ -213,7 +224,7 @@ export function buildCommands(
         const state = activeTimeline(getDoc());
         const startFrame = Math.max(0, Math.round(at?.startFrame ?? 0));
         const durationInFrames = Math.max(1, Math.round(at?.durationInFrames ?? state.fps * 3));
-        const trackId = pickEffectOverlayTrack(state, '图形', startFrame, durationInFrames, at?.track);
+        const trackId = pickEffectOverlayTrack(state, undefined, startFrame, durationInFrames, at?.track);
         const id = uid('item');
         dispatchWithTracks({
           type: 'add', startFrame,
@@ -229,7 +240,7 @@ export function buildCommands(
         const state = activeTimeline(getDoc());
         const durationInFrames = Math.max(1, Math.round(at?.durationInFrames ?? state.fps * 3));
         const id = uid('item');
-        const track = pickEffectOverlayTrack(state, '马赛克', Math.max(0, Math.round(at?.startFrame ?? 0)), durationInFrames, at?.track);
+        const track = pickEffectOverlayTrack(state, undefined, Math.max(0, Math.round(at?.startFrame ?? 0)), durationInFrames, at?.track);
         dispatchWithTracks({
           type: 'add', startFrame: at?.startFrame,
           item: { id, track, durationInFrames, kind: 'mosaic', name: '独立马赛克', width: state.width,

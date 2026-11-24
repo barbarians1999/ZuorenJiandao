@@ -3,12 +3,11 @@ import { useT } from '../i18n/locale';
 
 export const RESOURCE_TOOLS = ['音效'] as const;
 export type ResourceTool = typeof RESOURCE_TOOLS[number];
-export type LibraryTool = ResourceTool | '我的素材' | '特效' | '字幕' | '插入文字' | '序列' | '扩展中心';
+export type LibraryTool = ResourceTool | '我的素材' | '特效' | '字幕' | '序列' | '扩展中心';
 export const LIBRARY_TOOLS: readonly { id: LibraryTool; label: string; icon: IconName }[] = [
   { id: '我的素材', label: '我的素材', icon: 'folder' },
   { id: '特效', label: '特效', icon: 'sparkles' },
-  { id: '字幕', label: '字幕', icon: 'captions' },
-  { id: '插入文字', label: '插入文字', icon: 'text' },
+  { id: '字幕', label: '字幕与文字', icon: 'captions' },
   { id: '音效', label: '音效', icon: 'volume' },
   { id: '序列', label: '子草稿', icon: 'film' },
   { id: '扩展中心', label: '扩展中心', icon: 'grid' },

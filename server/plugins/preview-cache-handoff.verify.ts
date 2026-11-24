@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once, EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import fs, { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ViteDevServer } from 'vite';
@@ -13,6 +14,15 @@ const root = await mkdtemp(join(tmpdir(), 'zuoren-preview-handoff-'));
 process.env.OPENCHATCUT_DEV_PROFILE_ID = randomUUID();
 process.env.OPENCHATCUT_DATA_DIR = root;
 process.env.MEDIA_PREVIEW_MAX_BYTES = '1';
+let previewScans = 0;
+const originalReaddir = fs.readdir;
+fs.readdir = new Proxy(originalReaddir, {
+  apply(target, receiver, args) {
+    if (String(args[0]).endsWith('.preview')) previewScans += 1;
+    return Reflect.apply(target, receiver, args);
+  },
+});
+syncBuiltinESMExports();
 const { mediaPreviewPlugin, runDerivative, deleteMediaPreviewDerivatives } = await import('./media-preview');
 const { DerivativeQueue } = await import('../derivative-queue');
 const { uploadDir } = await import('../media-dir');
@@ -115,9 +125,12 @@ try {
   assert(bytes.byteLength > 1, 'fixture exceeds the configured cache budget');
   const again = await request();
   assert.equal((await again.json()).proxy.previewSrc, ready.proxy.previewSrc, 'reading never changes decoder revision');
+  const scansBeforeRange = previewScans;
   const range = await fetch(origin + ready.proxy.previewSrc, { headers: { Range: 'bytes=0-31' } });
   assert.equal(range.status, 206);
   assert.equal((await range.arrayBuffer()).byteLength, 32);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(previewScans, scansBeforeRange, 'playing a cached range does not trigger cache scans');
   const peakPaths = ['peaks.json', 'peaks-v2.json', 'peaks-v12.json']
     .map((kind) => join(uploadDir(), '.preview', `fixture.mp4.preview-v3-test.${kind}`));
   await Promise.all(peakPaths.map((path) => writeFile(path, 'peak-cache')));
@@ -127,6 +140,8 @@ try {
   assert.equal((await stat(join(uploadDir(), 'fixture.mp4'))).isFile(), true, 'master preserved');
   console.log('preview-cache-handoff: real ready -> GET -> cached ready -> ranged GET passed above byte budget');
 } finally {
+  fs.readdir = originalReaddir;
+  syncBuiltinESMExports();
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await rm(root, { recursive: true, force: true });

@@ -235,20 +235,21 @@ export function directCutCommand(executable, args, { signal, timeoutMs = 120000,
 
 /** null means preflight declined BEFORE browser or output creation. A render
  * failure throws with its cause; it never silently launches a second renderer. */
-export async function inspectDirectCutExport(options, { run = directCutCommand, probe } = {}) {
+export async function inspectDirectCutExport(options, { run = directCutCommand, probe, onDecline } = {}) {
   const { signal, uploadsDirectory, assetsDirectory, ffmpegExecutable, ffprobeExecutable } = options;
   signal?.throwIfAborted();
-  if (process.env.CC_DIRECT_CUT_EXPORT === '0') return null;
+  const decline = (reason) => { onDecline?.(reason); return null; };
+  if (process.env.CC_DIRECT_CUT_EXPORT === '0') return decline('disabled');
   const plan = planNativeExport(options);
-  if (!plan.eligible) { console.info(`[render] direct cut declined: ${plan.reason}`); return null; }
+  if (!plan.eligible) { console.info(`[render] direct cut declined: ${plan.reason}`); return decline(plan.reason); }
   // Remotion's minimal FFmpeg lacks the filters needed here. The host supplies
   // its already-bundled full media binary (including unpacked asar resolution).
-  if (!ffmpegExecutable || !ffprobeExecutable) { console.info('[render] direct cut declined: full-media-binaries'); return null; }
+  if (!ffmpegExecutable || !ffprobeExecutable) { console.info('[render] direct cut declined: full-media-binaries'); return decline('full-media-binaries'); }
   const sources = new Map();
   const allMedia = [...plan.segments, ...plan.audio];
   for (const src of new Set(allMedia.map((s) => s.src).filter(Boolean))) {
     const local = localVideoPath(src, uploadsDirectory, assetsDirectory);
-    if (!local) { console.info('[render] direct cut declined: nonlocal source'); return null; }
+    if (!local) { console.info('[render] direct cut declined: nonlocal source'); return decline('nonlocal-source'); }
     // The desktop media registry can map an upload URL to a user-authorized
     // original file. Resolve through that registry without copying/downloading.
     const file = options.resolveMediaSource?.(src) ?? local;
@@ -257,7 +258,7 @@ export async function inspectDirectCutExport(options, { run = directCutCommand, 
       metadata = probe ? await probe(file) : JSON.parse(await run(ffprobeExecutable, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', file], { signal, timeoutMs: 5000 }));
     } catch (error) {
       signal?.throwIfAborted();
-      console.warn(`[render] direct cut source check failed; retaining compositor: ${error.message}`); return null;
+      console.warn(`[render] direct cut source check failed; retaining compositor: ${error.message}`); return decline('probe-failed');
     }
     signal?.throwIfAborted();
     const videoSegments = plan.segments.filter((s) => s.src === src);
@@ -268,7 +269,7 @@ export async function inspectDirectCutExport(options, { run = directCutCommand, 
       && Number(audioStream.sample_rate) > 0
       && audioSegments.every((s) => Number(audioStream.duration) >= (s.sourceFrame + s.frames) / plan.fps);
     if (videoSegments.length && !directCutSourceSupported(metadata, plan, videoSegments) || !audioSupported) {
-      console.info('[render] direct cut declined: source metadata'); return null;
+      console.info('[render] direct cut declined: source metadata'); return decline('source-metadata');
     }
     sources.set(src, { file, audio: metadata.streams.some((s) => s.codec_type === 'audio') });
   }
@@ -283,12 +284,16 @@ export function checkDirectCutDisk(directory, requiredBytes = 0, inspect = statf
 }
 
 export async function tryDirectCutExport(options, dependencies = {}) {
+  const startedAt = Date.now();
   const inspected = await inspectDirectCutExport(options, dependencies);
   if (!inspected) return null;
   const { plan, sources } = inspected;
   const { run = directCutCommand, checkDisk = checkDirectCutDisk } = dependencies;
   const { outputLocation, onProgress, h264Profile, videoBitrate, vaapiDevice, signal: ownerSignal, ffmpegExecutable } = options;
-  if (plan.renderRoute === 'hybrid' && !options.renderVisualRange) return null;
+  if (plan.renderRoute === 'hybrid' && !options.renderVisualRange) {
+    dependencies.onDecline?.('missing-visual-renderer');
+    return null;
+  }
   const profile = normalizeH264Profile('h264', h264Profile);
   const outputDirectory = path.dirname(path.resolve(outputLocation));
   await mkdir(outputDirectory, { recursive: true });
@@ -393,6 +398,8 @@ export async function tryDirectCutExport(options, dependencies = {}) {
     const renderRoute = plan.renderRoute ?? 'direct-cut';
     return { outputLocation, encoder: { ...rendered.encoder, renderRoute,
       label: `${renderRoute === 'hybrid' ? '局部合成快导' : '快速剪切'} · ${rendered.encoder.label}` }, renderRoute,
+      totalFrames: plan.frames,
+      timingsMs: { total: Date.now() - startedAt },
       ...(rendered.encoderFallbackReason ? { encoderFallbackReason: rendered.encoderFallbackReason } : {}) };
   } finally {
     clearInterval(guard); ownerSignal?.removeEventListener('abort', abort);

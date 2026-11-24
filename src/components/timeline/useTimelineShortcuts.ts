@@ -12,15 +12,26 @@ import type { EditorCommands } from '../../editor/store';
 import type { AtomicAction } from '../../editor/store';
 import { sourceWindowForTimelineRange } from '../../editor/sourceLimit';
 import { hasOperationalTranscript } from '../../transcript/types';
-import { selectableItemIdsAtPlayheadSide } from '../../editor/multiSelect';
-import { selectableCaptionSelectionsAtPlayheadSide, type CaptionSelectionRef } from '../../captions/captionSelection';
+import { selectableItemIdsAtPlayheadSide, selectableItemIdsOnTrackSide } from '../../editor/multiSelect';
+import { mainTrackId } from '../../editor/magneticTimeline';
+import {
+  selectableCaptionSelectionsAtPlayheadSide,
+  selectableCaptionSelectionsOnTrackSide,
+  type CaptionSelectionRef,
+} from '../../captions/captionSelection';
 import { moveTimelineSelectionByDelta } from '../../captions/captionGroupMove';
 import { createTimelineClipboardActions } from './timelineClipboardActions';
 import { showAppToast } from '../../ui/appToast';
 import type { FxClip } from './ClipContextMenu';
 import type { TimelineShortcutApi, ItemClipboard } from '../../shortcuts/timelineApi';
 import type { EditMode } from './timelineUtil';
-import { setShuttlePlaybackRate, shuttleTick } from './shuttle';
+import {
+  nextFastForwardRate,
+  nextShuttleRate,
+  setShuttlePlaybackRate,
+  setShuttleState,
+  shuttleTick,
+} from './shuttle';
 
 export function shouldClearSelectionOnModeSwitch(
   currentMode: EditMode,
@@ -74,7 +85,7 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
   const [zoneIn, setZoneIn] = useState<number | null>(null);
   const [zoneOut, setZoneOut] = useState<number | null>(null);
   const itemClipRef = useRef<ItemClipboard>(null);
-  const shuttleRateRef = useRef(0); // -4..+4 steps
+  const shuttleRateRef = useRef(0); // 0, ±1, ±2, ±4, ±8
   const shuttleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopShuttle = useCallback(() => {
@@ -84,34 +95,54 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
       shuttleTimerRef.current = null;
     }
     setShuttlePlaybackRate(1);
+    setShuttleState(0);
   }, []);
+
+  const hasTimelineItems = state.items.length > 0;
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return undefined;
+    const onStop = () => {
+      if (shuttleRateRef.current > 0) stopShuttle();
+    };
+    player.addEventListener('pause', onStop);
+    player.addEventListener('ended', onStop);
+    return () => {
+      player.removeEventListener('pause', onStop);
+      player.removeEventListener('ended', onStop);
+    };
+  }, [playerRef, stopShuttle, hasTimelineItems]);
+
+  const applyForwardShuttle = (nextMag: number) => {
+    if (shuttleTimerRef.current) {
+      clearInterval(shuttleTimerRef.current);
+      shuttleTimerRef.current = null;
+    }
+    shuttleRateRef.current = nextMag;
+    setShuttlePlaybackRate(nextMag);
+    setShuttleState(nextMag);
+    if ((playerRef.current?.getCurrentFrame() ?? playheadRef.current) >= total - 1) {
+      playerRef.current?.seekTo(0);
+    }
+    playerRef.current?.play();
+  };
+
   const runShuttle = (dir: -1 | 0 | 1) => {
-    if (dir === 0) {
+    let isPlayerPlaying = false;
+    try { isPlayerPlaying = !!playerRef.current?.isPlaying?.(); } catch { isPlayerPlaying = false; }
+    const next = nextShuttleRate(shuttleRateRef.current, dir, isPlayerPlaying);
+    if (next === 0) {
       stopShuttle();
       playerRef.current?.pause();
       return;
     }
-    if (dir === 1) {
-      if (shuttleTimerRef.current) {
-        clearInterval(shuttleTimerRef.current);
-        shuttleTimerRef.current = null;
-      }
-      const cur = shuttleRateRef.current;
-      let nextMag = 1;
-      if (cur > 0) nextMag = Math.min(4, cur * 2);
-      else if (cur === 0 && playerRef.current?.isPlaying?.()) nextMag = 2;
-      shuttleRateRef.current = nextMag;
-      setShuttlePlaybackRate(nextMag);
-      if ((playerRef.current?.getCurrentFrame() ?? playheadRef.current) >= total - 1) {
-        playerRef.current?.seekTo(0);
-      }
-      playerRef.current?.play();
+    if (next > 0) {
+      applyForwardShuttle(next);
       return;
     }
     setShuttlePlaybackRate(1);
-    const cur = shuttleRateRef.current;
-    const next = cur >= 0 ? -1 : Math.max(-4, cur - 1);
     shuttleRateRef.current = next;
+    setShuttleState(next);
     if (shuttleTimerRef.current) clearInterval(shuttleTimerRef.current);
     playerRef.current?.pause();
     const { stepFrames: step, intervalMs: ms } = shuttleTick(next);
@@ -122,6 +153,31 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
       paintPlayhead(nextFrame, true);
       if (nextFrame <= 0 || nextFrame >= total - 1) stopShuttle();
     }, ms);
+  };
+
+  const runFastForward = () => {
+    if (total <= 0) return;
+    applyForwardShuttle(nextFastForwardRate(shuttleRateRef.current));
+  };
+
+  const selectTrackSide = (side: 'left' | 'right') => {
+    const ph = playheadRef.current;
+    const selectedItem = state.selectedId ? state.items.find((it) => it.id === state.selectedId) : undefined;
+    const clipUnderPlayhead = state.items.find((it) => ph >= it.startFrame && ph < it.startFrame + it.durationInFrames);
+    const targetTrack = selectedItem?.track
+      ?? selectedCaptions[0]?.trackId
+      ?? clipUnderPlayhead?.track
+      ?? mainTrackId(state)
+      ?? timelineTrackIds(state)[0];
+    if (!targetTrack) return;
+    if (trackKind(state, targetTrack) === 'caption') {
+      const captionSelections = selectableCaptionSelectionsOnTrackSide(state, targetTrack, ph, side);
+      commands.selectItems([]);
+      onSelectCaptionRange?.(captionSelections, { additive: false, preserveWithItems: false });
+      return;
+    }
+    onSelectCaptionRange?.([], { additive: false, preserveWithItems: false });
+    commands.selectItems(selectableItemIdsOnTrackSide(state, targetTrack, ph, side));
   };
 
   const gotoMarker = (dir: 1 | -1) => {
@@ -143,11 +199,16 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
       getPlayhead: () => playheadRef.current,
       seekTo: (frame) => seekFrame(frame),
       playPause: () => {
+        if (shuttleRateRef.current !== 0) {
+          stopShuttle();
+          playerRef.current?.pause();
+          return;
+        }
         stopShuttle();
         playerRef.current?.toggle();
       },
       isPlaying: () => {
-        try { return !!playerRef.current?.isPlaying?.(); } catch { return false; }
+        try { return shuttleRateRef.current !== 0 || !!playerRef.current?.isPlaying?.(); } catch { return false; }
       },
       setEditMode: (m) => {
         const selectedItemIds = selectedIdsOf(state);
@@ -225,6 +286,8 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
         });
         commands.selectItems(itemIds);
       },
+      selectTrackBeforePlayhead: () => selectTrackSide('left'),
+      selectTrackAfterPlayhead: () => selectTrackSide('right'),
       selectAfterPlayhead: () => {
         const ph = playheadRef.current;
         const next = [...state.items]
@@ -281,6 +344,8 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
       },
       setZoneIn: () => setZoneIn(playheadRef.current),
       setZoneOut: () => setZoneOut(playheadRef.current),
+      clearZoneIn: () => setZoneIn(null),
+      clearZoneOut: () => setZoneOut(null),
       clearZone: () => { setZoneIn(null); setZoneOut(null); },
       zoneFromClip: () => {
         const ph = playheadRef.current;
@@ -305,6 +370,9 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
       shuttleJog: (dir) => {
         stopShuttle();
         seekFrame(playheadRef.current + dir);
+      },
+      fastForward: () => {
+        runFastForward();
       },
       moveSelectedTrack: (dir) => {
         const id = state.selectedId;

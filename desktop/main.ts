@@ -428,7 +428,7 @@ async function boot(): Promise<void> {
   installResponsiveWindowScale(win);
   const uninstallRendererRecovery = installWindowsRendererRecovery(win);
   mainWindow = win;
-  if (!SMOKE) installMainWindowCloseBehavior(win, join(DIST_DIR, 'zuoren-jiandao-icon.png'));
+  if (!SMOKE) installMainWindowCloseBehavior(win, join(DIST_DIR, 'zuoren-jiandao-icon.png'), origin);
   win.once('closed', () => {
     uninstallRendererRecovery();
     mainWindow = null;

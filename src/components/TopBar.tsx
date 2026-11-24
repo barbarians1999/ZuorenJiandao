@@ -1,15 +1,16 @@
-import { lazy, Suspense, useState, useEffect } from 'react';
+import { lazy, Suspense, useState, useEffect, useSyncExternalStore } from 'react';
 import { theme } from '../theme';
 import { BrandMark, Icon } from './icons';
 import { ExportHistory } from './ExportHistory';
-import { SkinPicker } from './settings/SkinPicker';
 import { loadMcpGuideDialog } from './settings/mcpGuideLoader';
 import { useT } from '../i18n/locale';
 import { invokeAction, bindAction } from '../shortcuts/actionRegistry';
+import { getShortcutPreset, setShortcutPreset, SHORTCUT_PRESETS, subscribeKeymap } from '../shortcuts/keymap';
 import { DesktopWindowControls } from './DesktopWindowControls';
 import { TopBarIconButton } from './TopBarIconButton';
 import { ToolbarUtilities } from './ToolbarUtilities';
 import { ProjectSaveIndicator, type ProjectSaveIndicatorProps } from './ProjectSaveIndicator';
+import { SkinPicker } from './settings/SkinPicker';
 import './editorFeedback.css';
 
 // Lazy, like the dashboard's copy of this dialog. A static import here put the
@@ -36,6 +37,8 @@ export function TopBar({ projectName, canUndo, canRedo, saveStatus = 'saved', sa
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(projectName);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const shortcutPreset = useSyncExternalStore(subscribeKeymap, getShortcutPreset, getShortcutPreset);
+  const shortcutPresetLabel = SHORTCUT_PRESETS.find(({ id }) => id === shortcutPreset)!.label;
   // The settings dialog (and anything else) can summon the MCP guide through the
   // action registry: the Anthropic pane names this panel as the way in for
   // Claude Code subscribers, so it has to be able to actually open it.
@@ -77,15 +80,23 @@ export function TopBar({ projectName, canUndo, canRedo, saveStatus = 'saved', sa
       <span className="cc-editor-settings-entry">
         <TopBarIconButton icon="sliders" label={t('设置')} onClick={() => invokeAction('open-settings', undefined, 'toolbar')} />
       </span>
+      <SkinPicker />
+      <ToolbarUtilities icon="keyboard" label={t('快捷键方案')} triggerText={t(shortcutPresetLabel)}>
+        {SHORTCUT_PRESETS.map(({ id, label }) => (
+          <TopBarIconButton key={id} icon={id === shortcutPreset ? 'check' : 'keyboard'} label={t(label)}
+            pressed={id === shortcutPreset} onClick={() => {
+              setShortcutPreset(id);
+              if (id === 'custom') invokeAction('keyboard-shortcuts', undefined, 'toolbar');
+            }} />
+        ))}
+      </ToolbarUtilities>
       <span id="cc-agent-change-log-slot" style={{ display: 'contents' }} />
       <div className="cc-topbar-utility-cluster">
       {/* This dialog owns transient state and must remain mounted while its overlay is open. */}
       <ExportHistory />
       <ToolbarUtilities>
-        <div className="cc-utilities-skin-row"><SkinPicker /><span>{t('皮肤')}</span></div>
         <TopBarIconButton icon="history" label={t('历史版本')} onClick={() => invokeAction('open-history', undefined, 'toolbar')} />
         <TopBarIconButton icon="layoutPanel" label={t('切换面板布局')} onClick={() => invokeAction('toggle-layout', undefined, 'toolbar')} />
-        <TopBarIconButton icon="keyboard" label={t('编辑快捷键')} onClick={() => invokeAction('keyboard-shortcuts', undefined, 'toolbar')} />
         <TopBarIconButton icon="plug" label={t('外部 Agent 接入 (MCP)')} onClick={() => setMcpOpen(true)} />
         <TopBarIconButton icon="palette" label={t('设计风格(品牌)')} onClick={() => invokeAction('open-design', undefined, 'toolbar')} />
       </ToolbarUtilities>

@@ -28,6 +28,35 @@ export function selectableItemIdsAtPlayheadSide(
     .map((item) => item.id);
 }
 
+/** Select all items on `trackId` to the left or right of `referenceFrame` (or inclusive of `anchorItemId`). */
+export function selectableItemIdsOnTrackSide(
+  state: Pick<TimelineState, 'items' | 'tracks'>,
+  trackId: TrackId,
+  referenceFrame: number,
+  side: 'left' | 'right',
+  options: { anchorItemId?: string } = {},
+): string[] {
+  if (state.tracks?.[trackId]?.locked) return [];
+  const trackItems = state.items.filter((item) => item.track === trackId);
+  const anchor = options.anchorItemId
+    ? trackItems.find((item) => item.id === options.anchorItemId)
+    : undefined;
+  const frame = Math.max(0, Math.round(referenceFrame));
+  return trackItems
+    .filter((item) => {
+      if (anchor) {
+        return side === 'left'
+          ? item.startFrame <= anchor.startFrame
+          : item.startFrame >= anchor.startFrame;
+      }
+      return side === 'left'
+        ? item.startFrame + item.durationInFrames <= frame
+        : item.startFrame >= frame;
+    })
+    .sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id))
+    .map((item) => item.id);
+}
+
 interface PreparedItemMove {
   ids: Set<string>;
   moving: TimelineItem[];

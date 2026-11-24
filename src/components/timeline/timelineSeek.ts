@@ -2,6 +2,7 @@ import type { TimelineState } from '../../editor/types';
 import { captionTrackEntries } from '../../editor/types';
 import { buildCaptionPages } from '../../captions/captionPages';
 import { msToFrame } from '../../transcript/types';
+import { createFrameCoalescer } from './frameCoalescer';
 
 export interface TimelineSeekGeometry {
   contentLeft: number;
@@ -24,6 +25,39 @@ export function seekTimelineFromPointer(
   player?.pause();
   player?.seekTo(frame);
   paintPlayhead(frame);
+}
+
+export function createTimelineScrubSeek(
+  getPlayer: () => (TimelinePointerSeekPlayer & { getCurrentFrame(): number; isPlaying(): boolean }) | null,
+  requestFrame: (callback: () => void) => number,
+  cancelFrame: (id: number) => void,
+) {
+  const moves = createFrameCoalescer<number>(requestFrame, cancelFrame);
+  const apply = (frame: number, paint: (frame: number) => void) => {
+    const player = getPlayer();
+    if (player?.isPlaying()) player.pause();
+    if (player && player.getCurrentFrame() !== frame) player.seekTo(frame);
+    paint(frame);
+  };
+  return {
+    get pending() { return moves.pending; },
+    move(frame: number, paint: (frame: number) => void) {
+      const player = getPlayer();
+      if (player?.isPlaying()) player.pause();
+      moves.schedule(frame, (latest) => apply(latest, paint));
+      paint(frame);
+    },
+    commit(frame: number, paint: (frame: number) => void) {
+      moves.cancel();
+      apply(frame, paint);
+    },
+    cancel(paint?: (frame: number) => void) {
+      if (!moves.pending) return;
+      moves.cancel();
+      const player = getPlayer();
+      if (player && paint) paint(player.getCurrentFrame());
+    },
+  };
 }
 
 /** Map a client coordinate to a real frame, excluding headers and empty tail space. */

@@ -7,7 +7,25 @@ export type ShortcutSurface =
   | 'preview'
   | 'other';
 
-const PREVIEW_SHORTCUTS = new Set(['seek-back', 'seek-fwd', 'prev-edit', 'next-edit']);
+const PREVIEW_SHORTCUTS = new Set([
+  'play-pause',
+  'seek-back',
+  'seek-fwd',
+  'seek-back-sec',
+  'seek-fwd-sec',
+  'shuttle-back',
+  'shuttle-fwd',
+  'shuttle-pause',
+  'shuttle-jog-back',
+  'shuttle-jog-fwd',
+  'prev-edit',
+  'next-edit',
+  'zone-in',
+  'zone-out',
+  'zone-clear-in',
+  'zone-clear-out',
+  'zone-clear',
+]);
 
 const PROJECT_SHORTCUTS = new Set([
   'undo',
@@ -17,6 +35,8 @@ const PROJECT_SHORTCUTS = new Set([
   'ask-ai',
   'select-before-playhead',
   'select-after-playhead',
+  'select-track-before-playhead',
+  'select-track-after-playhead',
 ]);
 
 export function shortcutAllowedForSurface(actionId: string, surface: ShortcutSurface): boolean {

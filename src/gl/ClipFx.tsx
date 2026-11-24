@@ -7,7 +7,7 @@ import { disposeRuntimeSlot, ensureRuntimeSlot } from './runtimeSlot';
 import { buildEffectShaderFrame } from './shaderFrame';
 import { glPreviewFailureReason } from './previewAdapter';
 import type { SelectedPreviewFallbackReason, SelectedPreviewStatusListener } from './previewAdapter';
-import type { AspectFit, TimelineItem } from '../editor/types';
+import type { AspectFit, ClipEffectValue, TimelineItem } from '../editor/types';
 import { sourceFrameAt } from '../editor/sourceLimit';
 import { glEffects } from './clipEffects';
 import { hasPrivacyMosaic, mosaicEffectsAt, mosaicPresentation } from '../editor/mosaic';
@@ -27,6 +27,38 @@ interface ClipFxProps {
   height: number;
   frameOffset?: number;
   onPreviewStatus?: SelectedPreviewStatusListener;
+}
+
+const PREVIEW_MAX_EDGE = 960;
+const PIXEL_OVERRIDE_KEYS = new Set([
+  'feather',
+  'block_size',
+  'blockSize',
+  'blurRadius',
+  'border_width',
+  'corner_radius',
+]);
+const GAUSSIAN_BLUR_ASSET_IDS = new Set([
+  'builtin:fx-local-gaussian-blur',
+  'builtin:fx-gaussian-blur',
+]);
+
+function scalePreviewOverrides(
+  assetId: string,
+  overrides: Record<string, ClipEffectValue> | undefined,
+  scale: number,
+): Record<string, ClipEffectValue> | undefined {
+  if (scale >= 1 || !overrides) return overrides;
+  let changed = false;
+  const next: Record<string, ClipEffectValue> = { ...overrides };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    if (PIXEL_OVERRIDE_KEYS.has(key) || (key === 'strength' && GAUSSIAN_BLUR_ASSET_IDS.has(assetId))) {
+      next[key] = value * scale;
+      changed = true;
+    }
+  }
+  return changed ? next : overrides;
 }
 
 // contain/cover placement matching MediaFill's objectFit, so GL frames align
@@ -80,12 +112,18 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
   const [privacyFailure, setPrivacyFailure] = useState(false);
   const trimBefore = sourceFrameAt(item, frameOffset);
 
+  const previewScale = !isRendering && Math.max(width, height) > PREVIEW_MAX_EDGE
+    ? PREVIEW_MAX_EDGE / Math.max(width, height)
+    : 1;
+  const renderW = previewScale < 1 ? Math.max(2, Math.round((width * previewScale) / 2) * 2) : width;
+  const renderH = previewScale < 1 ? Math.max(2, Math.round((height * previewScale) / 2) * 2) : height;
+
   const staging = useMemo(() => {
     const c = document.createElement('canvas');
-    c.width = width;
-    c.height = height;
+    c.width = renderW;
+    c.height = renderH;
     return c;
-  }, [width, height]);
+  }, [renderW, renderH]);
 
   const active = useMemo(() => glEffects({ ...item, effects: mosaicEffectsAt(item, frame, fit, { width, height }) }), [item, frame, fit, width, height]);
   const definitionKey = useMemo(
@@ -95,8 +133,8 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
   // Shader parameter changes do not require another decoded video frame.
   // A paused MediaVideo does not emit onVideoFrame again just for a slider.
   const mediaKey = useMemo(
-    () => JSON.stringify([item.src, trimBefore, item.playbackRate, frame, fit, width, height]),
-    [item.src, trimBefore, item.playbackRate, frame, fit, width, height],
+    () => JSON.stringify([item.src, trimBefore, item.playbackRate, frame, fit, renderW, renderH]),
+    [item.src, trimBefore, item.playbackRate, frame, fit, renderW, renderH],
   );
   const renderKey = useMemo(
     () => JSON.stringify([mediaKey, active.map(({ fx }) => [fx.id, fx.overrides])]),
@@ -177,7 +215,7 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
         if (!ctx) throw new Error('2d context unavailable');
         if (!decodedVideo && imageRef.current) drawFit(ctx, imageRef.current, fit);
         const shaderFrame = buildEffectShaderFrame(
-          active.map(({ fx, def }) => ({ def, overrides: fx.overrides })),
+          active.map(({ fx, def }) => ({ def, overrides: scalePreviewOverrides(def.id, fx.overrides, previewScale) })),
           frame,
           fps,
         );
@@ -211,11 +249,11 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
     };
     tick();
     return () => { cancelAnimationFrame(raf); finish(); };
-  }, [active, definitionKey, fit, staging, item.id, item.kind, frame, fps, isRendering, mediaKey, renderKey, onPreviewStatus, protectedSource]);
+  }, [active, definitionKey, fit, staging, item.id, item.kind, frame, fps, isRendering, mediaKey, renderKey, previewScale, onPreviewStatus, protectedSource]);
 
   useEffect(() => () => {
     disposeRuntimeSlot(runtimeRef);
-  }, [width, height, definitionKey]);
+  }, [renderW, renderH, definitionKey]);
 
   // Once any GL frame has been drawn, keep the canvas visible across seeks:
   // falling back to the raw source layer would flash the UNFILTERED frame for
@@ -244,7 +282,7 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
           : <MediaVideo src={item.src!} trimBefore={trimBefore} playbackRate={item.playbackRate ?? 1} muted
               headless={isRendering} onVideoFrame={onVideoFrame} style={{ width: '100%', height: '100%' }} objectFit={fit} />}
       </AbsoluteFill>
-      <canvas ref={canvasRef} width={width} height={height} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: showingShaderFrame ? 1 : 0 }} />
+      <canvas ref={canvasRef} width={renderW} height={renderH} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: showingShaderFrame ? 1 : 0 }} />
     </AbsoluteFill>
   );
 }

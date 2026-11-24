@@ -5,7 +5,7 @@ import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:
 import { randomUUID } from 'node:crypto';
 import { extname, join } from 'node:path';
 import { isSafeUploadName, resolveUploadFile, serveDiskFile, uploadDir, uploadReadDirs } from '../media-dir.ts';
-import { derivativeQueue, type DerivativeWork } from '../derivative-queue.ts';
+import { derivativeQueue, type DerivativePriority, type DerivativeWork } from '../derivative-queue.ts';
 import { handlePreviewProxy, handlePreviewProxyFile } from '../preview-proxy.ts';
 import { capturePreviewGenerationEpoch, invalidatePreviewGenerations, isPreviewGenerationCurrent } from '../preview-cache-epoch.ts';
 import { editorCredentialAuthorized } from '../editor-auth.ts';
@@ -14,8 +14,22 @@ import { PEAKS_PER_SECOND, probe, computePeaks, buildFilmstrip, buildFrame, film
 const PREVIEW_TRANSFORM_VERSION = 'preview-v3';
 const DEFAULT_PREVIEW_MAX_BYTES = 512 * 1024 * 1024;
 const PREVIEW_GC_INTERVAL_MS = 5 * 60_000;
-const activePreviewPaths = new Set<string>();
+const PREVIEW_GC_AFTER_WRITE_MS = 30_000;
+const activePreviewPaths = new Map<string, number>();
 const recentPreviewPaths = new Map<string, number>();
+let previewCleanupTimer: ReturnType<typeof setTimeout> | undefined;
+let previewCleanupRunning = false;
+
+function retainPreviewPath(path: string): () => void {
+  activePreviewPaths.set(path, (activePreviewPaths.get(path) ?? 0) + 1);
+  return () => {
+    recentPreviewPaths.set(path, Date.now());
+    const count = activePreviewPaths.get(path) ?? 0;
+    if (count > 1) activePreviewPaths.set(path, count - 1);
+    else activePreviewPaths.delete(path);
+  };
+}
+
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
@@ -99,17 +113,34 @@ async function previewEntries(): Promise<PreviewCacheEntry[]> {
   return entries;
 }
 
-async function prunePreviewCache(protectedPaths: ReadonlySet<string> = new Set()): Promise<void> {
-  for (const [path, usedAt] of recentPreviewPaths) {
-    if (Date.now() - usedAt >= PREVIEW_GC_INTERVAL_MS) recentPreviewPaths.delete(path);
+async function prunePreviewCache(): Promise<void> {
+  if (previewCleanupRunning) return;
+  if (previewCleanupTimer) clearTimeout(previewCleanupTimer);
+  previewCleanupTimer = undefined;
+  previewCleanupRunning = true;
+  try {
+    for (const [path, usedAt] of recentPreviewPaths) {
+      if (Date.now() - usedAt >= PREVIEW_GC_INTERVAL_MS) recentPreviewPaths.delete(path);
+    }
+    const protectedPaths = new Set([...activePreviewPaths.keys(), ...recentPreviewPaths.keys()]);
+    const victims = selectPreviewEvictions(await previewEntries(), previewMaxBytes(), protectedPaths);
+    await Promise.all(victims.map(async (path) => {
+      const info = await stat(path).catch(() => null);
+      if (info && !activePreviewPaths.has(path) && !recentPreviewPaths.has(path)
+        && Date.now() - Math.max(info.atimeMs, info.mtimeMs) >= PREVIEW_GC_INTERVAL_MS) await unlink(path).catch(() => {});
+    }));
+  } finally {
+    previewCleanupRunning = false;
   }
-  const protectedAll = new Set([...protectedPaths, ...activePreviewPaths, ...recentPreviewPaths.keys()]);
-  const victims = selectPreviewEvictions(await previewEntries(), previewMaxBytes(), protectedAll);
-  await Promise.all(victims.map(async (path) => {
-    const info = await stat(path).catch(() => null);
-    if (info && !protectedPaths.has(path) && !activePreviewPaths.has(path) && !recentPreviewPaths.has(path)
-      && Date.now() - Math.max(info.atimeMs, info.mtimeMs) >= PREVIEW_GC_INTERVAL_MS) await unlink(path).catch(() => {});
-  }));
+}
+
+function schedulePreviewCacheCleanup(): void {
+  if (previewCleanupTimer) return;
+  previewCleanupTimer = setTimeout(() => {
+    previewCleanupTimer = undefined;
+    void prunePreviewCache();
+  }, PREVIEW_GC_AFTER_WRITE_MS);
+  previewCleanupTimer.unref();
 }
 
 async function atomicPreviewBuild(path: string, build: (tmp: string) => Promise<void>): Promise<void> {
@@ -122,6 +153,7 @@ async function atomicPreviewBuild(path: string, build: (tmp: string) => Promise<
     if (!isPreviewGenerationCurrent(generation)) throw new Error('preview source was deleted during generation');
     await rename(tmp, path);
     if (!isPreviewGenerationCurrent(generation)) throw new Error('preview source was deleted during rename');
+    schedulePreviewCacheCleanup();
   } catch (error) {
     await unlink(tmp).catch(() => {});
     if (!isPreviewGenerationCurrent(generation)) await unlink(path).catch(() => {});
@@ -149,10 +181,12 @@ export async function deleteMediaPreviewDerivatives(name: string): Promise<numbe
 }
 
 async function readCachedPreview(path: string): Promise<Buffer> {
-  recentPreviewPaths.set(path, Date.now());
-  const data = await readFile(path);
-  await prunePreviewCache();
-  return data;
+  const release = retainPreviewPath(path);
+  try {
+    return await readFile(path);
+  } finally {
+    release();
+  }
 }
 
 
@@ -173,17 +207,16 @@ export async function runDerivative<T>(
   work: DerivativeWork<T>,
   protectedPath = key,
   retainUntilComplete = false,
+  priority: DerivativePriority = 'normal',
 ): Promise<T> {
   const lease = derivativeQueue.acquire(key, async (signal) => {
-    activePreviewPaths.add(protectedPath);
+    const release = retainPreviewPath(protectedPath);
     try {
       return await work(signal);
     } finally {
-      recentPreviewPaths.set(protectedPath, Date.now());
-      activePreviewPaths.delete(protectedPath);
-      void prunePreviewCache();
+      release();
     }
-  });
+  }, { priority });
   const release = () => lease.release();
   if (!retainUntilComplete) res.once('close', release);
   try {
@@ -207,15 +240,11 @@ function handleDerivativeError(
 }
 
 async function serveCachedFile(req: IncomingMessage, res: ServerResponse, cache: string): Promise<void> {
-  recentPreviewPaths.set(cache, Date.now());
-  activePreviewPaths.add(cache);
+  const release = retainPreviewPath(cache);
   try {
-    await prunePreviewCache();
     await serveDiskFile(req, res, cache);
   } finally {
-    recentPreviewPaths.set(cache, Date.now());
-    activePreviewPaths.delete(cache);
-    void prunePreviewCache();
+    release();
   }
 }
 
@@ -238,7 +267,7 @@ async function handleWaveform(req: IncomingMessage, res: ServerResponse, logErro
               durationMs: probeResult.durationMs,
             };
         await atomicPreviewBuild(cache, (tmp) => writeFile(tmp, JSON.stringify(body)));
-      });
+      }, cache, false, 'low');
     }
     if (res.destroyed) return;
     res.statusCode = 200;
@@ -260,14 +289,14 @@ async function handleFilmstrip(req: IncomingMessage, res: ServerResponse, logErr
       const result = await probe(hit.file, signal);
       if (!result.width || !result.height) throw new Error('not a video');
       return { probeResult: result, spec: filmstripSpec(result) };
-    }, `${cache}.spec`);
+    }, `${cache}.spec`, false, 'low');
     if (!existsSync(cache)) {
       await runDerivative(req, res, cache, async (signal) => {
         if (existsSync(cache)) return;
         await atomicPreviewBuild(cache, (tmp) => buildFilmstrip(
           hit.file, previewInfo.probeResult, tmp, signal, previewInfo.spec,
         ));
-      });
+      }, cache, false, 'low');
     }
     if (res.destroyed) return;
     res.statusCode = 200;
@@ -301,7 +330,7 @@ async function handleMediaFrame(req: IncomingMessage, res: ServerResponse, logEr
         if (!probeResult.width || !probeResult.height) throw new Error('not a video');
         const time = Math.min(requested, Math.max(0, probeResult.durationMs / 1000 - 0.001));
         await atomicPreviewBuild(cache, (tmp) => buildFrame(hit.file, time, tmp, signal));
-      });
+      }, cache, false, 'high');
     }
     if (res.destroyed) return;
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
@@ -323,7 +352,7 @@ async function handleMediaPoster(req: IncomingMessage, res: ServerResponse, logE
         if (!probeResult.width || !probeResult.height) throw new Error('not a video');
         const time = Math.min(1, Math.max(0, probeResult.durationMs / 2000));
         await atomicPreviewBuild(cache, (tmp) => buildFrame(hit.file, time, tmp, signal));
-      });
+      }, cache, false, 'high');
     }
     if (res.destroyed) return;
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');

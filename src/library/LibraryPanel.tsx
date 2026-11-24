@@ -4,7 +4,7 @@ import type { PlayerRef } from '@remotion/player';
 import { theme } from '../theme';
 import { useT } from '../i18n/locale';
 import type { Tpl } from '../types';
-import type { MediaAsset, MediaAssetRelinkPatch, MediaFolder, TimelineItem, TrackId, TransitionType } from '../editor/types';
+import type { ClipMask, MediaAsset, MediaAssetRelinkPatch, MediaFolder, TimelineItem, TrackId, TransitionType } from '../editor/types';
 import type { MobileUploadRecord } from '../media/mobileUploadApi';
 import type { CaptionsData } from '../captions/types';
 import type { TranscriptWord } from '../transcript/types';
@@ -56,6 +56,9 @@ export interface LibraryPanelProps {
   assets: MediaAsset[];
   mediaFolders: MediaFolder[];
   usedAssetIds: ReadonlySet<string>;
+  onTimelineAssetIds?: ReadonlySet<string>;
+  previewAssetId?: string | null;
+  onPreviewAsset?: (asset: MediaAsset | null) => void;
   offlineAssetIds: ReadonlySet<string>;
   onAssetLoadError: (asset: MediaAsset) => void;
   onImportMedia: (
@@ -84,7 +87,7 @@ export interface LibraryPanelProps {
   onRemoveMediaAssets: (ids: string[]) => void;
   onPasteMediaAssets: (assets: MediaAsset[], folderId?: string) => void;
   onRelinkMediaAsset?: (id: string, next: MediaAssetRelinkPatch) => void;
-  onAddSolid?: () => void;
+  onAddSolid?: (preset?: { name?: string; color?: string; mask?: ClipMask }) => void;
   onAddShape?: (shape: 'rectangle' | 'ellipse') => void;
   onAddMosaic?: () => void;
   onAddText: () => void;
@@ -102,12 +105,12 @@ export interface LibraryPanelProps {
   onRequestPasteTranscript?: () => void;
 }
 
-const MAIN_TABS = ['我的素材', '特效', '字幕', '插入文字', '序列', '资源库'] as const;
+const MAIN_TABS = ['我的素材', '特效', '字幕', '序列', '资源库'] as const;
 function localizeDefaultSequenceName(name: string, t: ReturnType<typeof useT>): string {
   const match = /^序列 (\d+)$/.exec(name);
   return match ? t('序列 {n}', { n: match[1]! }) : name;
 }
-export function LibraryPanel({ timelineId, semanticScopeId, onAddAudio, playerRef, fps, items, trackOptions, captionTracks, onSetCaptions, onCreateCaptionTrack, onUpdateCaptions, selectedCaptions, onSelectCaption, onSelectCaptionRange, onSeekFrame, selectedItem, onAddText, pasteTranscriptRequest = 0, getSequenceOptions, onAddSequence, assets, mediaFolders, usedAssetIds, offlineAssetIds, onAssetLoadError, onImportMedia, onImportMobileMedia, onIngestDirectoryAsset, onTranscribeAsset, onAddMediaItem, onAddMediaAssetsToTimeline, onCreateMediaFolder, onRenameMediaFolder, onDeleteMediaFolder, onMoveMediaAssets, onRenameMediaAsset, onRenameMediaAssets, onSetMediaAssetFavorite, onSetMediaAssetsFavorite, onRemoveMediaAsset, onRemoveMediaAssets, onPasteMediaAssets, onRelinkMediaAsset, onAddSolid, onAddShape, onAddMosaic, onApplyTransition, onApplyFx, onApplyZoom, quickStart, onOpenTextWorkspace, onRequestPasteTranscript }: LibraryPanelProps) {
+export function LibraryPanel({ timelineId, semanticScopeId, onAddAudio, playerRef, fps, items, trackOptions, captionTracks, onSetCaptions, onCreateCaptionTrack, onUpdateCaptions, selectedCaptions, onSelectCaption, onSelectCaptionRange, onSeekFrame, selectedItem, onAddText, pasteTranscriptRequest = 0, getSequenceOptions, onAddSequence, assets, mediaFolders, usedAssetIds, onTimelineAssetIds, previewAssetId, onPreviewAsset, offlineAssetIds, onAssetLoadError, onImportMedia, onImportMobileMedia, onIngestDirectoryAsset, onTranscribeAsset, onAddMediaItem, onAddMediaAssetsToTimeline, onCreateMediaFolder, onRenameMediaFolder, onDeleteMediaFolder, onMoveMediaAssets, onRenameMediaAsset, onRenameMediaAssets, onSetMediaAssetFavorite, onSetMediaAssetsFavorite, onRemoveMediaAsset, onRemoveMediaAssets, onPasteMediaAssets, onRelinkMediaAsset, onAddSolid, onAddShape, onAddMosaic, onApplyTransition, onApplyFx, onApplyZoom, quickStart, onOpenTextWorkspace, onRequestPasteTranscript }: LibraryPanelProps) {
   const t = useT();
   const [mainTab, setMainTab] = useState<(typeof MAIN_TABS)[number]>(quickStart === 'captions' ? '字幕' : '我的素材');
   const [activeTool, setActiveTool] = useState<LibraryTool>(quickStart === 'captions' ? '字幕' : '我的素材');
@@ -156,7 +159,12 @@ export function LibraryPanel({ timelineId, semanticScopeId, onAddAudio, playerRe
         <ExtensionCenter onClose={() => setExtensionOpen(false)} />
       ) : mainTab === '字幕' ? (
         <div className="cc-left-captions-workbench" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-          <div className="cc-library-heading">{t('字幕生成与样式')}</div>
+          <div className="cc-library-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <span>{t('字幕与文字')}</span>
+            <button type="button" className="cc-cap-btn primary sm" onClick={onAddText}>
+              {t('＋ 插入普通文本')}
+            </button>
+          </div>
           <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
             <CaptionsPanel
               mode="generate-only"
@@ -182,18 +190,6 @@ export function LibraryPanel({ timelineId, semanticScopeId, onAddAudio, playerRe
             />
           </div>
         </div>
-      ) : mainTab === '插入文字' ? (
-        <>
-          <div className="cc-library-heading">{t('插入文字')}</div>
-          <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <button type="button" className="cc-cap-btn primary" style={{ width: '100%', padding: '12px 14px', fontSize: 13 }} onClick={onAddText}>
-              {t('＋ 插入普通文本')}
-            </button>
-            <p className="cc-cap-hint" style={{ margin: 0, lineHeight: 1.6 }}>
-              {t('在当前播放头插入独立文本框，可在预览画面直接拖动位置；选中后右侧「属性」面板可调整字体、大小、颜色与形状样式。')}
-            </p>
-          </div>
-        </>
       ) : mainTab === '特效' ? (
         <>
           <div className="cc-library-heading">{t('特效与画面包装')}</div>
@@ -211,9 +207,11 @@ export function LibraryPanel({ timelineId, semanticScopeId, onAddAudio, playerRe
         </>
       ) : isSequences ? (
         <div className="cc-sequence-panel">
-          <div className="cc-sequence-hint">
-            {t('选中多个片段，右键「创建子草稿」即可合并。双击时间线上的子草稿可继续编辑；点击下方名称可再次添加。多次使用的同一子草稿会同步修改。')}
-          </div>
+          {sequenceOptions.length === 0 && (
+            <div className="cc-sequence-hint">
+              {t('右键多选片段可创建子草稿')}
+            </div>
+          )}
           <div className="cc-sequence-list">
             {sequenceOptions.map((option) => (
               <button
@@ -232,7 +230,7 @@ export function LibraryPanel({ timelineId, semanticScopeId, onAddAudio, playerRe
         </div>
       ) : isMyAssets ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, borderTop: `0.5px solid ${theme.border}` }}>
-          <MediaPoolPanel importRequested={quickImportRequested} onImportRequestHandled={() => setQuickImportRequested(false)} semanticScopeId={semanticScopeId} assets={assets} folders={mediaFolders} fps={fps} usedAssetIds={usedAssetIds} offlineAssetIds={offlineAssetIds} onAssetLoadError={onAssetLoadError} onImport={onImportMedia} onImportMobile={onImportMobileMedia} directoryImport={directoryImport} directoryImportError={directoryImportError} onAddAsset={onAddMediaItem} onAddAssetsToTimeline={(selectedAssets, sourceRanges) => onAddMediaAssetsToTimeline(selectedAssets, { sourceRanges })}
+          <MediaPoolPanel importRequested={quickImportRequested} onImportRequestHandled={() => setQuickImportRequested(false)} semanticScopeId={semanticScopeId} assets={assets} folders={mediaFolders} fps={fps} usedAssetIds={usedAssetIds} onTimelineAssetIds={onTimelineAssetIds} previewAssetId={previewAssetId} onPreviewAsset={onPreviewAsset} offlineAssetIds={offlineAssetIds} onAssetLoadError={onAssetLoadError} onImport={onImportMedia} onImportMobile={onImportMobileMedia} directoryImport={directoryImport} directoryImportError={directoryImportError} onAddAsset={onAddMediaItem} onAddAssetsToTimeline={(selectedAssets, sourceRanges) => onAddMediaAssetsToTimeline(selectedAssets, { sourceRanges })}
             onCreateFolder={onCreateMediaFolder} onRenameFolder={onRenameMediaFolder} onDeleteFolder={onDeleteMediaFolder}
             onMoveAssets={onMoveMediaAssets} onRenameAsset={onRenameMediaAsset} onTranscribe={onTranscribeAsset} onRenameAssets={onRenameMediaAssets} onSetFavorite={onSetMediaAssetFavorite} onSetAssetsFavorite={onSetMediaAssetsFavorite} onRemoveAsset={onRemoveMediaAsset} onRemoveAssets={onRemoveMediaAssets} onPasteAssets={onPasteMediaAssets}
             onRelinkAsset={onRelinkMediaAsset} />

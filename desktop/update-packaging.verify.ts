@@ -106,7 +106,7 @@ assert.deepEqual(windowsPortable.win?.target, ['nsis'], 'obsolete portable envir
 assert.equal(windowsPortable.artifactName, 'ZuorenJiandao-Setup-${version}-${arch}.${ext}');
 assert.equal(arm64.productName, 'ZuorenJiandao', 'macOS packages must use the ZuorenJiandao app name');
 assert.equal(x64.productName, 'ZuorenJiandao', 'macOS x64 packages must use the ZuorenJiandao app name');
-assert.equal(linux.productName, 'OpenChatCut', 'existing Linux packaging path stays compatible');
+assert.equal(linux.productName, 'ZuorenJiandao', 'Linux packages must use the ZuorenJiandao app name');
 assert.equal(
   windows.files?.includes('!node_modules/sqlite-vec-windows-x64/**'),
   false,

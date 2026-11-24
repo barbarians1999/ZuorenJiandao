@@ -49,6 +49,37 @@ export function usedMediaAssetIds(
   return used;
 }
 
+/** Collect assets currently placed on the active timeline (including nested sequence clips). */
+export function activeTimelineUsedMediaAssetIds(
+  doc: Pick<ProjectDoc, 'assets' | 'timelines'>,
+  activeTimelineId: string,
+): Set<string> {
+  const used = new Set<string>();
+  const byId = new Map(doc.timelines.map((timeline) => [timeline.id, timeline]));
+  const visited = new Set<string>();
+
+  const visit = (timelineId: string) => {
+    if (visited.has(timelineId)) return;
+    visited.add(timelineId);
+    const timeline = byId.get(timelineId);
+    if (!timeline) return;
+    for (const item of timeline.items) {
+      const assetId = timelineItemAssetId(item, doc.assets);
+      if (assetId) used.add(assetId);
+      if (item.kind === 'sequence' && item.timelineId) visit(item.timelineId);
+    }
+    for (const group of timeline.multicamGroups ?? []) {
+      for (const angle of group.angles) {
+        const assetId = timelineItemAssetId(angle.source, doc.assets);
+        if (assetId) used.add(assetId);
+      }
+    }
+  };
+
+  visit(activeTimelineId);
+  return used;
+}
+
 export function mapTimelineAssetItems(
   timeline: Timeline,
   asset: MediaAsset,

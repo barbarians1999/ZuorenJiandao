@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SlipPlan, SlipResult } from '../../editor/slip';
 import type { TimelineItem } from '../../editor/types';
 import { useT } from '../../i18n/locale';
 import { Icon } from '../icons';
+import { useInspectorWheel } from './useInspectorWheel';
 
 interface InspectorSlipControlProps {
   item: TimelineItem;
@@ -14,6 +15,15 @@ export function InspectorSlipControl({ item, plan, onSlip }: InspectorSlipContro
   const t = useT();
   const [step, setStep] = useState(1);
   const [notice, setNotice] = useState<string | null>(null);
+  const stepInputRef = useRef<HTMLInputElement>(null);
+
+  useInspectorWheel(stepInputRef, {
+    value: step,
+    min: 1,
+    max: Number.POSITIVE_INFINITY,
+    step: 1,
+    onChange: (next) => setStep(Math.max(1, Math.round(next))),
+  });
 
   useEffect(() => {
     setStep(1);
@@ -52,6 +62,7 @@ export function InspectorSlipControl({ item, plan, onSlip }: InspectorSlipContro
       <div className="cc-insp-row">
         <label className="cc-insp-label" htmlFor={`slip-step-${item.id}`}>{t('步长')}</label>
         <input
+          ref={stepInputRef}
           id={`slip-step-${item.id}`}
           className="cc-insp-number"
           type="number"
@@ -87,9 +98,11 @@ export function InspectorSlipControl({ item, plan, onSlip }: InspectorSlipContro
           {t('向后')}<Icon name="next" size={11} />
         </button>
       </div>
-      <div id={`slip-help-${item.id}`} className="cc-insp-muted" style={{ fontSize: 10 }}>
-        {notice ?? t('Enter 向后滑移 · Shift+Enter 向前滑移；仅改变源入点。')}
-      </div>
+      {notice && (
+        <div id={`slip-help-${item.id}`} className="cc-insp-muted" style={{ fontSize: 10 }}>
+          {notice}
+        </div>
+      )}
     </div>
   );
 }

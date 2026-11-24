@@ -11,6 +11,14 @@ import path from 'node:path';
 export const CONNECT_CLIENTS = ['claude', 'codex', 'cursor', 'antigravity'] as const;
 export type ConnectClient = (typeof CONNECT_CLIENTS)[number];
 
+export type ClientConnectionStatus = 'connected' | 'outdated' | 'not-configured' | 'invalid-config';
+
+export interface ClientStatusEntry {
+  readonly client: ConnectClient;
+  readonly status: ClientConnectionStatus;
+  readonly path: string;
+}
+
 export type ClientConnectResult =
   | { ok: true; paths: string[] }
   | { ok: false; error: 'invalid-client' | 'invalid-token' | 'config-parse-error' | 'config-write-error' | 'codex-cli-failed'; detail?: string };
@@ -185,4 +193,78 @@ export async function connectExternalClient(
   const result = await connectJsonClient(target.file, target.entry);
   if (!result.ok) return result;
   return { ok: true, paths: [displayPath(baseDir, target.file)] };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function inspectCodexTomlStatus(text: string, endpoint: string): ClientConnectionStatus {
+  const sectionMatch = /^\s*\[mcp_servers\.(?:"openchatcut"|openchatcut)\][^\r\n]*\r?\n([\s\S]*?)(?=^\s*\[|$)/m.exec(text);
+  if (!sectionMatch) return 'not-configured';
+  const sectionBody = sectionMatch[1] ?? '';
+  const urlPattern = new RegExp(`^\\s*url\\s*=\\s*["']${escapeRegExp(endpoint)}["']\\s*(?:#.*)?$`, 'm');
+  return urlPattern.test(sectionBody) ? 'connected' : 'outdated';
+}
+
+async function inspectJsonClientStatus(
+  file: string,
+  urlField: 'url' | 'httpUrl',
+  endpoint: string,
+  token: string,
+): Promise<ClientConnectionStatus> {
+  let text: string;
+  try {
+    text = await readFile(file, 'utf8');
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'not-configured' : 'invalid-config';
+  }
+  if (!text.trim()) return 'not-configured';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return 'invalid-config';
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return 'invalid-config';
+  const servers = (parsed as Record<string, unknown>).mcpServers;
+  if (servers === undefined) return 'not-configured';
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return 'invalid-config';
+  const entry = (servers as Record<string, unknown>).openchatcut;
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return 'not-configured';
+  const record = entry as Record<string, unknown>;
+  const headers = record.headers as Record<string, unknown> | undefined;
+  return record[urlField] === endpoint && headers?.Authorization === `Bearer ${token}`
+    ? 'connected'
+    : 'outdated';
+}
+
+/** Inspect local MCP client configs without modifying files. */
+export async function inspectExternalClients(
+  endpoint: string,
+  token: string,
+  options: Pick<ClientConnectOptions, 'baseDir'> = {},
+): Promise<ClientStatusEntry[]> {
+  const baseDir = options.baseDir ?? homedir();
+  const claudeFile = path.join(baseDir, '.claude.json');
+  const codexFile = path.join(baseDir, '.codex', 'config.toml');
+  const cursorFile = path.join(baseDir, '.cursor', 'mcp.json');
+  const antigravityFile = path.join(baseDir, '.gemini', 'antigravity', 'mcp_config.json');
+
+  const codexStatus = await readFile(codexFile, 'utf8')
+    .then((text) => inspectCodexTomlStatus(text, endpoint))
+    .catch((error: NodeJS.ErrnoException) => (error.code === 'ENOENT' ? 'not-configured' : 'invalid-config'));
+
+  const [claudeStatus, cursorStatus, antigravityStatus] = await Promise.all([
+    inspectJsonClientStatus(claudeFile, 'url', endpoint, token),
+    inspectJsonClientStatus(cursorFile, 'url', endpoint, token),
+    inspectJsonClientStatus(antigravityFile, 'httpUrl', endpoint, token),
+  ]);
+
+  return [
+    { client: 'claude', status: claudeStatus, path: displayPath(baseDir, claudeFile) },
+    { client: 'codex', status: codexStatus, path: displayPath(baseDir, codexFile) },
+    { client: 'cursor', status: cursorStatus, path: displayPath(baseDir, cursorFile) },
+    { client: 'antigravity', status: antigravityStatus, path: displayPath(baseDir, antigravityFile) },
+  ];
 }

@@ -265,7 +265,7 @@ export function PasteTranscriptBox({ items, fps, trackOptions, selectedItem, exi
   }) : reviewCues;
   const review = visibleReviewCues.length > 0 && (activeCaptionTrack === undefined || activeCaptionTrack === reviewTrack.current) && <div className="cc-cap-field" aria-label={t('需要核对的字幕')}>
     <div className="cc-cap-label">{t('需要核对的句子')} ({visibleReviewCues.length})</div>
-    <p className="cc-cap-hint">{t('这些句子的文字与识别结果差异较大。点句子定位画面，再到下方字幕列表修改。')}</p>
+    <p className="cc-cap-hint">{t('以下句子与识别差异较大，点击定位修改')}</p>
     <div className="cc-cap-cue-list">
       {visibleReviewCues.map((cue, index) => <button type="button" key={cue.id ?? `${cue.start}:${index}`} className="cc-cap-btn" style={{ fontSize: 14, textAlign: 'left' }} onClick={() => onSeekMs?.(cue.start)}>{fmtCueMs(cue.start)} · {cue.text}</button>)}
     </div>

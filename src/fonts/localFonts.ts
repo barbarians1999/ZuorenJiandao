@@ -1,5 +1,5 @@
 /**
- * Built-in Chinese display fonts (bundled CJK display fonts) - runtime.
+ * Built-in fonts used by both the editor and headless rendering.
  *
  * Runtime consumption method:
  * `new FontFace(family, url(<path>), { display:'swap', weight })` → document.fonts.
@@ -19,7 +19,7 @@ export function normalizeFontKey(value: string): string {
     .replace(/[\s_\-·.,'"`]+/g, '');
 }
 
-export interface LocalCjkFont {
+export interface LocalFont {
   /** CSS font-family canonical name (MG/caption fontFamily uses this). */
   family: string;
   /** importName, also serves as a searchable alias. */
@@ -35,7 +35,9 @@ export interface LocalCjkFont {
 }
 
 // License by style (all are public and free licensed fonts):
-export const LOCAL_CJK_FONTS: readonly LocalCjkFont[] = [
+export const LOCAL_FONTS: readonly LocalFont[] = [
+  { family: 'Inter', importName: 'Inter', aliasZh: [],
+    stylesheet: '/fonts/inter/inter.css', weightRange: [100, 900] },
   // Noto Sans SC v40 — SIL Open Font License 1.1. The Fontsource package
   // preserves Google Fonts' unicode-range variable WOFF2 shards, so existing
   // project weights from 100 through 900 stay offline without synthetic aliases.
@@ -72,10 +74,10 @@ export const LOCAL_CJK_FONTS: readonly LocalCjkFont[] = [
 ];
 
 /** family / importName / Chinese alias → entry (normalized matching). */
-export function findLocalFont(name: string): LocalCjkFont | undefined {
+export function findLocalFont(name: string): LocalFont | undefined {
   const key = normalizeFontKey(name);
   if (!key) return undefined;
-  return LOCAL_CJK_FONTS.find(
+  return LOCAL_FONTS.find(
     (f) =>
       normalizeFontKey(f.family) === key ||
       normalizeFontKey(f.importName) === key ||
@@ -88,7 +90,7 @@ const hasDom = (): boolean => typeof FontFace !== 'undefined' && typeof document
 // family → FontFace instance registered in document.fonts (single instance, preventing repeated registration).
 const registeredFaces = new Map<string, FontFace[]>();
 
-function facesOf(font: LocalCjkFont): FontFace[] {
+function facesOf(font: LocalFont): FontFace[] {
   let faces = registeredFaces.get(font.family);
   if (!faces) {
     faces = Object.entries(font.files ?? {}).map(
@@ -107,7 +109,7 @@ function facesOf(font: LocalCjkFont): FontFace[] {
 
 const stylesheetPromises = new Map<string, Promise<void>>();
 
-function registerStylesheet(font: LocalCjkFont): Promise<void> {
+function registerStylesheet(font: LocalFont): Promise<void> {
   if (!font.stylesheet) return Promise.resolve();
   const cached = stylesheetPromises.get(font.family);
   if (cached) return cached;
@@ -128,7 +130,7 @@ function registerStylesheet(font: LocalCjkFont): Promise<void> {
   return promise;
 }
 
-async function loadFaces(font: LocalCjkFont): Promise<void> {
+async function loadFaces(font: LocalFont): Promise<void> {
   if (!font.stylesheet) {
     await Promise.all(facesOf(font).map((face) => face.load()));
     return;
@@ -148,7 +150,7 @@ async function loadFaces(font: LocalCjkFont): Promise<void> {
  */
 export function registerLocalFonts(): void {
   if (!hasDom()) return;
-  for (const font of LOCAL_CJK_FONTS) {
+  for (const font of LOCAL_FONTS) {
     if (font.stylesheet) void registerStylesheet(font).catch(() => undefined);
     else facesOf(font);
   }

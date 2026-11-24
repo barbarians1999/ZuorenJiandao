@@ -118,6 +118,25 @@ const handleMode = (target: EventTarget | null): { mode: GestureMode; edge?: Pre
   return null;
 };
 
+export function formatTransformDragHud(
+  mode: GestureMode,
+  values: Partial<Record<TransformWriteProp, number>>,
+  base: EffectivePreviewTransform,
+): string | null {
+  if (mode === 'move') {
+    const x = Math.round(values.x ?? base.x);
+    const y = Math.round(values.y ?? base.y);
+    return `X ${x} · Y ${y}`;
+  }
+  if (mode === 'scale' || mode === 'rotate') {
+    const scale = values.scale ?? values.scaleX ?? base.scaleX ?? base.scale ?? 1;
+    const rotation = values.rotation ?? base.rotation ?? 0;
+    const normalizedDeg = Math.round(((rotation % 360) + 540) % 360 - 180);
+    return `${Math.round(scale * 100)}% · ${normalizedDeg}°`;
+  }
+  return null;
+}
+
 export function PreviewTransformOverlay({
   state,
   playerRef,
@@ -137,6 +156,7 @@ export function PreviewTransformOverlay({
   const [frame, setFrame] = useState(() => Math.round(playerRef.current?.getCurrentFrame() ?? 0));
   const [previewSize, setPreviewSize] = useState<PreviewSize>({ width: state.width, height: state.height });
   const [textAutoEdit, setTextAutoEdit] = useState(false);
+  const [dragHud, setDragHud] = useState<string | null>(null);
   const lastClickRef = useRef<{ id: string; at: number } | null>(null);
   const cycleRef = useRef<ClickCycleState | null>(null);
   const gestureRef = useRef<GestureState | null>(null);
@@ -247,6 +267,7 @@ export function PreviewTransformOverlay({
     if (!gestureRef.current) return;
     commitPending();
     gestureRef.current = null;
+    setDragHud(null);
     if (resetCycle) cycleRef.current = null;
     onEndHistoryGesture();
   }, [commitPending, onEndHistoryGesture]);
@@ -285,17 +306,20 @@ export function PreviewTransformOverlay({
 
     if (gesture.mode === 'move') {
       const moved = movePreviewTransform(gesture.transform, delta, previewSize);
+      setDragHud(formatTransformDragHud('move', moved, gesture.transform));
       queueValues({ item: gesture.item, localFrame: gesture.localFrame, values: moved });
     } else if (gesture.mode === 'scale') {
+      const scaled = uniformScaleAxesPreviewTransform(
+        gesture.transform,
+        gesture.center,
+        start.composition,
+        current.composition,
+      );
+      setDragHud(formatTransformDragHud('scale', scaled, gesture.transform));
       queueValues({
         item: gesture.item,
         localFrame: gesture.localFrame,
-        values: uniformScaleAxesPreviewTransform(
-          gesture.transform,
-          gesture.center,
-          start.composition,
-          current.composition,
-        ),
+        values: scaled,
       });
     } else if (gesture.mode === 'crop-edge' && gesture.edge) {
       if (gesture.item.kind === 'mosaic') {
@@ -357,17 +381,17 @@ export function PreviewTransformOverlay({
         cropTouched: true,
       });
     } else {
+      const rotation = rotatePreviewTransform(
+        gesture.transform.rotation,
+        gesture.center,
+        start.composition,
+        current.composition,
+      );
+      setDragHud(formatTransformDragHud('rotate', { rotation }, gesture.transform));
       queueValues({
         item: gesture.item,
         localFrame: gesture.localFrame,
-        values: {
-          rotation: rotatePreviewTransform(
-            gesture.transform.rotation,
-            gesture.center,
-            start.composition,
-            current.composition,
-          ),
-        },
+        values: { rotation },
       });
     }
   }, [onSetCompositionMosaic, onSetItemMask, queueValues, state]);
@@ -612,6 +636,18 @@ export function PreviewTransformOverlay({
             aria-label={t('旋转片段')}
             style={{ ...percentPosition(rotateHandle.handle), ...(preemptCaptions ? { zIndex: 5 } : undefined) }}
           />
+          {dragHud && (
+            <div
+              className="cc-preview-transform-hud"
+              aria-hidden="true"
+              style={{
+                left: `${Math.max(8, Math.min(92, (selection.corners.reduce((sum, p) => sum + p.x, 0) / selection.corners.length) / state.width * 100))}%`,
+                top: `${Math.max(8, Math.min(92, Math.max(...selection.corners.map((p) => p.y)) / state.height * 100))}%`,
+              }}
+            >
+              {dragHud}
+            </div>
+          )}
           {onItemPropChange
             && selectedCandidate
             && previewTextEditFields(selectedCandidate.item)

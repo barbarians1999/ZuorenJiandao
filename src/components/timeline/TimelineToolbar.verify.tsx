@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import type { EditorCommands } from '../../editor/store';
 import type { TimelineState } from '../../editor/types';
+import { resetAllBindings, setBinding, setShortcutPreset } from '../../shortcuts/keymap';
 
 
 // This check verifies SSR control markup; visual layout is covered by the
@@ -33,6 +34,16 @@ assert.doesNotMatch(plain, />场景检测<\/button>/, 'no differently named dupl
 assert.match(plain, /主轨磁吸：关/);
 assert.match(plain, /联动：关/);
 assert.match(plain, /预览轴：开/);
+assert.match(plain, /role="toolbar"/);
+assert.match(plain, /编辑模式：选择/);
+assert.match(plain, /在播放头切分选中片段 \((?:Ctrl|⌘) \+ B\)/);
+setShortcutPreset('premiere');
+assert.match(markup(initial), /在播放头切分选中片段 \((?:Ctrl|⌘) \+ K\)/);
+assert.match(markup(initial), /刀片模式：点击处切分片段 \(C\)/);
+setBinding('split', 'Mod + Shift + X');
+assert.match(markup(initial), /在播放头切分选中片段 \((?:Ctrl|⌘) \+ Shift \+ X\)/);
+resetAllBindings();
+assert.match(plain, /16:9 · 留边/);
 const checks = plain.match(/<input type="checkbox"[^>]*>/g) ?? [];
 assert.equal(checks.length, 5);
 const lowZoom = markup(initial, true, 0.0054, 0.0054);
@@ -47,7 +58,7 @@ assert.match(enabled, /主轨磁吸：开/);
 assert.match(enabled, /联动：开/);
 assert.match(enabled, /预览轴：关/);
 assert.equal((enabled.match(/<input type="checkbox"[^>]*checked/g) ?? []).length, 1);
-assert.match(enabled, /开关不会自动绑定现有素材/);
+assert.doesNotMatch(enabled, /开关不会自动绑定现有素材/);
 assert.match(plain, /cc-timeline-more-menu/);
 const toolbarSource = readFileSync(new URL('./TimelineToolbar.tsx', import.meta.url), 'utf8');
 const moreMenuSource = toolbarSource.slice(toolbarSource.indexOf('function TimelineMoreControl'), toolbarSource.indexOf('const LINKED_KINDS'));

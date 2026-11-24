@@ -314,6 +314,7 @@
       "src/agent/approval-policy.verify.ts"
     ],
     "verify:mcp": [
+      "server/external-agent/mcp-discovery.verify.ts",
       "server/external-agent/mcp-tool-exposure.verify.ts",
       "server/external-agent/mcp.verify.ts",
       "server/external-agent/mcp-check.verify.ts"
@@ -399,11 +400,13 @@
       "desktop/local-media-import.verify.ts",
       "src/media/desktop-local-import.verify.ts",
       "desktop/window-frame.verify.ts",
+      "desktop/window-close.verify.ts",
       "desktop/single-instance.verify.ts",
       "desktop/window-scale.verify.ts",
       "desktop/ui-scale-migration.verify.ts",
       "desktop/remotion-binaries.verify.ts",
       "src/components/window-titlebar.verify.tsx",
+      "src/components/window-close-dialog.verify.tsx",
       "desktop/native-hardware-profile.verify.ts",
       "desktop/native-inference-budget.verify.ts",
       "desktop/native-inference-residency.verify.ts",
@@ -451,6 +454,7 @@
     ],
     "verify:export-adaptive": [
       "src/export/exportDestination.verify.ts",
+      "src/export/exportDiagnostics.verify.ts",
       "src/export/exportRoutePlanner.verify.ts",
       "src/export/materializeBlobMedia.verify.ts",
       "src/export/serverExportOperation.verify.ts",
@@ -931,6 +935,7 @@
     ],
     "verify:components": [
       "src/components/SafeZoneOverlay.verify.tsx",
+      "src/components/window-close-dialog.verify.tsx",
       "src/components/chat/chatPopoverGeometry.verify.ts",
       "src/components/chat/chatScrollNavigation.verify.ts",
       "src/components/chat/chatTextSelection.verify.ts",
@@ -946,7 +951,10 @@
       "src/components/preview/preview-transform-overlay.verify.tsx",
       "src/components/preview/motionPath.verify.ts",
       "src/components/preview/previewTextEdit.verify.ts",
+      "src/components/preview/previewMonitorBar.verify.ts",
+      "src/components/preview/sourceAssetPreview.verify.ts",
       "src/components/preview/timeline-hover-preview.verify.ts",
+      "src/export/exportPreflight.verify.ts",
       "src/components/previewAudioPool.verify.ts",
       "src/components/settings/settingsStorage.verify.ts",
       "src/components/settings/storageMigration.verify.ts",
@@ -1028,6 +1036,7 @@
       "src/media/filmstripLayout.verify.ts"
     ],
     "verify:server-extra": [
+      "server/derivative-queue.verify.ts",
       "server/media-process.verify.ts",
       "server/media-references.verify.ts",
       "server/media-normalization-reason.verify.ts",
@@ -1312,6 +1321,13 @@
       "id": "desktop/window-frame.verify.ts",
       "file": "desktop/window-frame.verify.ts",
       "command": "tsx desktop/window-frame.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "desktop/window-close.verify.ts",
+      "file": "desktop/window-close.verify.ts",
+      "command": "tsx desktop/window-close.verify.ts",
       "group": "logic",
       "timeoutMs": 120000
     },
@@ -1726,6 +1742,13 @@
       "id": "server/external-agent/mcp-check.verify.ts",
       "file": "server/external-agent/mcp-check.verify.ts",
       "command": "tsx server/external-agent/mcp-check.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "server/external-agent/mcp-discovery.verify.ts",
+      "file": "server/external-agent/mcp-discovery.verify.ts",
+      "command": "tsx server/external-agent/mcp-discovery.verify.ts",
       "group": "logic",
       "timeoutMs": 120000
     },
@@ -2314,6 +2337,13 @@
       "id": "server/plugins/voice.verify.ts",
       "file": "server/plugins/voice.verify.ts",
       "command": "tsx server/plugins/voice.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "server/derivative-queue.verify.ts",
+      "file": "server/derivative-queue.verify.ts",
+      "command": "tsx server/derivative-queue.verify.ts",
       "group": "logic",
       "timeoutMs": 120000
     },
@@ -3977,6 +4007,27 @@
       "timeoutMs": 120000
     },
     {
+      "id": "src/export/exportPreflight.verify.ts",
+      "file": "src/export/exportPreflight.verify.ts",
+      "command": "tsx --tsconfig tsconfig.app.json src/export/exportPreflight.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "src/components/preview/previewMonitorBar.verify.ts",
+      "file": "src/components/preview/previewMonitorBar.verify.ts",
+      "command": "tsx --tsconfig tsconfig.app.json src/components/preview/previewMonitorBar.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "src/components/preview/sourceAssetPreview.verify.ts",
+      "file": "src/components/preview/sourceAssetPreview.verify.ts",
+      "command": "tsx --tsconfig tsconfig.app.json src/components/preview/sourceAssetPreview.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
       "id": "src/components/preview/timeline-hover-preview.verify.ts",
       "file": "src/components/preview/timeline-hover-preview.verify.ts",
       "command": "tsx --tsconfig tsconfig.app.json src/components/preview/timeline-hover-preview.verify.ts",
@@ -4246,6 +4297,13 @@
       "id": "src/components/window-titlebar.verify.tsx",
       "file": "src/components/window-titlebar.verify.tsx",
       "command": "tsx --tsconfig tsconfig.app.json src/components/window-titlebar.verify.tsx",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "src/components/window-close-dialog.verify.tsx",
+      "file": "src/components/window-close-dialog.verify.tsx",
+      "command": "tsx --tsconfig tsconfig.app.json src/components/window-close-dialog.verify.tsx",
       "group": "logic",
       "timeoutMs": 120000
     },
@@ -4757,6 +4815,13 @@
       "id": "src/export/exportDestination.verify.ts",
       "file": "src/export/exportDestination.verify.ts",
       "command": "npx tsx src/export/exportDestination.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "src/export/exportDiagnostics.verify.ts",
+      "file": "src/export/exportDiagnostics.verify.ts",
+      "command": "tsx src/export/exportDiagnostics.verify.ts",
       "group": "logic",
       "timeoutMs": 120000
     },

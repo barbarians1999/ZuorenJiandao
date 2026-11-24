@@ -1,8 +1,9 @@
 import { effectivePreset } from '../captions/renderStyles';
 import type { CaptionsData } from '../captions/types';
 import { captionTrackEntries, type TimelineItem, type TimelineState } from '../editor/types';
-import { ensureFont } from './googleFonts';
+import { ensureFont, loadProjectFonts } from './googleFonts';
 import { ensureReferencedAssetFont } from './assetFonts';
+import { findLocalFont } from './localFonts';
 
 const FONT_PROP_KEYS = new Set([
   'fontFamily', 'fontfamily', 'font_family', 'font', 'headingFont', 'bodyFont', 'titleFont',
@@ -99,13 +100,17 @@ export function collectReferencedFontFaces(state: TimelineState): ProjectFontFac
   });
 }
 
-/** Resolve only when every face used by the active composition is ready. */
+/** Export preloads every referenced face. Preview uses CSS demand loading for sharded local fonts. */
 export function loadTimelineFonts(
   state: TimelineState,
   opts?: { tolerateErrors?: boolean },
 ): Promise<void> {
+  if (opts?.tolerateErrors) loadProjectFonts();
+  const faces = collectReferencedFontFaces(state);
   const loads = [
-    ...collectReferencedFontFaces(state).map(({ family, weight }) => ensureFont(family, weight)),
+    ...faces
+      .filter(({ family }) => !opts?.tolerateErrors || !findLocalFont(family)?.stylesheet)
+      .map(({ family, weight }) => ensureFont(family, weight)),
     ...collectReferencedFontAssetIds(state).map((id) => ensureReferencedAssetFont(id, state.assets ?? [])),
   ];
   if (!opts?.tolerateErrors) return Promise.all(loads).then(() => undefined);

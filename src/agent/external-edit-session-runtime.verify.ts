@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { makeDraft } from '../editor/store';
 import { loadAgentRuntimeSidecar } from '../persist/agentRuntimeStore';
 import { ExternalBridgeRuntime } from './external-bridge-runtime';
+import { getExternalAutoApprove, setExternalAutoApprove } from './external-auto-approve';
 import {
   ExternalEditSessionOutcomeError,
   revisionOf,
@@ -413,3 +414,69 @@ const staleRecordedRun = (await loadAgentRuntimeSidecar('stale-record-project'))
   .find((run) => run.runId === agentRunId(staleRecordSession));
 assert.equal(staleRecordedRun?.status, 'aborted');
 assert.equal(staleRecordedRun?.events.at(-1)?.type, 'final', 'stale sessions have a durable terminal record');
+
+// Master auto-approve toggle tests (default off, bypasses manual real-tool & proposal gates when on, approveAllPending resolves queued gates).
+{
+  const prevRaf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+    cb(0);
+    return 0;
+  }) as typeof requestAnimationFrame;
+  try {
+    setExternalAutoApprove(false);
+    assert.equal(getExternalAutoApprove(), false, 'master auto-approve defaults to false');
+
+    const toggleLive = makeDraft(base);
+    let publishedCount = 0;
+    const toggleRuntime = new ExternalBridgeRuntime(
+      'auto-approve-project',
+      'auto-approve-editor',
+      () => ({
+        commands: toggleLive.commands,
+        getState: toggleLive.getState,
+        getDoc: toggleLive.getDoc,
+        getCreativeMode: () => null,
+        templates: [],
+        audio: [],
+        getProjectId: () => 'auto-approve-project',
+      }),
+      (snap) => { if (snap.proposal) publishedCount += 1; },
+    );
+    const toggleBinding = () => ({
+      projectId: 'auto-approve-project',
+      editorInstanceId: 'auto-approve-editor',
+      baseRevision: revisionOf(toggleLive.getDoc()),
+    });
+
+    // 1) When autoApprove is true, a manual session skips real-tool confirmation and auto-applies review_edit_session.
+    setExternalAutoApprove(true);
+    assert.equal(getExternalAutoApprove(), true);
+    const s1 = await toggleRuntime.execute('begin_edit_session', { approvalMode: 'manual' }, toggleBinding()) as { editSessionId: string };
+    const directReal = await toggleRuntime.execute('read_export_history', { editSessionId: s1.editSessionId }, toggleBinding());
+    assert(!needsConfirmation(directReal), 'master toggle skips real-tool confirmation on manual session');
+    await toggleRuntime.execute('set_aspect_ratio', { editSessionId: s1.editSessionId, ratio: '1:1' }, toggleBinding());
+    const review1 = await toggleRuntime.execute('review_edit_session', { editSessionId: s1.editSessionId, summary: 'auto-applied' }, toggleBinding());
+    assert.equal(sessionStatus(review1), 'applied', 'master toggle auto-applies review_edit_session');
+    assert.equal(toggleLive.getState().width, 1080);
+
+    // 2) When disabled again, manual confirmation returns, and approveAllPending() resolves pending guard + awaiting proposal.
+    setExternalAutoApprove(false);
+    const s2 = await toggleRuntime.execute('begin_edit_session', { approvalMode: 'manual' }, toggleBinding()) as { editSessionId: string };
+    const gated = await toggleRuntime.execute('read_export_history', { editSessionId: s2.editSessionId }, toggleBinding());
+    assert(needsConfirmation(gated), 'disabling master toggle restores manual real-tool gate');
+    assert(toggleRuntime.pendingGuard() !== null);
+    await toggleRuntime.execute('set_aspect_ratio', { editSessionId: s2.editSessionId, ratio: '9:16' }, toggleBinding());
+    const review2 = await toggleRuntime.execute('review_edit_session', { editSessionId: s2.editSessionId, summary: 'awaiting review' }, toggleBinding());
+    assert.equal(sessionStatus(review2), 'awaiting_review');
+    assert.ok(publishedCount >= 1);
+
+    setExternalAutoApprove(true);
+    await toggleRuntime.approveAllPending();
+    assert.equal(toggleRuntime.pendingGuard(), null, 'approveAllPending clears pending real-tool guard');
+    assert.equal(toggleLive.getState().width, 1080);
+    assert.equal(toggleLive.getState().height, 1920, 'approveAllPending applies awaiting proposal');
+    setExternalAutoApprove(false);
+  } finally {
+    globalThis.requestAnimationFrame = prevRaf;
+  }
+}

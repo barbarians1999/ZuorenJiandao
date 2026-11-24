@@ -31,6 +31,7 @@ import {
 } from './external-bridge-registration';
 import { handleExternalBridgeAttemptError } from './external-bridge-attempt-error';
 import { useT } from '../i18n/locale';
+import { useExternalAutoApprove } from './external-auto-approve';
 import {
   parseExternalCall,
   parseExternalCancellation as parseCancellation,
@@ -69,6 +70,9 @@ export interface ExternalProposalController {
   /** Pending real-project tool confirmation from an external session. */
   pendingGuard: ExternalGuardRequest | null;
   confirmGuard: (id: string, allow: boolean) => void;
+  /** Persisted master switch: auto-approve all external edits and real-tool calls. */
+  autoApprove: boolean;
+  setAutoApprove: (enabled: boolean) => void;
 }
 
 function retryDelay(): Promise<void> {
@@ -435,6 +439,10 @@ function useExternalGuard(
       setError(t('工具确认未保存，请重试：{message}', { message: errorMessage(confirmationError) }));
     }
   }, [runtime.runtimeRef, setError, t]);
+  const refreshPendingGuard = useCallback(() => {
+    const slot = runtime.runtimeRef.current;
+    setPendingGuard(slot ? slot.runtime.pendingGuard() : null);
+  }, [runtime.runtimeRef]);
   useEffect(() => {
     const slot = runtime.runtimeRef.current;
     if (!slot) return undefined;
@@ -447,21 +455,42 @@ function useExternalGuard(
       window.clearInterval(timer);
     };
   }, [runtime.readiness, runtime.runtimeRef, projectId]);
-  return { pendingGuard, confirmGuard };
+  return { pendingGuard, confirmGuard, refreshPendingGuard };
 }
 export function useExternalAgentBridge(ctx: AgentContext, projectId: string): ExternalProposalController {
   const [snapshot, setSnapshot] = useState<ExternalProposalSnapshot>({ proposal: null, stale: false });
   const [error, setError] = useState<string | null>(null);
   const t = useT();
+  const [autoApprove, setAutoApprove] = useExternalAutoApprove();
   const runtime = useExternalRuntime(ctx, projectId, setSnapshot, setError);
   useExternalPolling(projectId, runtime, setError);
   const actions = useExternalActions(runtime.runtimeRef, setError);
   const guard = useExternalGuard(runtime, projectId, setError, t);
+  const { refreshPendingGuard } = guard;
+  useEffect(() => {
+    if (!autoApprove) return;
+    const bridge = runtime.runtimeRef.current?.runtime;
+    if (!bridge) return;
+    let cancelled = false;
+    void bridge.approveAllPending()
+      .then(() => {
+        if (!cancelled) refreshPendingGuard();
+      })
+      .catch((approvalError) => {
+        if (!cancelled) setError(errorMessage(approvalError));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [autoApprove, refreshPendingGuard, runtime.readiness, runtime.runtimeRef]);
   return {
     proposal: snapshot.proposal,
     proposalStale: snapshot.stale,
     error,
     ...actions,
-    ...guard,
+    pendingGuard: guard.pendingGuard,
+    confirmGuard: guard.confirmGuard,
+    autoApprove,
+    setAutoApprove,
   };
 }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { kvDel, kvEntriesForCleanup, kvGet, kvGetFresh, kvKeys, kvRemoteMode, kvSet, resetSharedKvMemory } from './sharedKv';
+import { kvDel, kvEntriesForCleanup, kvGet, kvGetFresh, kvKeys, kvPurgeProject, kvRemoteMode, kvSet, resetSharedKvMemory } from './sharedKv';
 import { mergeProjectEntries } from '../../server/plugins/project-store-entries';
 import { CURRENT_PROJECT_VERSION } from '../../shared/project-version';
 import { loadProjectForEditing, migrateProjectDoc } from './projectStore';
@@ -471,6 +471,41 @@ try {
   rejectSnapshot = true;
   await assert.rejects(kvEntriesForCleanup(), /snapshot unavailable/,
     'cleanup never falls back to incomplete local data after a remote read failure');
+
+  // Destructive project purge recovers automatically after a transient remote failure disabled remoteCache.
+  local.clear();
+  resetSharedKvMemory();
+  let transientGetFailure = false;
+  let purgedId = '';
+  const recoveryRemote: Record<string, unknown> = {
+    projects: [{ id: 'proj-recover', name: 'Recover', updatedAt: 10 }],
+    'project:proj-recover': { version: 3, timelines: [] },
+  };
+  installGlobal('window', { openChatCutDesktop: {
+    projectStore: async (request: { operation: string; key?: string; projectId?: string }) => {
+      if (request.operation === 'entry') {
+        if (transientGetFailure) throw new Error('transient network blip');
+        const key = request.key!;
+        return { found: Object.hasOwn(recoveryRemote, key), value: recoveryRemote[key] };
+      }
+      if (request.operation === 'purge-project') {
+        purgedId = request.projectId!;
+        delete recoveryRemote[`project:${purgedId}`];
+        recoveryRemote.projects = [];
+        return { ok: true };
+      }
+      return { version: 1, entries: { ...recoveryRemote } };
+    },
+  } });
+  await kvGet('projects');
+  assert.equal(kvRemoteMode(), 'remote');
+  transientGetFailure = true;
+  await kvGet('projects');
+  assert.equal(kvRemoteMode(), 'local');
+  transientGetFailure = false;
+  await kvPurgeProject('proj-recover');
+  assert.equal(purgedId, 'proj-recover');
+  assert.equal(kvRemoteMode(), 'remote');
 } finally {
   resetSharedKvMemory();
   restoreGlobals();

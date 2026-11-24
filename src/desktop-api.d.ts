@@ -29,6 +29,7 @@ import type {
   DirectoryWatchStartResult,
 } from '../shared/directory-import';
 import type { TranscriptWindowPayload } from '../shared/transcript-window';
+import type { DesktopClosePromptRequest, DesktopClosePromptResponse } from '../shared/desktop-close-behavior';
 interface DesktopExportDirectoryGrant {
   readonly grantId: string;
   readonly label: string;
@@ -82,6 +83,9 @@ declare global {
       importAgentPaths(request: AgentPathImportRequest): Promise<AgentPathImportResult>;
       subscribeImportDirectory(listener: (event: DirectoryImportEvent) => void): () => void;
       windowAction(action: 'close' | 'minimize' | 'toggle-maximize' | 'apply-ui-scale'): Promise<void>;
+      subscribeClosePrompt?(listener: (request: DesktopClosePromptRequest) => void): () => void;
+      respondClosePrompt?(response: DesktopClosePromptResponse): Promise<void>;
+      setClosePromptReady?(ready: boolean): Promise<void>;
       setTitlebarAppearance?(value: { color: string; symbolColor: string; height: number }): Promise<void>;
       zoomStep(step: number | 'reset'): Promise<void>;
       subscribeUiScale(listener: (scale: number) => void): () => void;

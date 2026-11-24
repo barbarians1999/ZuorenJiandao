@@ -27,7 +27,6 @@ export function CaptionMotionControls({ value, onChange }: CaptionMotionControls
           </button>
         ))}
       </div>
-      <p className="cc-cap-hint">{t('动效按时间线帧计算，预览与导出保持一致。')}</p>
     </div>
   );
 }

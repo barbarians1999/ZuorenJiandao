@@ -86,6 +86,7 @@ export interface EditorCommands {
     durationInFrames?: number;
     color?: string;
     name?: string;
+    mask?: import('./types.js').ClipMask;
     ripple?: boolean;
   }) => string;
   addShapeItem: (shape: 'rectangle' | 'ellipse', at?: { track?: TrackId; startFrame?: number; durationInFrames?: number }) => string;

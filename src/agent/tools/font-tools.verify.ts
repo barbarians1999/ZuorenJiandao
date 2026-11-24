@@ -15,7 +15,7 @@ import {
   findUnsupportedFonts,
 } from './font-tools';
 import { searchFontCatalog, isLoadableFontFamily } from '../../fonts/googleFonts';
-import { LOCAL_CJK_FONTS, ensureLocalFont, findLocalFont } from '../../fonts/localFonts';
+import { LOCAL_FONTS, ensureLocalFont, findLocalFont } from '../../fonts/localFonts';
 import { timelineToFcpxml } from '../../export/fcpxml';
 import type { TimelineState } from '../../editor/types';
 
@@ -34,19 +34,19 @@ const ctx: AgentContext = {
   audio: [],
 };
 
-// search_fonts — Google loadable
+// search_fonts — bundled Inter
 const inter = await execFontTool('search_fonts', { query: 'inter' }, ctx) as {
-  ok: boolean; results: Array<{ family: string; loadable: boolean }>;
+  ok: boolean; results: Array<{ family: string; loadable: boolean; source: string }>;
 };
 assert.strictEqual(inter.ok, true);
-assert.ok(inter.results.some((r) => r.family === 'Inter' && r.loadable));
+assert.deepEqual(inter.results.filter((r) => r.family === 'Inter').map((r) => [r.loadable, r.source]), [[true, 'bundled']]);
 
 // Chinese alias → bundled local font (loadable, source:'bundled')
 const deyi = searchFontCatalog('得意黑');
 assert.ok(deyi.some((r) => r.family === 'Smiley Sans' && r.loadable && r.source === 'bundled'));
 
 // every bundled family + its Chinese aliases hit the search catalog
-for (const font of LOCAL_CJK_FONTS) {
+for (const font of LOCAL_FONTS) {
   for (const query of [font.family, ...font.aliasZh]) {
     assert.ok(
       searchFontCatalog(query).some((r) => r.family === font.family && r.source === 'bundled'),
@@ -63,7 +63,7 @@ assert.ok(douyin.results.some((r) => r.family === 'Douyin Meihao Ti' && r.loadab
 
 // every mapped URL points at a real woff2 under assets/
 const assetsDir = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', 'assets');
-for (const font of LOCAL_CJK_FONTS) {
+for (const font of LOCAL_FONTS) {
   for (const url of Object.values(font.files ?? {})) {
     assert.ok(url.startsWith('/fonts/'), `bad url shape: ${url}`);
     assert.ok(existsSync(join(assetsDir, url)), `missing woff2: assets${url}`);

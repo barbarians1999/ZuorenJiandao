@@ -29,3 +29,18 @@ export function scrubScalar(
   const precision = Math.max(0, `${step}`.split('.')[1]?.length ?? 0) + 2;
   return clampScalar(Number(next.toFixed(precision)), min, max);
 }
+
+export function wheelStepScalar(
+  current: number,
+  deltaY: number,
+  step: number,
+  min: number,
+  max: number,
+  modifiers: ScalarModifiers = { shiftKey: false, metaKey: false },
+): number {
+  if (!Number.isFinite(deltaY) || deltaY === 0) return clampScalar(current, min, max);
+  const direction = deltaY < 0 ? 1 : -1;
+  const next = current + direction * step * scalarModifier(modifiers);
+  const precision = Math.max(0, `${step}`.split('.')[1]?.length ?? 0) + 2;
+  return clampScalar(Number(next.toFixed(precision)), min, max);
+}

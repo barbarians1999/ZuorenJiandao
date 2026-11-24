@@ -9,7 +9,20 @@ import { emptyProjectDoc, navigateTo, type AppRoute } from './appShell';
 import { useDashboardActions } from './useDashboardActions';
 import type { ProjectQuickStart } from './projectQuickStart';
 
-const Editor = lazy(() => import('../Editor'));
+let editorModule: Promise<typeof import('../Editor')> | undefined;
+
+function loadEditor() {
+  return editorModule ??= import('../Editor').catch((error: unknown) => {
+    editorModule = undefined;
+    throw error;
+  });
+}
+
+function warmEditor(): void {
+  void loadEditor().catch(() => undefined);
+}
+
+const Editor = lazy(loadEditor);
 
 export function AppSplash({ text }: { text: string }) {
   return (
@@ -41,6 +54,7 @@ function EditorLoader({ meta, quickStart, onHome, onRename }: EditorLoaderProps)
   useEffect(() => {
     let alive = true;
     setLoad({ kind: 'loading' });
+    warmEditor();
     void loadProjectForEditing(meta.id).then((result) => {
       if (!alive) return;
       // "missing" opens a legitimately empty project; "unreadable" must block
@@ -128,5 +142,11 @@ export function DashboardRoute({
   refresh: () => Promise<void>;
 }) {
   const actions = useDashboardActions(refresh);
+  const hasProjects = projects.length > 0;
+  useEffect(() => {
+    if (!hasProjects || !window.openChatCutDesktop || !window.requestIdleCallback || editorModule) return;
+    const idle = window.requestIdleCallback(warmEditor);
+    return () => window.cancelIdleCallback(idle);
+  }, [hasProjects]);
   return <Dashboard projects={projects} {...actions} />;
 }

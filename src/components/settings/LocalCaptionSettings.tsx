@@ -34,7 +34,7 @@ export function LocalCaptionSettings({ selectedModel, onSelect }: { selectedMode
   };
   return <section style={{ display: 'grid', gap: 10 }}>
     <b>{t('本地字幕识别')}</b><small style={{ color: theme.textDim }}>{t('在本机运行，不需要 API 密钥。模型仅在点击下载后安装。')}</small>
-    <label>{t('字幕模型')}<select value={selectedModel} onChange={(event) => onSelect(event.target.value)} style={{ marginLeft: 10, color: theme.text, background: theme.panelAlt, padding: 5 }}>
+    <label>{t('字幕模型')}<select className="cc-branded-select" value={selectedModel} onChange={(event) => onSelect(event.target.value)} style={{ marginLeft: 10, color: theme.text, background: 'var(--cc-inset)', border: '1px solid var(--cc-border)', borderRadius: 10, padding: '6px 12px', cursor: 'pointer' }}>
       <option value="">{t('自动选择')}</option>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
     </select></label>
     {error && <span role="alert" style={{ color: theme.danger }}>{error}</span>}

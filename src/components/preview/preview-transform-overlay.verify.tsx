@@ -5,7 +5,7 @@ import type { PlayerRef } from '@remotion/player';
 import type { RefObject } from 'react';
 import type { TimelineItem, TimelineState } from '../../editor/types';
 import { t } from '../../i18n/locale';
-import { PreviewTransformOverlay } from './PreviewTransformOverlay';
+import { formatTransformDragHud, PreviewTransformOverlay } from './PreviewTransformOverlay';
 import { fitPreviewCanvasSize, previewPaddedClientSize, previewStageContentSize } from './previewCanvasGeometry';
 
 const item: TimelineItem = {
@@ -224,6 +224,14 @@ for (const trackPatch of [{ locked: true }, { hidden: true }]) {
     <PreviewTransformOverlay state={{ ...mosaicState, selectedId: 'base-video', selectedIds: ['base-video'], items: [baseVideo] }} {...props} />,
   );
   assert.doesNotMatch(baseMarkup, /data-preview-selected-hit=/, '底轨未变换主视频不得遮挡字幕命中区');
+}
+
+{
+  const baseTransform = { x: 0, y: 0, scale: 1, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1, borderRadius: 0 };
+  assert.equal(formatTransformDragHud('move', { x: 12.4, y: -7.8 }, baseTransform), 'X 12 · Y -8');
+  assert.equal(formatTransformDragHud('scale', { scaleX: 0.69 }, baseTransform), '69% · 0°');
+  assert.equal(formatTransformDragHud('rotate', { rotation: 375 }, baseTransform), '100% · 15°');
+  assert.equal(formatTransformDragHud('crop-edge', {}, baseTransform), null);
 }
 
 console.log('preview-transform-overlay.verify: ok (语义/皮肤/四角/四边裁切/旋转/锁定隐藏/帧范围)');

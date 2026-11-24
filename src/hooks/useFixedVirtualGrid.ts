@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 export interface FixedVirtualGridOptions {
   itemCount: number;
@@ -72,14 +72,22 @@ export function useFixedVirtualGrid({
   const [gridWindow, setGridWindow] = useState<GridWindow>(INITIAL_WINDOW);
   const rowStride = rowHeight + rowGap;
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const scrollContainer = findScrollContainer(container);
+    let scrollContainer: HTMLElement | undefined;
+    let scrollTarget: EventTarget | undefined;
     let animationFrame = 0;
 
     const measure = () => {
       animationFrame = 0;
+      if (!scrollContainer) {
+        scrollContainer = findScrollContainer(container);
+        scrollTarget = scrollContainer === document.documentElement || scrollContainer === document.body
+          ? window : scrollContainer;
+        scrollTarget.addEventListener('scroll', scheduleMeasure, { passive: true });
+        if (scrollTarget !== window) resizeObserver?.observe(scrollContainer);
+      }
       const width = container.clientWidth;
       const columnCount = columnCountFor(width, cardWidth, columnGap, fixedColumnCount);
       const rowCount = Math.ceil(itemCount / columnCount);
@@ -103,20 +111,17 @@ export function useFixedVirtualGrid({
     const scheduleMeasure = () => {
       if (!animationFrame) animationFrame = requestAnimationFrame(measure);
     };
-    const scrollTarget: EventTarget = scrollContainer === document.documentElement
-      || scrollContainer === document.body ? window : scrollContainer;
-    scrollTarget.addEventListener('scroll', scheduleMeasure, { passive: true });
     window.addEventListener('resize', scheduleMeasure);
-    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleMeasure);
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+      if (!scrollContainer && !animationFrame) measure();
+      else scheduleMeasure();
+    });
     resizeObserver?.observe(container);
-    if (scrollContainer !== document.documentElement && scrollContainer !== document.body) {
-      resizeObserver?.observe(scrollContainer);
-    }
-    measure();
+    if (!resizeObserver) scheduleMeasure();
 
     return () => {
       cancelAnimationFrame(animationFrame);
-      scrollTarget.removeEventListener('scroll', scheduleMeasure);
+      scrollTarget?.removeEventListener('scroll', scheduleMeasure);
       window.removeEventListener('resize', scheduleMeasure);
       resizeObserver?.disconnect();
     };

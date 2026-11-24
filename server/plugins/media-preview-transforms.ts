@@ -84,7 +84,7 @@ interface Probe { durationMs: number; width: number; height: number; hasAudio: b
 
 export async function probe(file: string, signal: AbortSignal): Promise<Probe> {
   const { stdout } = await runPreviewProcess(ffprobeBin(), [
-    '-v', 'error', '-print_format', 'json',
+    '-v', 'error', '-threads', '1', '-print_format', 'json',
     '-show_entries', 'format=duration:stream=codec_type,width,height',
     file,
   ], signal, 30_000);

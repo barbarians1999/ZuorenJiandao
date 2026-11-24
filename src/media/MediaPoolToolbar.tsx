@@ -10,17 +10,18 @@ import {
 import { createPortal } from 'react-dom';
 import { MusicAutoAnalysisPreference } from '../audio/intelligence/MusicAnalysisBadge';
 import { Icon } from '../components/icons';
-import type { MediaAsset } from '../editor/types';
+import type { ClipMask, MediaAsset } from '../editor/types';
 import { useT } from '../i18n/locale';
 import { SemanticSearchControls } from './semantic-search/SemanticSearchControls';
 import type { SemanticMatch } from './semantic-search/types';
-import type { MediaSortKey, MediaTypeFilter } from './mediaPoolFilter';
+import type { MediaSortKey, MediaTypeFilter, MediaUsageFilter } from './mediaPoolFilter';
 import { mediaViewToggleLabel } from './mediaView';
 import { DirectoryImportActions } from './DirectoryImportActions';
 
 export type MediaToolbarMenu = 'sort' | 'filter' | 'actions' | null;
 const SORT_OPTIONS = [['newest', '最新导入'], ['name', '名称 A–Z'], ['duration', '时长']] as const;
 const FILTER_OPTIONS = [['all', '全部'], ['video', '视频'], ['image', '图片'], ['gif', 'GIF'], ['svg', 'SVG'], ['audio', '音频'], ['document', '文档'], ['file', '其他文件']] as const;
+const USAGE_OPTIONS = [['all', '全部状态'], ['used', '已使用'], ['unused', '未使用']] as const;
 
 interface MediaPoolToolbarProps {
   scopeId: string;
@@ -28,6 +29,7 @@ interface MediaPoolToolbarProps {
   query: string;
   sort: MediaSortKey;
   type: MediaTypeFilter;
+  usage: MediaUsageFilter;
   favoritesOnly: boolean;
   view: 'grid' | 'list';
   menu: MediaToolbarMenu;
@@ -46,12 +48,13 @@ interface MediaPoolToolbarProps {
   watchingFolder: string | null;
   watchBusy: boolean;
   onMobileUpload: (restoreFocus: () => void) => void;
-  onAddSolid: () => void;
+  onAddSolid?: (preset?: { name?: string; color?: string; mask?: ClipMask }) => void;
   onCreateFolder: (restoreFocus: () => void) => void;
   onViewChange: () => void;
   onMenuChange: (menu: MediaToolbarMenu) => void;
   onSortChange: (sort: MediaSortKey) => void;
   onTypeChange: (type: MediaTypeFilter) => void;
+  onUsageChange: (usage: MediaUsageFilter) => void;
   onFavoritesChange: () => void;
 }
 
@@ -185,11 +188,14 @@ function FilterMenu(props: MenuProps) {
     style={props.lifecycle.actionsStyle}
   >
     {FILTER_OPTIONS.map(([value, label]) => <button aria-pressed={props.type === value} key={value} className={props.type === value ? 'selected' : ''} onClick={() => props.onTypeChange(value)}>{t(label)}</button>)}
+    <div className="cc-menu-divider" role="separator" />
+    {USAGE_OPTIONS.map(([value, label]) => <button aria-pressed={props.usage === value} key={`usage-${value}`} className={props.usage === value ? 'selected' : ''} onClick={() => props.onUsageChange(value)}>{t(label)}</button>)}
+    <div className="cc-menu-divider" role="separator" />
     <button aria-pressed={props.favoritesOnly} className={props.favoritesOnly ? 'selected' : ''} onClick={props.onFavoritesChange}><span className="cc-media-menu-label"><Icon name="star" size={13} filled={props.favoritesOnly} /> {t('收藏')}</span></button>
   </div>;
   return (
     <div className="cc-media-menu-anchor">
-      <button className={`cc-media-icon cc-tip${open || props.type !== 'all' || props.favoritesOnly ? ' active' : ''}`} aria-label={t('筛选素材')} data-tip={t('筛选')} aria-haspopup="dialog" aria-expanded={open} onClick={(event) => props.lifecycle.toggle('filter', event.currentTarget)}><Icon name="filter" size={19} /></button>
+      <button className={`cc-media-icon cc-tip${open || props.type !== 'all' || props.usage !== 'all' || props.favoritesOnly ? ' active' : ''}`} aria-label={t('筛选素材')} data-tip={t('筛选')} aria-haspopup="dialog" aria-expanded={open} onClick={(event) => props.lifecycle.toggle('filter', event.currentTarget)}><Icon name="filter" size={19} /></button>
       {portalToolbarPopover(popover)}
     </div>
   );
@@ -208,7 +214,14 @@ function ActionsMenu(props: MenuProps) {
   };
   const popover = open && <div ref={props.lifecycle.menuRef} role="dialog" aria-label={t('更多操作')} className="cc-media-popover cc-media-actions-menu cc-media-toolbar-menu-fixed" style={props.lifecycle.actionsStyle}>
     <button onClick={() => runModal(props.onMobileUpload)}><Icon name="qrCode" size={15} />{t('手机传素材')}</button>
-    {props.canAddSolid && <button onClick={() => run(props.onAddSolid, true)}><span className="cc-media-solid-icon">{t('色')}</span>{t('添加纯色')}</button>}
+    {props.canAddSolid && (
+      <>
+        <button onClick={() => run(() => props.onAddSolid?.({ name: '黑场', color: '#000000' }), true)}><span className="cc-media-solid-icon">{t('黑')}</span>{t('新建黑场')}</button>
+        <button onClick={() => run(() => props.onAddSolid?.({ name: '白场', color: '#ffffff' }), true)}><span className="cc-media-solid-icon">{t('白')}</span>{t('新建白场')}</button>
+        <button onClick={() => run(() => props.onAddSolid?.({ name: '遮罩视频', color: '#000000', mask: { type: 'rectangle', x: 0.15, y: 0.15, width: 0.7, height: 0.7, feather: 0.02 } }), true)}><span className="cc-media-solid-icon">{t('罩')}</span>{t('新建遮罩视频')}</button>
+        <button onClick={() => run(() => props.onAddSolid?.(), true)}><span className="cc-media-solid-icon">{t('色')}</span>{t('添加纯色')}</button>
+      </>
+    )}
     {props.onAddShape && (
       <>
         <button onClick={() => run(() => props.onAddShape?.('rectangle'), true)}>

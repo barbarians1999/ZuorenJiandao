@@ -13,13 +13,15 @@ const vite = await createServer({ configFile: false, appType: 'custom', optimize
 try {
   const { LibraryNavigation, LIBRARY_TOOLS, isResourceTool } = await vite.ssrLoadModule('/src/library/LibraryNavigation.tsx');
   assert.deepEqual(LIBRARY_TOOLS.map((tool: { id: string }) => tool.id),
-    ['我的素材', '特效', '背景音乐', '字幕', '插入文字', '音效', '序列', '扩展中心']);
+    ['我的素材', '特效', '字幕', '音效', '序列', '扩展中心']);
   for (const tool of LIBRARY_TOOLS) {
     const html = renderToStaticMarkup(createElement(LibraryNavigation, { active: tool.id, onSelect() { throw new Error('render must not select'); } }));
-    assert.equal((html.match(/<button/g) ?? []).length, 8);
+    assert.equal((html.match(/<button/g) ?? []).length, 6);
     assert.equal((html.match(/aria-pressed="true"/g) ?? []).length, 1);
     assert.match(html, /<nav[^>]+aria-label="资源库"/);
+    assert.match(html, /字幕与文字/);
     assert.match(html, /子草稿/);
+    assert.doesNotMatch(html, /插入文字|背景音乐/);
     assert.doesNotMatch(html, /标题动画|LUT|缩放|转场/);
     assert.doesNotMatch(html, /更多工具/);
     assert.equal(isResourceTool(tool.id), tool.id === '音效');

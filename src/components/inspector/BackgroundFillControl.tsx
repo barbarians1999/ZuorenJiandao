@@ -98,7 +98,7 @@ export function BackgroundFillControlView({
               onChange(next.enabled, next.strength);
             }}
             aria-label={translate('背景填充')} />
-          <span><strong>{translate('背景填充')}</strong><small>{translate('用片段副本填满画布空白')}</small></span>
+          <span><strong>{translate('背景填充')}</strong></span>
         </label>
         <div>
           {onApplyToAll && <button type="button" className="cc-bg-fill-apply"

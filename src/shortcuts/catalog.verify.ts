@@ -5,13 +5,15 @@ import { SHORTCUT_CATALOG, SHORTCUT_BY_ID } from './catalog';
 import { isShortcutImeComposing, matchShortcut, parseBindingAlts, parseChord, shouldIgnoreShortcutRepeat } from './match';
 import { effectiveMatchingCatalog, resetBinding, setBinding } from './keymap';
 
-assert.strictEqual(SHORTCUT_CATALOG.length, 63);
-assert.strictEqual(new Set(SHORTCUT_CATALOG.map((entry) => entry.id)).size, 63);
+assert.strictEqual(SHORTCUT_CATALOG.length, 67);
+assert.strictEqual(new Set(SHORTCUT_CATALOG.map((entry) => entry.id)).size, 67);
 assert.ok(SHORTCUT_BY_ID['play-pause']);
 assert.ok(SHORTCUT_BY_ID['shuttle-back']);
 assert.ok(SHORTCUT_BY_ID['toggle-picture']);
 assert.strictEqual(SHORTCUT_BY_ID['select-before-playhead']?.keys, '[');
 assert.strictEqual(SHORTCUT_BY_ID['select-after-playhead']?.keys, ']');
+assert.strictEqual(SHORTCUT_BY_ID['select-track-before-playhead']?.keys, 'Shift + [');
+assert.strictEqual(SHORTCUT_BY_ID['select-track-after-playhead']?.keys, 'Shift + ]');
 assert.strictEqual(SHORTCUT_BY_ID['select-after']?.keys, 'Y');
 
 const space = parseChord('Space');
@@ -106,8 +108,20 @@ assert.strictEqual(
   matchShortcut(keyN({ key: 'i' }), catalog, { held: new Set(), isMac: true }),
   'zone-in',
 );
+assert.strictEqual(
+  matchShortcut(keyN({ key: 'i', shiftKey: true }), catalog, { held: new Set(), isMac: false }),
+  'zone-clear-in',
+);
+assert.strictEqual(
+  matchShortcut(keyN({ key: 'o', shiftKey: true }), catalog, { held: new Set(), isMac: false }),
+  'zone-clear-out',
+);
 assert.strictEqual(matchShortcut(keyN({ key: '[' }), catalog, { held: new Set(), isMac: false }), 'select-before-playhead');
 assert.strictEqual(matchShortcut(keyN({ key: ']' }), catalog, { held: new Set(), isMac: false }), 'select-after-playhead');
+assert.strictEqual(matchShortcut(keyN({ key: '[', shiftKey: true }), catalog, { held: new Set(), isMac: false }), 'select-track-before-playhead');
+assert.strictEqual(matchShortcut(keyN({ key: '{', shiftKey: true }), catalog, { held: new Set(), isMac: false }), 'select-track-before-playhead');
+assert.strictEqual(matchShortcut(keyN({ key: ']', shiftKey: true }), catalog, { held: new Set(), isMac: false }), 'select-track-after-playhead');
+assert.strictEqual(matchShortcut(keyN({ key: '}', shiftKey: true }), catalog, { held: new Set(), isMac: false }), 'select-track-after-playhead');
 assert.strictEqual(matchShortcut(keyN({ key: 'y' }), catalog, { held: new Set(), isMac: false }), 'select-after');
 assert.strictEqual(
   matchShortcut(keyN({ key: 'k', metaKey: true, altKey: true }), catalog, { held: new Set(), isMac: true }),

@@ -7,7 +7,7 @@ import { ClipContextMenu } from './ClipContextMenu';
 import { Icon } from '../icons';
 import { CaptionStyleMenu } from '../../captions/CaptionStyleMenu';
 import { CaptionTrackLane } from '../../captions/CaptionTrackLane';
-import { captionSelectionsInFrameRange } from '../../captions/captionSelection';
+import { captionSelectionsInFrameRange, selectableCaptionSelectionsOnTrackSide } from '../../captions/captionSelection';
 import { removeManualCue } from '../../captions/manualCaptions';
 import { TrackHead } from './TrackHead';
 import { TrackLane } from './TrackLane';
@@ -19,7 +19,6 @@ import { TrackContextMenu } from './TrackContextMenu';
 import { TransitionContextMenu } from './TransitionContextMenu';
 import { closeCaptionTrackGaps, trackClearPlan } from './trackContextOperations';
 import { HEADER_W, RULER_H } from './timelineUtil';
-import { playheadScrubGrabOffsetPx } from './timelineSeek';
 import {
   CAPTION_SELECTION_OWNER_SELECTOR,
   CAPTION_SELECTION_TIMELINE_CLIP_SELECTOR,
@@ -31,7 +30,7 @@ import type { TimelineProps } from './timelineTypes';
 import { useTimelineController } from './useTimelineController';
 import { SceneDetectionDialog } from '../../scene-detection/SceneDetectionDialog';
 import { mainTrackId } from '../../editor/magneticTimeline';
-import { canItemMoveToTrack } from '../../editor/multiSelect';
+import { canItemMoveToTrack, selectableItemIdsOnTrackSide } from '../../editor/multiSelect';
 import { trackDisplayLabel, trackOrderForHeaderDrop, type TrackDropSide } from './trackHeaderReorder';
 
 export function Timeline(props: TimelineProps) {
@@ -55,12 +54,11 @@ export function Timeline(props: TimelineProps) {
     frameFromClientX, trackFromClientY, copyCaptionSelections, pasteCaptionClipboard,
     pointer, drag, marquee, pickDrag, startPick, onPointerMove, onPointerUp, onPointerCancel, cancelSeekGesture,
     activeSelectionMovePreview, libDropTarget, setLibDropTarget,
-    applyLibraryToClip, applyLibraryToTrack, seekTo, seekFrame,
+    applyLibraryToClip, applyLibraryToTrack, seekTo, scrubTo, seekFrame,
     clearHoverPreview, updateHoverPreview, startSeekGesture, updateSeekGesture, finishSeekGesture,
     markers, zoneIn, zoneOut, editing, editMarker, setEditMarker, pinnedItemIds,
   } = useTimelineController(props);
   const lastPlayheadGripX = useRef<number | null>(null);
-  const playheadLineDragRef = useRef<{ startX: number; grabOffsetPx: number; dragged: boolean } | null>(null);
   const [trackReorderDrag, setTrackReorderDrag] = useState<{ sourceId: TrackId; targetId: TrackId; side: TrackDropSide } | null>(null);
   const trackReorderCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => { trackReorderCleanupRef.current?.(); }, []);
@@ -248,7 +246,7 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
             state={state} empty={empty} px={px}
             majorFrames={majorFrames} minorFrames={minorFrames} minorTicksPerMajor={minorTicksPerMajor}
             rulerEndFrame={rulerSpanFrames} visibleWindow={visibleWindow}
-            pickMode={pickMode} startPick={startPick} seekTo={seekTo}
+            pickMode={pickMode} startPick={startPick} seekTo={seekTo} scrubTo={scrubTo}
             rulerTimecodeRef={rulerTimecodeRef} playheadFrame={playheadRef.current}
             zoneIn={zoneIn} zoneOut={zoneOut} markers={markers} onEditMarker={setEditMarker}
             pinnedMarkerId={editMarker}
@@ -270,7 +268,9 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
             // Stable title (类型+序号) plus optional custom name as a second row,
             // so track naming never drifts when AI creates tracks with its own labels.
 
-            const customName = config.name || undefined;
+            const customName = config.name && !(isEffect && (config.name === '马赛克' || config.name === '图形'))
+              ? config.name
+              : undefined;
             const deletePlan = trackDeletePlan(state, trackId);
             const reorderTargetSide = trackReorderDrag?.targetId === trackId ? trackReorderDrag.side : null;
             const isVideoBottomNewTrackTarget = !!drag && drag.mode === 'move' && drag.newTrackDrop && drag.newTrackPlacement === 'bottom' && trackId === lastVideoTrackId && draggedItem?.kind !== 'audio';
@@ -414,11 +414,10 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
               onPointerMove={(event) => {
                 if (pickMode || !event.currentTarget.hasPointerCapture(event.pointerId) || lastPlayheadGripX.current === event.clientX) return;
                 lastPlayheadGripX.current = event.clientX;
-                seekTo(event.clientX);
+                scrubTo(event.clientX);
               }}
               onPointerUp={(event) => {
                 if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                  if (!pickMode && lastPlayheadGripX.current !== event.clientX) seekTo(event.clientX);
                   lastPlayheadGripX.current = null;
                   event.currentTarget.releasePointerCapture(event.pointerId);
                 }
@@ -447,40 +446,24 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
                 event.preventDefault();
                 event.stopPropagation();
                 event.currentTarget.setPointerCapture(event.pointerId);
-                const rect = innerRef.current?.getBoundingClientRect();
-                const grabOffsetPx = rect
-                  ? playheadScrubGrabOffsetPx(event.clientX, rect.left + HEADER_W + playheadRef.current * px)
-                  : 0;
-                playheadLineDragRef.current = { startX: event.clientX, grabOffsetPx, dragged: false };
                 lastPlayheadGripX.current = event.clientX;
               }}
               onPointerMove={(event) => {
                 if (pickMode || !event.currentTarget.hasPointerCapture(event.pointerId) || lastPlayheadGripX.current === event.clientX) return;
-                const lineDrag = playheadLineDragRef.current;
-                if (!lineDrag) return;
-                if (!lineDrag.dragged && Math.abs(event.clientX - lineDrag.startX) < 1) return;
-                lineDrag.dragged = true;
                 lastPlayheadGripX.current = event.clientX;
-                seekTo(event.clientX - lineDrag.grabOffsetPx);
+                scrubTo(event.clientX);
               }}
               onPointerUp={(event) => {
                 if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                  const lineDrag = playheadLineDragRef.current;
-                  if (!pickMode && lineDrag?.dragged && lastPlayheadGripX.current !== event.clientX) {
-                    seekTo(event.clientX - lineDrag.grabOffsetPx);
-                  }
-                  playheadLineDragRef.current = null;
                   lastPlayheadGripX.current = null;
                   event.currentTarget.releasePointerCapture(event.pointerId);
                 }
               }}
               onPointerCancel={(event) => {
-                playheadLineDragRef.current = null;
                 lastPlayheadGripX.current = null;
                 cancelSeekGesture(event);
               }}
               onLostPointerCapture={(event) => {
-                playheadLineDragRef.current = null;
                 lastPlayheadGripX.current = null;
                 cancelSeekGesture(event);
               }}
@@ -559,6 +542,18 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
         const captionSelections = captions
           ? captionSelectionsInFrameRange(trackId, captions, state.items, state.fps, 0, Number.MAX_SAFE_INTEGER)
           : [];
+        const leftCaptionSelections = kind === 'caption'
+          ? selectableCaptionSelectionsOnTrackSide(state, trackId, trackMenu.frame, 'left')
+          : [];
+        const rightCaptionSelections = kind === 'caption'
+          ? selectableCaptionSelectionsOnTrackSide(state, trackId, trackMenu.frame, 'right')
+          : [];
+        const leftItemIds = kind === 'caption'
+          ? []
+          : selectableItemIdsOnTrackSide(state, trackId, trackMenu.frame, 'left');
+        const rightItemIds = kind === 'caption'
+          ? []
+          : selectableItemIdsOnTrackSide(state, trackId, trackMenu.frame, 'right');
         const sortedItems = [...items].sort((a, b) => a.startFrame - b.startFrame);
         const captionTighten = captions ? closeCaptionTrackGaps(captions) : null;
         const canTighten = kind === 'caption'
@@ -580,6 +575,8 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
             canTighten={canTighten}
             hasContents={clearPlan.hasContents}
             hasSelectable={kind === 'caption' ? captionSelections.length > 0 : items.length > 0}
+            hasSelectableLeft={kind === 'caption' ? leftCaptionSelections.length > 0 : leftItemIds.length > 0}
+            hasSelectableRight={kind === 'caption' ? rightCaptionSelections.length > 0 : rightItemIds.length > 0}
             deleteBlockedReason={deletePlan.blockedReason}
             onInsert={() => beginTrackInsert(trackId, trackMenu.frame)}
             onTighten={() => {
@@ -593,6 +590,24 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
               } else {
                 onMarqueeCaptionSelect([], { additive: false, preserveWithItems: false });
                 commands.selectItems(items.map((item) => item.id));
+              }
+            }}
+            onSelectLeft={() => {
+              if (kind === 'caption') {
+                commands.selectItems([]);
+                onMarqueeCaptionSelect(leftCaptionSelections, { additive: false, preserveWithItems: false });
+              } else {
+                onMarqueeCaptionSelect([], { additive: false, preserveWithItems: false });
+                commands.selectItems(leftItemIds);
+              }
+            }}
+            onSelectRight={() => {
+              if (kind === 'caption') {
+                commands.selectItems([]);
+                onMarqueeCaptionSelect(rightCaptionSelections, { additive: false, preserveWithItems: false });
+              } else {
+                onMarqueeCaptionSelect([], { additive: false, preserveWithItems: false });
+                commands.selectItems(rightItemIds);
               }
             }}
             onClear={() => {

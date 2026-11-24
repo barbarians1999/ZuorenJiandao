@@ -3,6 +3,7 @@ import type {
   ExportEngineReason,
   ExportProgress,
   ExportQaUiState,
+  ExportRenderDiagnostics,
   RenderEngine,
   StateSetter,
 } from './exportWorkflowTypes';
@@ -21,6 +22,7 @@ export interface BackgroundExportJob {
   updatedAt: number;
   busy: string | null;
   clock: number;
+  diagnostics: ExportRenderDiagnostics | null;
   engineInfo: ExportEngineInfo | null;
   engineReason: ExportEngineReason;
   error: string | null;
@@ -38,6 +40,7 @@ export interface BackgroundExportSnapshot {
 export interface BackgroundExportJobSetters {
   setBusy: StateSetter<string | null>;
   setClock: StateSetter<number>;
+  setDiagnostics?: StateSetter<ExportRenderDiagnostics | null>;
   setEngineInfo: StateSetter<ExportEngineInfo | null>;
   setEngineReason: StateSetter<ExportEngineReason>;
   setError: StateSetter<string | null>;
@@ -168,6 +171,7 @@ export function createExportJobStore(now: () => number = Date.now): ExportJobSto
     },
     setBusy: (value) => update(jobId, (job) => ({ ...job, busy: nextValue(job.busy, value) })),
     setClock: (value) => update(jobId, (job) => ({ ...job, clock: nextValue(job.clock, value) })),
+    setDiagnostics: (value) => update(jobId, (job) => ({ ...job, diagnostics: nextValue(job.diagnostics, value) })),
     setEngineInfo: (value) => update(jobId, (job) => ({ ...job, engineInfo: nextValue(job.engineInfo, value) })),
     setEngineReason: (value) => update(jobId, (job) => ({ ...job, engineReason: nextValue(job.engineReason, value) })),
     setError: (value) => update(jobId, (job) => ({ ...job, error: nextValue(job.error, value) })),
@@ -232,6 +236,7 @@ export function createExportJobStore(now: () => number = Date.now): ExportJobSto
       updatedAt: startedAt,
       busy: '等待导出…',
       clock: startedAt,
+      diagnostics: null,
       engineInfo: null,
       engineReason: null,
       error: null,

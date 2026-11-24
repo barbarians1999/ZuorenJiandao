@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from 'react';
+import { createContext, useContext, useMemo, type CSSProperties } from 'react';
 import {
   Audio as BrowserAudio,
   type AudioProps as BrowserAudioProps,
@@ -28,6 +28,7 @@ import { usesVideoAudioRenderer } from './videoAudioRouting';
 import { audioPlaybackWindows } from './audioPlaybackWindow';
 
 const EMPTY_MEDIA_ASSETS: MediaAsset[] = [];
+export const PreviewAudioEnabled = createContext(true);
 
 function RuntimeAudio({ browserRenderer, videoAudio = false, ...props }: BrowserAudioProps & {
   browserRenderer: boolean;
@@ -47,6 +48,7 @@ function MixedRuntimeAudio({ item, browserRenderer, videoAudio, volume, ...props
   browserRenderer: boolean;
   videoAudio?: boolean;
 }) {
+  if (!useContext(PreviewAudioEnabled)) return null;
   const useVideoAudio = videoAudio ?? usesVideoAudioRenderer(item);
   if (!item.denoisedSrc) {
     return <RuntimeAudio browserRenderer={browserRenderer} videoAudio={useVideoAudio} {...props} src={item.src!} volume={volume} />;
@@ -183,13 +185,14 @@ export function ContinuousVideoAudio({ items, muted, gainAt, premountFor, browse
   );
 }
 
-export function SharedVideoVisualGroup({ group, fit, canvasW, canvasH, premountFor, browserRenderer }: {
+export function SharedVideoVisualGroup({ group, fit, canvasW, canvasH, premountFor, postmountFor, browserRenderer }: {
   group: TimelineItem[];
   fit: AspectFit;
   muted: boolean;
   canvasW: number;
   canvasH: number;
   premountFor: number;
+  postmountFor: number;
   browserRenderer: boolean;
 }) {
   const frame = useCurrentFrame();
@@ -198,7 +201,7 @@ export function SharedVideoVisualGroup({ group, fit, canvasW, canvasH, premountF
   if (!first || !last || !first.src) return null;
   const duration = last.startFrame + last.durationInFrames - first.startFrame;
   const { item, localFrame } = sharedVisualFrame(group, frame)!;
-  const appearance = appearanceAt(item, localFrame, false, { width: canvasW, height: canvasH });
+  const appearance = appearanceAt(item, localFrame, item.pictureDisabled === true, { width: canvasW, height: canvasH });
   const sourceWidth = item.width ?? canvasW;
   const sourceHeight = item.height ?? canvasH;
   const rect = visibleVisualFrameRect(
@@ -225,7 +228,8 @@ export function SharedVideoVisualGroup({ group, fit, canvasW, canvasH, premountF
     );
   }
   return (
-    <Sequence from={first.startFrame} durationInFrames={duration} premountFor={premountFor} name={`${first.name}:visual`}>
+    <Sequence from={first.startFrame} durationInFrames={duration} premountFor={premountFor} postmountFor={postmountFor}
+      name={`${first.name}:visual`}>
       <AbsoluteFill style={{
         opacity: appearance.opacity,
         transform: appearance.foregroundStyle.transform,

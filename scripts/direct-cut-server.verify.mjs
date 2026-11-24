@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import ffmpeg from 'ffmpeg-static';
+import ffprobe from '@ffprobe-installer/ffprobe';
 import { createDirectCutFixture } from './direct-cut-fixture.mjs';
 const root = await mkdtemp(resolve('release/direct-cut-server-'));
 process.env.OPENCHATCUT_DEV_PROFILE_ID = randomUUID();
@@ -48,6 +49,10 @@ try {
     durationInFrames: 15, props: { text: 'Chapter', entrance: 'wipe', entranceFrames: 5 } });
   const titleCaps = await (await post(titled)).json(); assert.equal(titleCaps.directCut.renderRoute, 'hybrid');
   report.checks.push('chapter preflight selects local-window hybrid');
+  const scaled = { ...titled, resolution: '720p', state: { ...titled.state, trackOrder: ['V2', 'V1'] } };
+  const scaledCaps = await (await post(scaled)).json();
+  assert.equal(scaledCaps.directCut.renderRoute, 'hybrid');
+  report.checks.push('a scaled export is eligible for native overlay composition');
   const unsupported = structuredClone(body); unsupported.state.items[0].mask = { type: 'ellipse' };
   assert.equal((await (await post(unsupported)).json()).directCut, undefined);
   assert.equal((await post({ state: {} })).status, 400);
@@ -65,6 +70,18 @@ try {
     '-map', '0:v:0', '-f', 'framehash', 'pipe:1'], { windowsHide: true, timeout: 30000, maxBuffer: 1024 ** 2 });
   assert.equal(stdout.split('\n').filter((line) => /^\s*\d+\s*,/.test(line)).length, 135);
   report.checks.push('default production entry returns actual native encoder and complete 135-frame file');
+  const scaledOutput = join(root, 'production-720p.mp4');
+  const scaledStarted = performance.now();
+  const scaledResult = await renderExportPlan(planExport(scaled), scaledOutput, () => {}, AbortSignal.timeout(90000));
+  report.scaled = { elapsedMs: performance.now() - scaledStarted, ...scaledResult };
+  assert.equal(scaledResult.diagnostics.route, 'hybrid');
+  const scaledProbe = await promisify(execFile)(ffprobe.path, ['-v', 'error', '-select_streams', 'v:0', '-show_entries',
+    'stream=width,height,nb_frames', '-of', 'json', scaledOutput], { windowsHide: true, timeout: 30000 });
+  const [video] = JSON.parse(scaledProbe.stdout).streams;
+  assert.deepEqual(video, { width: 1280, height: 720, nb_frames: '135' });
+  await promisify(execFile)(ffmpeg, ['-v', 'error', '-xerror', '-i', scaledOutput, '-f', 'null', '-'],
+    { windowsHide: true, timeout: 30000 });
+  report.checks.push('scaled production export has correct dimensions, frame count and decodable audio/video');
   report.status = 'passed';
 } catch (error) { report.status = 'failed'; report.error = { message: error.message, stack: error.stack }; process.exitCode = 1; }
 finally {

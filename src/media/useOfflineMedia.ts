@@ -17,9 +17,16 @@ export function useOfflineMedia(doc: Pick<ProjectDoc, 'assets' | 'timelines'>) {
     let alive = true;
     const sources = JSON.parse(sourcesKey) as string[];
     void (async () => {
-      await ensureMediaSrcs(sources).catch(() => undefined);
-      const results = await Promise.all(sources.map(async (src) => [src, await isMediaSrcReachable(src)] as const));
-      if (alive) setOfflineSrcs(new Set(results.filter(([, ok]) => !ok).map(([src]) => src)));
+      const checked = await ensureMediaSrcs(sources).catch(() => null);
+      const available = new Set([...(checked?.ok ?? []), ...(checked?.restored ?? [])]);
+      const missing = new Set<string>();
+      // Recovery has already probed readable uploads. Check the remaining
+      // paths individually so project-wide probes cannot crowd out playback.
+      for (const src of sources) {
+        if (!alive) return;
+        if (!available.has(src) && !await isMediaSrcReachable(src)) missing.add(src);
+      }
+      if (alive) setOfflineSrcs(missing);
     })();
     return () => { alive = false; };
   }, [sourcesKey]);

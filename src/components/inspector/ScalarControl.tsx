@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { clampScalar, scalarModifier, scrubScalar } from './scalarMath';
+import { useInspectorWheel } from './useInspectorWheel';
 
 interface ScalarControlProps {
   ariaLabel: string;
@@ -45,7 +46,28 @@ export function ScalarControl({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => mixed ? '' : displayNumber(value * inputScale));
   const inputRef = useRef<HTMLInputElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const scrub = useRef<ScrubState | null>(null);
+  const parsedDraft = Number(draft) / inputScale;
+
+  useInspectorWheel(buttonRef, {
+    value,
+    min,
+    max,
+    step,
+    disabled: disabled || mixed || editing,
+    onChange,
+  });
+
+  useInspectorWheel(inputRef, {
+    value: Number.isFinite(parsedDraft) ? parsedDraft : value,
+    min,
+    max,
+    step,
+    disabled: disabled || mixed || !editing,
+    onChange,
+    onStep: (next) => setDraft(displayNumber(next * inputScale)),
+  });
 
   useEffect(() => {
     if (!editing) setDraft(mixed ? '' : displayNumber(value * inputScale));
@@ -113,6 +135,7 @@ export function ScalarControl({
 
   return (
     <button
+      ref={buttonRef}
       aria-label={ariaLabel}
       className="cc-insp-scalar"
       disabled={disabled}

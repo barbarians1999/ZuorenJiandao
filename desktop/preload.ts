@@ -54,6 +54,12 @@ import {
 import { isTranscriptWindowPayload, TRANSCRIPT_WINDOW_CHANNELS, type TranscriptWindowPayload } from '../shared/transcript-window.ts';
 import { AGENT_LOCAL_MEDIA_CHANNEL, type AgentLocalMediaRequest, type AgentLocalMediaResult } from '../shared/agent-local-media.ts';
 import { DESKTOP_FONT_CHANNELS, type DesktopFontsApi } from '../shared/desktop-fonts.ts';
+import {
+  DESKTOP_CLOSE_CONFIRM_CHANNELS,
+  isDesktopClosePromptRequest,
+  type DesktopClosePromptRequest,
+  type DesktopClosePromptResponse,
+} from '../shared/desktop-close-behavior.ts';
 
 export interface DesktopExportDirectoryGrant {
   readonly grantId: string;
@@ -108,6 +114,9 @@ export interface OpenChatCutDesktopApi {
   browseLocalMedia(request: AgentLocalMediaRequest): Promise<AgentLocalMediaResult>;
   subscribeImportDirectory(listener: (event: DirectoryImportEvent) => void): () => void;
   windowAction(action: 'close' | 'minimize' | 'toggle-maximize' | 'apply-ui-scale'): Promise<void>;
+  subscribeClosePrompt(listener: (request: DesktopClosePromptRequest) => void): () => void;
+  respondClosePrompt(response: DesktopClosePromptResponse): Promise<void>;
+  setClosePromptReady(ready: boolean): Promise<void>;
   setTitlebarAppearance(value: { color: string; symbolColor: string; height: number }): Promise<void>;
   zoomStep(step: number | 'reset'): Promise<void>;
   subscribeUiScale(listener: (scale: number) => void): () => void;
@@ -179,6 +188,17 @@ const api: OpenChatCutDesktopApi = {
   },
   windowAction: (action) =>
     ipcRenderer.invoke('openchatcut:window-action', action) as Promise<void>,
+  subscribeClosePrompt: (listener) => {
+    const handlePrompt = (_event: IpcRendererEvent, value: unknown): void => {
+      if (isDesktopClosePromptRequest(value)) listener(value);
+    };
+    ipcRenderer.on(DESKTOP_CLOSE_CONFIRM_CHANNELS.prompt, handlePrompt);
+    return () => { ipcRenderer.removeListener(DESKTOP_CLOSE_CONFIRM_CHANNELS.prompt, handlePrompt); };
+  },
+  respondClosePrompt: (response) =>
+    ipcRenderer.invoke(DESKTOP_CLOSE_CONFIRM_CHANNELS.respond, response) as Promise<void>,
+  setClosePromptReady: (ready) =>
+    ipcRenderer.invoke(DESKTOP_CLOSE_CONFIRM_CHANNELS.ready, Boolean(ready)) as Promise<void>,
   setTitlebarAppearance: (value) => ipcRenderer.invoke('openchatcut:titlebar-appearance', value) as Promise<void>,
   zoomStep: (step) =>
     ipcRenderer.invoke('openchatcut:zoom-step', step) as Promise<void>,

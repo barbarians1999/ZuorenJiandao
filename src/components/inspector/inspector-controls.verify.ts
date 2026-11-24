@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { keyframeResetBatch } from '../../editor/keyframeReset';
-import { clampScalar, scalarModifier, scrubScalar, snapScalar } from './scalarMath';
+import { clampScalar, scalarModifier, scrubScalar, snapScalar, wheelStepScalar } from './scalarMath';
 
 assert.equal(scalarModifier({ shiftKey: false, metaKey: false }), 1);
 assert.equal(scalarModifier({ shiftKey: true, metaKey: false }), 10);
@@ -11,6 +11,11 @@ assert.equal(scrubScalar(1, 2, 0.05, 0, 2, { shiftKey: true, metaKey: false }), 
 assert.equal(scrubScalar(1, -100, 0.05, 0, 2, { shiftKey: false, metaKey: true }), 0.5);
 assert.equal(clampScalar(9, 0, 2), 2);
 assert.equal(snapScalar(1.373, 0, 2, 0.05), 1.35);
+assert.equal(wheelStepScalar(1, -120, 0.05, 0, 2), 1.05);
+assert.equal(wheelStepScalar(1, 120, 0.05, 0, 2), 0.95);
+assert.equal(wheelStepScalar(1.9, -120, 0.05, 0, 2, { shiftKey: true, metaKey: false }), 2);
+assert.equal(wheelStepScalar(1, 120, 0.05, 0, 2, { shiftKey: false, metaKey: true }), 0.995);
+assert.equal(wheelStepScalar(1, 0, 0.05, 0, 2), 1);
 
 const row = keyframeResetBatch('clip-1', ['volume']);
 assert.equal(row.label, 'Reset volume');
@@ -37,5 +42,21 @@ assert.match(transformSource, /CROP_ROWS\.map/, '四边裁切应排在关键帧�
 
 const captionSource = readFileSync(new URL('./CaptionInspectorControls.tsx', import.meta.url), 'utf8');
 assert.match(captionSource, /<div className="cc-insp-body">\s*<div className="cc-insp-groups" data-caption-inspector="true">/s, '字幕属性应包裹在可纵向滚动的 cc-insp-body 容器中');
+
+for (const file of [
+  'InspectorKeyframeControls.tsx',
+  'BackgroundFillControl.tsx',
+  'CaptionInspectorControls.tsx',
+  'PictureAnimationControl.tsx',
+  'PropSchemaField.tsx',
+  'InspectorVisualControls.tsx',
+  'InspectorMediaControls.tsx',
+]) {
+  const source = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /useInspectorWheel\([^)]*(?:rangeRef|durationRangeRef)/, `${file}: 滚轮调节不应绑定在左侧滑动条上`);
+}
+const scalarSource = readFileSync(new URL('./ScalarControl.tsx', import.meta.url), 'utf8');
+assert.match(scalarSource, /useInspectorWheel\(buttonRef/, '右侧数值框应保留滚轮调节');
+assert.match(scalarSource, /useInspectorWheel\(inputRef/, '右侧数字输入框应保留滚轮调节');
 
 console.log('inspector-controls.verify: ok');

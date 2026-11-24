@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { theme, themeAlpha } from '../../theme';
 import type { EditorCommands } from '../../editor/store';
-import { removeItemsFromState } from '../../editor/multiSelect';
+import { removeItemsFromState, selectableItemIdsOnTrackSide } from '../../editor/multiSelect';
 import { setLinkGroup, unlinkItems, groupedItemIds, groupTimelineItems, ungroupTimelineItems } from '../../editor/linkGroups';
 import { attachToMainClip, mainTrackId, planMagneticDelete } from '../../editor/magneticTimeline';
 import { planExpandSubdraft, planIndependentSubdraft, type SubdraftOperation } from '../../editor/subdraftOperations';
@@ -13,6 +13,7 @@ import { useT } from '../../i18n/locale';
 import { canSplitTimelineItemAtFrame } from '../../editor/splitEligibility';
 import { sceneDetectionUnavailable } from '../../scene-detection/apply';
 import { detachAudio, detachAudioUnavailable } from '../../editor/detachAudio';
+import { useShortcutHint } from '../../shortcuts/useShortcutHint';
 
 // speed presets for the variable speed submenu
 const SPEED_PRESETS = [0.25, 0.5, 1, 1.5, 2, 4] as const;
@@ -67,10 +68,9 @@ interface ClipContextMenuProps {
   onPaste?: () => void;
 }
 
-const PASTE_HINT = '⌘⌥V';
-
 export function ClipContextMenu({ item, transitions, x, y, playhead, commands, timeline, projectDoc, selectedIds, fxClip, onCopyFx, onClose, onExportMg, onConvertToVideo, onAddComment, onRelinkFile, onDetectScenes, onCopy, onPaste }: ClipContextMenuProps) {
   const t = useT();
+  const shortcut = useShortcutHint();
   const ref = useRef<HTMLDivElement>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
@@ -278,11 +278,15 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
         onClick={run(() => toggleRelationship('sync-lock'))}
       />
       <Sep />
-      <Item label={t('复制')} icon="copy" shortcut="Ctrl+C" disabled={!onCopy} onClick={run(() => onCopy?.())} />
-      <Item label={t('粘贴到播放头')} icon="clipboard" shortcut="Ctrl+V" disabled={!onPaste} onClick={run(() => onPaste?.())} />
-      <Item label={t('组合所选片段')} icon="users" shortcut="Ctrl+G" disabled={batchN < 2}
+      <Item label={t('复制')} icon="copy" shortcut={shortcut('copy')} disabled={!onCopy} onClick={run(() => onCopy?.())} />
+      <Item label={t('粘贴到播放头')} icon="clipboard" shortcut={shortcut('paste')} disabled={!onPaste} onClick={run(() => onPaste?.())} />
+      <Item label={t('此轨向左全选')} icon="prev" disabled={!!timeline.tracks?.[item.track]?.locked}
+        onClick={run(() => commands.selectItems(selectableItemIdsOnTrackSide(timeline, item.track, item.startFrame, 'left', { anchorItemId: item.id })))} />
+      <Item label={t('此轨向右全选')} icon="next" disabled={!!timeline.tracks?.[item.track]?.locked}
+        onClick={run(() => commands.selectItems(selectableItemIdsOnTrackSide(timeline, item.track, item.startFrame, 'right', { anchorItemId: item.id })))} />
+      <Item label={t('组合所选片段')} icon="users" shortcut={shortcut('group')} disabled={batchN < 2}
         onClick={run(() => commands.applyState(groupTimelineItems(timeline, batchIds, crypto.randomUUID())))} />
-      <Item label={t('取消组合')} icon="unlock" shortcut="Ctrl+Shift+G" disabled={!ordinaryGroup}
+      <Item label={t('取消组合')} icon="unlock" shortcut={shortcut('ungroup')} disabled={!ordinaryGroup}
         onClick={run(() => commands.applyState(ungroupTimelineItems(timeline, batchIds)))} />
       {item.track !== mainTrackId(timeline) && <Item
         label={item.mainClipId ? t('取消跟随主片段') : t('绑定到下方主片段')}
@@ -307,7 +311,7 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
           disabled={!projectDoc || !!timeline.tracks?.[item.track]?.locked}
           onClick={run(() => applySubdraftOperation(planExpandSubdraft))} />
       </>}
-      <Item label={t('切分')} icon="scissors" shortcut="Ctrl+B" disabled={!inside} onClick={run(() => commands.splitItem(item.id, playhead))} />
+      <Item label={t('切分')} icon="scissors" shortcut={shortcut('split')} disabled={!inside} onClick={run(() => commands.splitItem(item.id, playhead))} />
       {selectedVideos.length > 0 && <Item label={detachCount > 1 ? t('分离音频（{n} 个视频）', { n: detachCount }) : t('分离音频')} icon="volume"
         disabled={!!detachDisabledReason} title={detachDisabledReason ? t(detachDisabledReason) : undefined}
         onClick={run(() => commands.applyState(detachAudio(timeline, batchIds, (prefix) => `${prefix}_${crypto.randomUUID()}`)))} />}
@@ -330,7 +334,7 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
         </div>
       )}
       <Item label={t('复制效果')} icon="sparkles" disabled={!isVisual} onClick={run(copyFx)} />
-      <Item label={t('粘贴效果')} icon="clipboard" shortcut={PASTE_HINT} disabled={!isVisual || !fxClip} onClick={run(pasteFx)} />
+      <Item label={t('粘贴效果')} icon="clipboard" shortcut={shortcut('paste-effects')} disabled={!isVisual || !fxClip} onClick={run(pasteFx)} />
       <Item label={!matchesSpeedPreset(rate, 1) ? t('变速（{rate}×）', { rate: displayedRate }) : t('变速')} icon="clock" chevron disabled={!canSpeed}
         onClick={canSpeed ? () => setShowSpeed((v) => !v) : undefined} />
       {showSpeed && canSpeed && (
@@ -358,14 +362,14 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
         label={batchN > 1 ? t('删除（{n}）', { n: batchN }) : t('删除')}
         icon="trash"
         danger
-        shortcut="⌫"
+        shortcut={shortcut('delete')}
         onClick={run(() => removeSelection(false))}
       />
       <Item
         label={batchN > 1 ? t('波纹删除（{n}）', { n: batchN }) : t('波纹删除（合缝）')}
         icon="trash"
         danger
-        shortcut="⇧⌫"
+        shortcut={shortcut('ripple-delete')}
         onClick={run(() => removeSelection(true))}
       />
     </div>

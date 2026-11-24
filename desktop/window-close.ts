@@ -1,27 +1,20 @@
-import { app, BrowserWindow, dialog, Menu, nativeImage, Tray } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Tray } from 'electron';
 import { getKey, setKeys } from '../server/keystore.ts';
-import { DESKTOP_CLOSE_BEHAVIOR_KEY } from '../shared/desktop-close-behavior.ts';
+import {
+  DESKTOP_CLOSE_BEHAVIOR_KEY,
+  DESKTOP_CLOSE_CONFIRM_CHANNELS,
+} from '../shared/desktop-close-behavior.ts';
+import { assertTrustedDesktopSenderUrl } from './page-origin.ts';
 import { focusExistingWindow } from './single-instance.ts';
+import { createMainWindowCloseController } from './window-close-controller.ts';
 
-export function installMainWindowCloseBehavior(win: BrowserWindow, iconPath: string): void {
+export function installMainWindowCloseBehavior(
+  win: BrowserWindow,
+  iconPath: string,
+  trustedOrigin: string,
+): void {
   let tray: Tray | undefined;
-  let pending = false;
-  let quitting = false;
   let companions: BrowserWindow[] = [];
-
-  const markQuitting = () => { quitting = true; };
-  app.on('before-quit', markQuitting);
-  win.webContents.on('will-prevent-unload', () => { quitting = false; });
-  win.on('show', () => {
-    for (const companion of companions) {
-      if (!companion.isDestroyed()) companion.showInactive();
-    }
-    companions = [];
-  });
-  win.once('closed', () => {
-    app.off('before-quit', markQuitting);
-    tray?.destroy();
-  });
 
   function hideToTray(): void {
     if (!tray) {
@@ -47,11 +40,21 @@ export function installMainWindowCloseBehavior(win: BrowserWindow, iconPath: str
     win.hide();
   }
 
-  async function closeOrHide(): Promise<void> {
-    const saved = getKey(DESKTOP_CLOSE_BEHAVIOR_KEY);
-    let choice = saved === 'quit' || saved === 'background' ? saved : null;
-    let remember = false;
-    if (!choice) {
+  const controller = createMainWindowCloseController({
+    getSavedBehavior: () => getKey(DESKTOP_CLOSE_BEHAVIOR_KEY),
+    saveBehavior: async (choice) => {
+      await setKeys({ [DESKTOP_CLOSE_BEHAVIOR_KEY]: choice });
+    },
+    hideToTray,
+    quitApp: () => app.quit(),
+    isWindowDestroyed: () => win.isDestroyed(),
+    isWindowMinimized: () => win.isMinimized(),
+    restoreWindow: () => win.restore(),
+    showWindow: () => win.show(),
+    focusWindow: () => win.focus(),
+    isRendererCrashed: () => win.webContents.isCrashed(),
+    sendPrompt: (request) => win.webContents.send(DESKTOP_CLOSE_CONFIRM_CHANNELS.prompt, request),
+    showNativeDialog: async () => {
       const result = await dialog.showMessageBox(win, {
         type: 'question',
         title: '关闭左人剪刀',
@@ -62,27 +65,61 @@ export function installMainWindowCloseBehavior(win: BrowserWindow, iconPath: str
         cancelId: 2,
         checkboxLabel: '下次不再提醒',
       });
-      choice = result.response === 0 ? 'quit' : result.response === 1 ? 'background' : null;
-      remember = result.checkboxChecked;
-    }
-    if (!choice || quitting || win.isDestroyed()) return;
-    if (choice === 'background') hideToTray();
-    if (remember) {
-      await setKeys({ [DESKTOP_CLOSE_BEHAVIOR_KEY]: choice }).catch((error: unknown) => {
-        console.warn('[desktop] could not remember close behavior:', error);
-      });
-    }
-    if (choice === 'quit' && !quitting && !win.isDestroyed()) app.quit();
-  }
+      return {
+        choice: result.response === 0 ? 'quit' : result.response === 1 ? 'background' : null,
+        remember: result.checkboxChecked,
+      };
+    },
+    showErrorBox: (title, content) => dialog.showErrorBox(title, content),
+  });
 
-  win.on('close', (event) => {
-    if (quitting) return;
-    event.preventDefault();
-    if (pending) return;
-    pending = true;
-    void closeOrHide().catch((error: unknown) => {
-      console.warn('[desktop] close behavior failed:', error);
-      if (!quitting && !win.isDestroyed()) dialog.showErrorBox('左人剪刀', '无法完成关闭操作，请重试。');
-    }).finally(() => { pending = false; });
+  const assertCloseSender = (event: Electron.IpcMainInvokeEvent): void => {
+    assertTrustedDesktopSenderUrl(event.senderFrame?.url ?? '', trustedOrigin);
+    if (event.sender !== win.webContents) {
+      throw new Error('unexpected window close IPC sender');
+    }
+  };
+
+  ipcMain.removeHandler(DESKTOP_CLOSE_CONFIRM_CHANNELS.ready);
+  ipcMain.removeHandler(DESKTOP_CLOSE_CONFIRM_CHANNELS.respond);
+  ipcMain.handle(DESKTOP_CLOSE_CONFIRM_CHANNELS.ready, (event, ready: unknown) => {
+    assertCloseSender(event);
+    controller.setRendererPromptReady(ready === true);
+  });
+  ipcMain.handle(DESKTOP_CLOSE_CONFIRM_CHANNELS.respond, (event, value: unknown) => {
+    assertCloseSender(event);
+    controller.handlePromptResponse(value);
+  });
+
+  const handleDidStartNavigation = (
+    _event: Electron.Event,
+    _url: string,
+    isInPlace: boolean,
+    isMainFrame: boolean,
+  ) => {
+    if (isMainFrame && !isInPlace) controller.setRendererPromptReady(false);
+  };
+  const handleRenderProcessGone = () => controller.setRendererPromptReady(false);
+  const handleBeforeQuit = () => controller.markQuitting();
+  const handleWillPreventUnload = () => controller.resetQuitting();
+  const handleShow = () => {
+    for (const companion of companions) {
+      if (!companion.isDestroyed()) companion.showInactive();
+    }
+    companions = [];
+  };
+
+  app.on('before-quit', handleBeforeQuit);
+  win.webContents.on('did-start-navigation', handleDidStartNavigation);
+  win.webContents.on('render-process-gone', handleRenderProcessGone);
+  win.webContents.on('will-prevent-unload', handleWillPreventUnload);
+  win.on('show', handleShow);
+  win.on('close', controller.handleWindowClose);
+  win.once('closed', () => {
+    app.off('before-quit', handleBeforeQuit);
+    ipcMain.removeHandler(DESKTOP_CLOSE_CONFIRM_CHANNELS.ready);
+    ipcMain.removeHandler(DESKTOP_CLOSE_CONFIRM_CHANNELS.respond);
+    controller.dispose();
+    tray?.destroy();
   });
 }

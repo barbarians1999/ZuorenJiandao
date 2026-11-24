@@ -1,11 +1,12 @@
 // Playhead drawing machine (translated verbatim from Timeline.tsx):frameupdate → rAF frame-drawn playhead line
 // (GPU transform) timecode text with ~12fps throttling; Player instance watchdog (preview re-hang and re-subscribe monitoring,
 // Repair the root cause of needle freezing); resume playback at breakpoint (throttle persistence + one-time recovery after project attachment).
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type { CallbackListener, PlayerRef } from '@remotion/player';
 import { loadTimelineView, saveTimelineView } from '../../persist/sessionPrefs';
 import { HEADER_W, fmt, fmtClock } from './timelineUtil';
 import { animationPreviewSavedFrame, releaseAnimationPreviewPosition, withAnimationPreviewInternalSeek } from '../../editor/animationAudition';
+import { createFrameCoalescer, type FrameCoalescer } from './frameCoalescer';
 
 export interface AudibleAudioItem {
   /** Timeline start frame of the audio item. */
@@ -25,6 +26,7 @@ interface PlayheadDeps {
   fps: number;
   total: number;
   px: number;
+  scrubSeek: { readonly pending: boolean };
   /**
    * Marking mode: returns the audio item audible at the given playhead frame,
    * or null when the playhead should keep following the Player's frame clock.
@@ -81,13 +83,20 @@ interface MediaMetadataSyncPlayer {
 function attachMediaMetadataSync(
   player: MediaMetadataSyncPlayer | null,
   getDesiredFrame: () => number,
+  metadataFrames?: FrameCoalescer<void>,
 ): () => void {
   const target = player?.getContainerNode() ?? null;
   if (!player || !target) return () => undefined;
   const options = { capture: true };
-  const onLoadedMetadata = () => withAnimationPreviewInternalSeek(player, () => player.seekTo(getDesiredFrame()));
+  const frames = metadataFrames ?? createFrameCoalescer<void>(requestAnimationFrame, cancelAnimationFrame);
+  const onLoadedMetadata = () => frames.schedule(undefined, () => {
+    withAnimationPreviewInternalSeek(player, () => player.seekTo(getDesiredFrame()));
+  });
   target.addEventListener('loadedmetadata', onLoadedMetadata, options);
-  return () => target.removeEventListener('loadedmetadata', onLoadedMetadata, options);
+  return () => {
+    frames.cancel();
+    target.removeEventListener('loadedmetadata', onLoadedMetadata, options);
+  };
 }
 
 interface PlayheadMediaSyncPlayer extends MediaMetadataSyncPlayer {
@@ -99,8 +108,9 @@ export function attachPlayheadMediaSync(
   player: PlayheadMediaSyncPlayer,
   getDesiredFrame: () => number,
   onFrame: CallbackListener<'frameupdate'>,
+  metadataFrames?: FrameCoalescer<void>,
 ): () => void {
-  const detachMetadataSync = attachMediaMetadataSync(player, getDesiredFrame);
+  const detachMetadataSync = attachMediaMetadataSync(player, getDesiredFrame, metadataFrames);
   player.addEventListener('frameupdate', onFrame);
   return () => {
     detachMetadataSync();
@@ -108,7 +118,7 @@ export function attachPlayheadMediaSync(
   };
 }
 
-export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total, px, getAudibleItem }: PlayheadDeps) {
+export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total, px, scrubSeek, getAudibleItem }: PlayheadDeps) {
   const projectIdRef = useRef(projectId);
   projectIdRef.current = projectId;
   const timelineIdRef = useRef(timelineId);
@@ -185,6 +195,11 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
     paintPlayheadRef.current(frame, true);
     return true;
   };
+  const persistHead = useCallback((frame: number, owner = playerRef.current) => {
+    if (projectId && timelineId) saveTimelineView(projectId, timelineId, {
+      playhead: animationPreviewSavedFrame(owner, projectId, timelineId, frame),
+    });
+  }, [playerRef, projectId, timelineId]);
   useEffect(() => {
     let detach: (() => void) | null = null;
     let attached: unknown = null; // Which Player instance the listener is currently hung on
@@ -192,11 +207,6 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
     // update the Player duration before this effect is cleaned up; that clamp
     // event belongs to neither the outgoing saved position nor the new draft.
     const isCurrentTimeline = () => projectIdRef.current === projectId && timelineIdRef.current === timelineId;
-    const persistHead = (frame: number, owner = playerRef.current) => {
-      if (projectId && timelineId) saveTimelineView(projectId, timelineId, {
-        playhead: animationPreviewSavedFrame(owner, projectId, timelineId, frame),
-      });
-    };
     const attachTo = (player: NonNullable<typeof playerRef.current>) => {
       const key = projectId && timelineId ? `${projectId}\u0000${timelineId}` : null;
       if (key !== restoredForRef.current) {
@@ -212,9 +222,10 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
       // loadedmetadata does not bubble.
       const flush = () => {
         paintRafRef.current = 0;
-        if (pendingFrameRef.current != null) {
-          paintPlayheadRef.current(pendingFrameRef.current);
-          pendingFrameRef.current = null;
+        const pending = pendingFrameRef.current;
+        pendingFrameRef.current = null;
+        if (pending !== null && !scrubSeek.pending && (player.isPlaying() || pending === player.getCurrentFrame())) {
+          paintPlayheadRef.current(pending);
         }
       };
       // Hard refresh does not run React uninstall and clean, detach flush is unreliable - play/drag frameupdate
@@ -225,6 +236,7 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
         // Marking mode: while the audible media clock owns the playhead, the
         // wall-clock frame must not overwrite it (markers read playheadRef).
         if (lastAudioFrameRef.current !== null) return;
+        if (scrubSeek.pending) return;
         playheadRef.current = Math.max(0, event.detail.frame);
         pendingFrameRef.current = event.detail.frame;
         if (!paintRafRef.current) paintRafRef.current = requestAnimationFrame(flush);
@@ -236,7 +248,7 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
       };
       const detachPlayheadSync = attachPlayheadMediaSync(
         player,
-        () => playheadRef.current,
+        () => scrubSeek.pending ? player.getCurrentFrame() : playheadRef.current,
         onFrame,
       );
       const onPlay = () => { if (isCurrentTimeline()) setPlaying(true); };
@@ -303,7 +315,7 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
       if (detach) detach();
       else persistHead(playheadRef.current);
     };
-  }, [playerRef, projectId, timelineId]);
+  }, [playerRef, projectId, timelineId, scrubSeek, persistHead]);
   // Marking mode audio lock: while playing and an audible audio item exists,
   // drive the playhead from the media element's own clock (what is actually
   // heard) so marker placement stays locked to the sound even when the main
@@ -369,6 +381,7 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
     toolbarTimecodeRef,
     rulerTimecodeRef,
     paintPlayhead,
+    persistHead,
     setTimecodePreviewFrame,
     playing,
   };

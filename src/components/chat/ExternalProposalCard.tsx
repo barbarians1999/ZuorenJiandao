@@ -49,19 +49,28 @@ function GuardDetails({ guard }: { guard: ExternalGuard }) {
   );
 }
 
-function GuardActions({ guard, confirmGuard }: {
+function GuardActions({ guard, confirmGuard, onAllowAll }: {
   guard: ExternalGuard;
   confirmGuard: ConfirmGuard;
+  onAllowAll: () => void;
 }) {
   const t = useT();
   return (
-    <div style={{ display: 'flex', gap: 8 }}>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
       <button
         type="button"
         onClick={() => confirmGuard(guard.id, true)}
         style={{ border: `0.5px solid ${theme.accent}`, background: 'none', color: theme.text, borderRadius: 6, padding: '5px 14px', fontSize: 12.5, cursor: 'pointer' }}
       >
         {t('确认')}
+      </button>
+      <button
+        type="button"
+        onClick={onAllowAll}
+        title={t('允许当前操作并开启总开关，后续所有外部操作不再反复确认')}
+        style={{ border: 'none', background: theme.accent, color: theme.onAccent, borderRadius: 6, padding: '5px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}
+      >
+        {t('确认并全部自动允许')}
       </button>
       <button
         type="button"
@@ -74,9 +83,10 @@ function GuardActions({ guard, confirmGuard }: {
   );
 }
 
-function PendingGuardDialog({ guard, confirmGuard }: {
+function PendingGuardDialog({ guard, confirmGuard, onAllowAll }: {
   guard: ExternalGuard;
   confirmGuard: ConfirmGuard;
+  onAllowAll: () => void;
 }) {
   const t = useT();
   return (
@@ -93,7 +103,7 @@ function PendingGuardDialog({ guard, confirmGuard }: {
         <code style={{ marginLeft: 'auto', color: theme.textDim, fontSize: 10 }}>{guard.id}</code>
       </div>
       <GuardDetails guard={guard} />
-      <GuardActions guard={guard} confirmGuard={confirmGuard} />
+      <GuardActions guard={guard} confirmGuard={confirmGuard} onAllowAll={onAllowAll} />
     </div>
   );
 }
@@ -132,6 +142,7 @@ export function ExternalProposalCard({ external, onPreviewState }: {
         <PendingGuardDialog
           guard={external.pendingGuard}
           confirmGuard={external.confirmGuard}
+          onAllowAll={() => external.setAutoApprove(true)}
         />
       )}
       <ExternalProposal external={external} onPreviewState={onPreviewState} />

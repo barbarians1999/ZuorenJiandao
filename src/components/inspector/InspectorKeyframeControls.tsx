@@ -80,7 +80,7 @@ export function SliderRow({
           onGestureEnd={gesture.onKeyUp}
           onGestureStart={gesture.onKeyDown}
           step={step}
-          title={t('点击输入精确值；左右拖动调整；Shift ×10；⌘ ×0.1').replace('⌘', modKey)}
+          title={t('点击输入精确值；左右拖动或滚轮调整；Shift ×10；⌘ ×0.1').replace('⌘', modKey)}
           value={val}
         />
         {onReset && (

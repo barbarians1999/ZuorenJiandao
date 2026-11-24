@@ -5,7 +5,7 @@ import { useT } from '../i18n/locale';
 
 export type IconName =
   | 'plus' | 'cursor' | 'trim' | 'rateStretch' | 'blade' | 'scissors' | 'magnet' | 'mic' | 'chevronDown' | 'check' | 'brush' | 'cloud' | 'insert'
-  | 'play' | 'pause' | 'text' | 'copy' | 'trash' | 'bookmark' | 'prev' | 'next'
+  | 'play' | 'pause' | 'fastForward' | 'fastRewind' | 'markIn' | 'markOut' | 'camera' | 'text' | 'copy' | 'trash' | 'bookmark' | 'prev' | 'next'
   | 'zoomOut' | 'zoomIn' | 'fit' | 'aspect' | 'captions' | 'fullscreen'
   | 'eye' | 'eyeOff' | 'volume' | 'volumeOff' | 'lock' | 'unlock'
   | 'home' | 'sparkles' | 'sliders' | 'bookOpen' | 'thumbUp' | 'thumbDown' | 'arrowUp'
@@ -14,10 +14,10 @@ export type IconName =
   | 'download' | 'film' | 'clipboard' | 'plug' | 'github' | 'mail' | 'database'
   | 'music' | 'video' | 'image' | 'swap' | 'star' | 'pencil' | 'x' | 'diamond'
   | 'search' | 'upload' | 'folder' | 'folderPlus' | 'grid' | 'list' | 'sort' | 'filter' | 'more' | 'bug'
-  | 'palette' | 'wand' | 'tracking' | 'qrCode' | 'info';
+  | 'palette' | 'wand' | 'tracking' | 'qrCode' | 'info' | 'sun' | 'moon';
 
 // stroke path(s) per icon; a few are fill-based (play/pause/cursor/bookmark)
-const FILL = new Set<IconName>(['play', 'pause', 'cursor', 'bookmark']);
+const FILL = new Set<IconName>(['play', 'pause', 'fastForward', 'fastRewind', 'cursor', 'bookmark']);
 
 const P: Record<IconName, string> = {
   plus: 'M12 5v14M5 12h14',
@@ -40,6 +40,11 @@ const P: Record<IconName, string> = {
   brush: 'M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08 M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-.5 2.52-2 3.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z',
   play: 'M7 4l13 8-13 8z',
   pause: 'M7 4h4v16H7z M15 4h4v16h-4z',
+  fastForward: 'M13 5l9 7-9 7z M2 5l9 7-9 7z',
+  fastRewind: 'M11 5L2 12l9 7z M22 5l-9 7 9 7z',
+  markIn: 'M10 4H6v16h4 M14 12h6 M17 9l3 3-3 3',
+  markOut: 'M14 4h4v16h-4 M10 12H4 M7 9l-3 3 3 3',
+  camera: 'M4 8h3l2-2h6l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z M12 13m-3.5 0a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0',
   text: 'M5 6h14M12 6v13',
   copy: 'M9 9h11v11H9z M4 15V4h11',
   trash: 'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13',
@@ -111,6 +116,8 @@ const P: Record<IconName, string> = {
   bug: 'M8 2l1.5 2h5L16 2 M9 9h6v7a3 3 0 0 1-6 0z M5 9h4 M15 9h4 M4 13h5 M15 13h5 M5 18h4 M15 18h4 M12 9v10',
   // Lucide-style `palette` outline with four paint dots drawn as tiny arcs.
   palette: 'M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z M7.5 12.5m-.6 0a.6 .6 0 1 0 1.2 0a.6 .6 0 1 0-1.2 0 M8.5 7.5m-.6 0a.6 .6 0 1 0 1.2 0a.6 .6 0 1 0-1.2 0 M13.5 6.5m-.6 0a.6 .6 0 1 0 1.2 0a.6 .6 0 1 0-1.2 0 M17.5 10.5m-.6 0a.6 .6 0 1 0 1.2 0a.6 .6 0 1 0-1.2 0',
+  sun: 'M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0 M3 12h1 M12 3v1 M20 12h1 M12 20v1 M5.6 5.6l.7.7 M18.4 5.6l-.7.7 M18.4 18.4l-.7-.7 M5.6 18.4l.7-.7',
+  moon: 'M12 3a7.5 7.5 0 0 0 9 9 9 9 0 1 1-9-9z',
 };
 
 interface IconProps {

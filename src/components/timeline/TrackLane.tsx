@@ -185,6 +185,12 @@ export const TrackLane = memo(function TrackLane({
   const laneKind = trackKind(state, trackId);
   const laneIsEffect = isEffectTrack(state, trackId, mainTrackId(state));
   const laneIsText = isTextTrack(state, trackId, mainTrackId(state));
+  const isVideoTrack = laneKind === 'video' && !laneIsText && !laneIsEffect;
+  const isItemActivelyMoving = (id: string) => (
+    drag?.id === id
+    || (drag?.mode === 'move' && pointer.dragSelection.itemIds.includes(id))
+    || (selectionMovePreview?.itemIds.includes(id) ?? false)
+  );
   const dragItem = drag?.mode === 'move' ? state.items.find((candidate) => candidate.id === drag.id) : undefined;
   const dragOffsetY = drag?.mode === 'move'
     && !!dragItem
@@ -195,6 +201,7 @@ export const TrackLane = memo(function TrackLane({
     <div
       data-timeline-track-lane
       className="cc-track-lane"
+      data-track-kind={isVideoTrack ? 'video' : laneKind}
       data-caption-selection-region="timeline"
       style={{
         // locked lane: slightly dimmed (the background color of the locked lane is dimmed; the lock icon is highlighted at the same time)
@@ -335,6 +342,10 @@ export const TrackLane = memo(function TrackLane({
         const clipWidthPx = Math.max(2, rawClipWidthPx);
         const compactClip = clipWidthPx < 28;
         const narrowClip = clipWidthPx < 16;
+        const leftNeighbor = adjacentItems.previousById.get(it.id);
+        const rightNeighbor = adjacentItems.nextById.get(it.id);
+        const joinedLeft = isVideoTrack && !dragging && !!leftNeighbor && !isItemActivelyMoving(leftNeighbor.id);
+        const joinedRight = isVideoTrack && !dragging && !!rightNeighbor && !isItemActivelyMoving(rightNeighbor.id);
         const handleLayout = clipEdgeHandleLayout(rawClipWidthPx, editMode, !!rollLeft, !!(rollRight && rollPlan), rollRight ? rollRight.durationInFrames * px : 0);
         const isLibOver = libDropTarget === it.id;
         const itemIndex = itemGeometryById.indexById.get(it.id) ?? 0;
@@ -356,8 +367,11 @@ export const TrackLane = memo(function TrackLane({
             key={it.id}
             className={`cc-timeline-clip${selected ? ' is-selected' : ''}${isLibOver ? ' is-library-over' : ''}${audioMuted ? ' is-audio-muted' : ''}${attachment?.highlighted ? ' is-linked-follower' : ''}${attachment?.locked ? ' is-link-blocked' : ''}`}
             data-timeline-clip
+            data-video-track={isVideoTrack ? 'true' : undefined}
             data-compact-clip={compactClip ? 'true' : undefined}
             data-narrow-clip={narrowClip ? 'true' : undefined}
+            data-adjacent-left={joinedLeft ? 'true' : undefined}
+            data-adjacent-right={joinedRight ? 'true' : undefined}
             data-main-clip-id={attachment?.owner.id}
             data-linkage-active={attachment ? attachment.active : undefined}
             title={clipTitle}
@@ -432,7 +446,7 @@ export const TrackLane = memo(function TrackLane({
             }}
             style={{
               position: 'absolute', left: Math.max(0, start) * px, top: 4, height: rowHeight - 8, width: clipWidthPx,
-              borderRadius: narrowClip ? 2 : compactClip ? 4 : undefined, overflow: 'visible',
+              borderRadius: !joinedLeft && !joinedRight ? (narrowClip ? 2 : compactClip ? 4 : undefined) : undefined, overflow: 'visible',
               transform: planned ? (planned.track !== it.track ? `translate3d(0, ${(trackIds.indexOf(planned.track) - trackIds.indexOf(it.track)) * rowHeight}px, 0)` : undefined)
                 : dragging && dragOffsetY ? `translate3d(0, ${dragOffsetY}px, 0)` : undefined,
               zIndex: dragging ? 10 : undefined,
@@ -535,6 +549,7 @@ export const TrackLane = memo(function TrackLane({
             {/* trim handles (hidden in blade / pen / selection-pick modes) */}
             <span className={`cc-clip-label${it.kind === 'audio' ? ' audio' : ''}`}>{displayName}</span>
             </div>
+            {joinedRight && <span className="cc-clip-cut-divider" aria-hidden="true" />}
             {rollRight && rollPlan && handleLayout.showRollRight && <button type="button" data-roll-handle
               className="cc-roll-grip" aria-label={t('滚动裁剪左右片段')}
               aria-disabled={rollBlocked} aria-keyshortcuts="ArrowLeft ArrowRight"

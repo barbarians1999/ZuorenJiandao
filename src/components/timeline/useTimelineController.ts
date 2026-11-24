@@ -33,7 +33,7 @@ import { usePlayheadPaint, type AudibleAudioItem } from './usePlayheadPaint';
 import { useTimelineZoomController } from './useTimelineZoomController';
 import { timelineFitTotalFrames } from './timelineFitRange';
 import {
-  playheadScrubGrabOffsetPx,
+  createTimelineScrubSeek, playheadScrubGrabOffsetPx,
   seekTimelineFromPointer, timelineGestureHasDragged, timelinePointerShouldSeek,
   timelinePointerStartKind, collectTimelineSeekBoundaries, snapTimelineSeekFrame, timelineSeekContinuousFrameAtClientX,
 } from './timelineSeek';
@@ -50,7 +50,7 @@ import { useTimelineMediaActions } from './useTimelineMediaActions';
 
 export function useTimelineController({
   state, commands, playerRef, projectId, onRecordVoiceover, shortcutApiRef,
-  onReviewItem, onSlipPreview, onHoverPreviewFrameChange,
+  onReviewItem, onSlipPreview, onHoverPreviewFrameChange, onScrubActiveChange,
   selectedCaptions = [], onSelectCaption = () => {}, onMarqueeCaptionSelect = () => {},
   onDropExternalFiles, onZoneChange,
 }: TimelineProps) {
@@ -60,6 +60,8 @@ export function useTimelineController({
   const empty = total === 0;
   const liveStateRef = useRef(state);
   liveStateRef.current = state;
+  const onScrubActiveChangeRef = useRef(onScrubActiveChange);
+  onScrubActiveChangeRef.current = onScrubActiveChange;
   const trackIds = timelineTrackIds(state);
   const indexes = useMemo(
     () => buildTimelineIndexes(state),
@@ -77,9 +79,15 @@ export function useTimelineController({
     seekAllowed: boolean;
     grabOffsetPx: number;
     captureTarget: HTMLElement | null;
+    lineGrab: boolean;
+    scrubbed: boolean;
   } | null>(null);
+  const scrubSeekRef = useRef<ReturnType<typeof createTimelineScrubSeek> | null>(null);
+  const scrubSeek = scrubSeekRef.current ??= createTimelineScrubSeek(
+    () => playerRef.current, requestAnimationFrame, cancelAnimationFrame,
+  );
   const pointerRefreshRef = useRef<(clientX: number, clientY: number) => void>(() => undefined);
-  const seekClientXRef = useRef<(clientX: number) => void>(() => undefined);
+  const seekClientXRef = useRef<(clientX: number, fromScroll: boolean) => void>(() => undefined);
   const pickModeRef = useRef(false);
   const autoScrollRef = useRef<ReturnType<typeof createTimelineAutoScrollController> | null>(null);
   autoScrollRef.current ??= createTimelineAutoScrollController({
@@ -101,8 +109,9 @@ export function useTimelineController({
     onScrolled: (gesture) => {
       pointerRefreshRef.current(gesture.clientX, gesture.clientY);
       const seek = seekGestureRef.current;
-      if (seek?.kind === 'scrub' && seek.pointerId === gesture.pointerId && seek.seekAllowed
-        && !pickModeRef.current) seekClientXRef.current(gesture.clientX - seek.grabOffsetPx);
+      if (seek?.kind === 'scrub' && seek.pointerId === gesture.pointerId && seek.seekAllowed && !pickModeRef.current) {
+        seekClientXRef.current(gesture.clientX, true);
+      }
     },
   });
   const beginAutoScroll = useCallback((pointerId: number, clientX: number, clientY: number) => {
@@ -159,9 +168,9 @@ export function useTimelineController({
   }, []);
   const {
     playheadRef, playheadLineRef, toolbarTimecodeRef, rulerTimecodeRef,
-    paintPlayhead, setTimecodePreviewFrame, playing,
+    paintPlayhead, persistHead, setTimecodePreviewFrame, playing,
   } =
-    usePlayheadPaint({ playerRef, projectId, timelineId, fps: state.fps, total, px, getAudibleItem });
+    usePlayheadPaint({ playerRef, projectId, timelineId, fps: state.fps, total, px, scrubSeek, getAudibleItem });
   getPlayheadFrameRef.current = () => playheadRef.current;
   // editing mode (Selection A / Blade B / Trim N / Pen P). selection =
   // drag/move; blade = click a clip to cut it there; trim = edge-trim ripples
@@ -295,10 +304,15 @@ export function useTimelineController({
       windowMetaRef.current = { px: curPx, clientWidth: width, window: nextWindow };
       setVisibleWindow(nextWindow);
     };
-    syncVisibleWindowRef.current = syncWindow;
+    syncVisibleWindowRef.current = () => {
+      if (windowMetaRef.current.clientWidth > 0) syncWindow();
+    };
     const schedule = () => { if (!raf) raf = requestAnimationFrame(syncWindow); };
-    syncWindow();
-    const ro = new ResizeObserver(schedule);
+    // Observe the first natural layout instead of forcing one in the editor commit.
+    const ro = new ResizeObserver(() => {
+      if (windowMetaRef.current.clientWidth === 0 && !raf) syncWindow();
+      else schedule();
+    });
     ro.observe(el);
     el.addEventListener('scroll', schedule, { passive: true });
     return () => {
@@ -414,12 +428,27 @@ export function useTimelineController({
     seekTimelineFromPointer(playerRef.current, clamped, paintPlayhead);
   };
 
-  const seekTo = (clientX: number) => {
+  const scrubFrameAtClientX = (clientX: number) => {
     const rect = innerRef.current?.getBoundingClientRect();
     const raw = rect && px > 0 ? Math.max(0, (clientX - rect.left - HEADER_W) / px) : frameFromClientX(clientX);
-    seekPointerFrame(snapTimelineSeekFrame(raw, seekBoundaries, { pixelsPerFrame: px, totalFrames: total, snapping }));
+    return snapTimelineSeekFrame(raw, seekBoundaries, { pixelsPerFrame: px, totalFrames: total, snapping });
   };
-  seekClientXRef.current = seekTo;
+  const seekTo = (clientX: number) => {
+    const frame = scrubFrameAtClientX(clientX);
+    scrubSeek.commit(frame, paintPlayhead);
+    return frame;
+  };
+  const scrubTo = (clientX: number, fromScroll = false) => {
+    const gesture = seekGestureRef.current;
+    if (gesture?.kind !== 'scrub' || !gesture.seekAllowed || pickModeRef.current) return;
+    if (!gesture.scrubbed) {
+      if (gesture.lineGrab && !fromScroll && Math.abs(clientX - gesture.startX) < 1) return;
+      gesture.scrubbed = true;
+      onScrubActiveChangeRef.current?.(true);
+    }
+    scrubSeek.move(scrubFrameAtClientX(clientX - gesture.grabOffsetPx), paintPlayhead);
+  };
+  seekClientXRef.current = scrubTo;
 
   const revealPlayheadInViewport = (frame: number) => {
     const el = scrollRef.current;
@@ -436,6 +465,7 @@ export function useTimelineController({
   };
 
   const seekFrame = (f: number) => {
+    scrubSeek.cancel();
     const c = Math.max(0, Math.min(f, total - 1));
     playerRef.current?.seekTo(c);
     paintPlayhead(c);
@@ -500,6 +530,10 @@ export function useTimelineController({
   }, [hoverPreviewEnabled, playing, drag, marquee, pickDrag]);
   const startSeekGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
     const target = event.target instanceof Element ? event.target : null;
+    if (seekGestureRef.current?.scrubbed) {
+      scrubSeek.cancel(paintPlayhead);
+      onScrubActiveChangeRef.current?.(false);
+    }
     seekGestureRef.current = null;
     if (!target) return;
     const playheadGrip = target.closest('.cc-playhead-grip, .cc-playhead-line-grip') as HTMLElement | null;
@@ -527,6 +561,7 @@ export function useTimelineController({
       seekGestureRef.current = {
         pointerId: event.pointerId, button: event.button, startX: event.clientX, startY: event.clientY,
         dragged: false, kind: 'scrub', seekAllowed: !pickModeRef.current, grabOffsetPx, captureTarget,
+        lineGrab: !!playheadLineGrip, scrubbed: false,
       };
       beginAutoScroll(event.pointerId, event.clientX, event.clientY);
       return;
@@ -542,6 +577,8 @@ export function useTimelineController({
       seekAllowed: !pickModeRef.current,
       grabOffsetPx: 0,
       captureTarget: null,
+      lineGrab: false,
+      scrubbed: false,
     };
   };
   const updateSeekGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -558,24 +595,42 @@ export function useTimelineController({
       if (gesture.kind === 'blank' && gesture.seekAllowed
         && timelinePointerShouldSeek(gesture.button, pickModeRef.current, gesture.dragged)) {
         const frame = frameAtClientX(event.clientX);
-        if (frame !== null) seekPointerFrame(frame);
+        if (frame !== null) {
+          seekPointerFrame(frame);
+          persistHead(frame);
+        }
+      } else if (gesture.kind === 'scrub' && gesture.seekAllowed && !pickModeRef.current
+        && gesture.captureTarget?.hasPointerCapture(event.pointerId)
+        && (!gesture.lineGrab || gesture.scrubbed || Math.abs(event.clientX - gesture.startX) >= 1)) {
+        persistHead(seekTo(event.clientX - gesture.grabOffsetPx));
+      } else if (gesture.kind === 'scrub') {
+        scrubSeek.cancel(paintPlayhead);
       }
+      if (gesture.scrubbed) onScrubActiveChangeRef.current?.(false);
     }
     endAutoScroll(event.pointerId);
   };
   const cancelSeekGesture = (event?: ReactPointerEvent) => {
     const gesture = seekGestureRef.current;
-    if (gesture && (!event || gesture.pointerId === event.pointerId)) seekGestureRef.current = null;
+    if (gesture && (!event || gesture.pointerId === event.pointerId)) {
+      seekGestureRef.current = null;
+      scrubSeek.cancel(paintPlayhead);
+      if (gesture.scrubbed) onScrubActiveChangeRef.current?.(false);
+    }
     endAutoScroll(event?.pointerId ?? gesture?.pointerId);
   };
-  useEffect(() => {
-    const cancel = () => {
-      const gesture = seekGestureRef.current;
-      seekGestureRef.current = null;
-      endAutoScroll(gesture?.pointerId);
+  const cancelSeekGestureRef = useRef(cancelSeekGesture);
+  cancelSeekGestureRef.current = cancelSeekGesture;
+  useLayoutEffect(() => {
+    const releaseCapture = (gesture: typeof seekGestureRef.current) => {
       if (gesture?.captureTarget?.hasPointerCapture(gesture.pointerId)) {
         try { gesture.captureTarget.releasePointerCapture(gesture.pointerId); } catch { /* capture may already be gone */ }
       }
+    };
+    const cancel = () => {
+      const gesture = seekGestureRef.current;
+      cancelSeekGestureRef.current();
+      releaseCapture(gesture);
       clearHoverPreviewRef.current();
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -587,11 +642,16 @@ export function useTimelineController({
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('blur', cancel);
     return () => {
+      const gesture = seekGestureRef.current;
+      seekGestureRef.current = null;
+      scrubSeek.cancel();
+      if (gesture?.scrubbed) onScrubActiveChangeRef.current?.(false);
+      autoScrollRef.current?.dispose();
+      releaseCapture(gesture);
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('blur', cancel);
-      autoScrollRef.current?.dispose();
     };
-  }, [endAutoScroll]);
+  }, [projectId, timelineId, scrubSeek]);
   useEffect(() => () => onHoverPreviewFrameChange?.(null), [onHoverPreviewFrameChange]);
 
   // blade (B): split the selected clip at the playhead. splitItem no-ops if the
@@ -672,7 +732,7 @@ export function useTimelineController({
     pointer, drag, marquee, pickDrag, startPick, onPointerMove, onPointerUp, onPointerCancel,
     cancelSeekGesture,
     activeSelectionMovePreview, libDropTarget, setLibDropTarget,
-    applyLibraryToClip, applyLibraryToTrack, seekTo, seekFrame,
+    applyLibraryToClip, applyLibraryToTrack, seekTo, scrubTo, seekFrame,
     clearHoverPreview, updateHoverPreview, startSeekGesture, updateSeekGesture, finishSeekGesture,
     markers, zoneIn, zoneOut, editing, editMarker, setEditMarker, pinnedItemIds,
   };

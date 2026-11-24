@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <strong>Local-first Windows desktop video editor · Focused on offline editing and external MCP control</strong>
+  <strong>Local-first desktop video editor · Focused on multitrack editing, long-project responsiveness, hybrid hardware export, and external MCP control</strong>
 </p>
 
 <p align="center">
@@ -24,29 +24,36 @@
 
 ---
 
-## Key Differences from Upstream OpenChatCut
+## Overview
 
-**ZuorenJiandao (左人剪刀)** is a focused local-first desktop fork derived from [OpenChatCut](https://github.com/0xsline/OpenChatCut):
+**ZuorenJiandao (左人剪刀)** is a local-first desktop video editor built for long-form and everyday creators:
 
-- **No Built-in AI Chat or Cloud API Keys**: Embedded AI chat panels, cloud LLM/provider configuration, and generative AI media routes have been removed. No external API key is required to edit, preview, or export.
-- **Pure Local Editing + External MCP Control**: The application handles timeline editing, preview playback, project persistence, and rendering locally. External AI agents (such as Codex or Claude Code) can optionally connect via MCP (see the top-bar plug button or **Settings → External Control**) and issue deterministic edits onto the real, undoable timeline.
-- **Windows Desktop Hardening**: Includes SQLite-backed durable project storage, Windows transient file-lock retries, post-render export destination recovery, responsive layout scaling on compact windows (e.g. `1024×680`), and hardware-accelerated export support (such as AMD AMF).
+- **100% Local Workflow, Zero Cloud Lock-in**: Project storage, media indexing, speech recognition, effects compositing, and rendering all run locally on your machine—no account or cloud LLM API key is required.
+- **Deterministic Timeline + Optional External MCP Control**: Engineered for heavy timelines with hundreds of clips and dense captions. External AI assistants (such as Codex, Claude Code, Cursor, or Antigravity) can optionally connect via MCP to issue undoable edits directly onto the real timeline.
+- **Desktop Reliability Hardening**: Built on SQLite-backed durable project storage, transient file-lock retries, post-render export destination recovery, theme-matched close confirmation, compact-window responsive scaling (`1024×680`), and hardware-accelerated export (AMD AMF, NVIDIA NVENC, Intel QSV).
 
 ---
 
 ## Features
 
-- **Multitrack Timeline**: Video, audio, caption, effect, and dedicated mosaic tracks with snapping, magnetic main track, directional linkage, rolling trim, slip, and rate stretch.
-- **Pitch-Preserved Preview Playback**: Live Player speed/J-K-L playback routes video audio through pitch-preserved HTML5 audio to avoid chipmunk distortion on human speech.
-- **Captions & Transcript Workflow**: Cue list editing, pasted transcript alignment, local offline Whisper speech recognition, and SRT import/export.
-- **Local Visual & Audio Tools**: Shapes, solid backgrounds, standalone mosaic regions, WebGL effects & transitions, keyframes, masks, on-device segmentation, and local semantic media search (everything stays on your machine).
-- **Reliable Persistence & Exports**: Background export queue with mid-stage cancellation (`finalizing` / `verifying`), post-render retry/rebind if destination writing fails, auto-QA frame checks, and MP4 / audio / SRT / FCPXML exports.
+- **Multitrack Timeline & Shortcut Presets**: Video, audio, caption, effect, and dedicated mosaic tracks with snapping, magnetic main track, directional linkage, rolling/slip trim, rate stretch, timeline markers (`M`), in/out zones (`I`/`O`), nested sub-drafts, and one-click **Jianying / Premiere Pro / Custom** shortcut presets.
+- **Preview Monitor & Long-Project Responsiveness**:
+  - Dedicated preview monitor bar with dual timecodes, marker/zone scrub track, shuttle/frame-step transport, and full-resolution still-frame export.
+  - Original/proxy playback toggle with hardware-accelerated proxy generation, cross-cut decoder reuse, coalesced scrubbing, and instant source-asset preview.
+  - Media pool usage filters (**All / Used / Unused**) and one-click black/white matte and mask clip generators.
+- **Segmented Hybrid Hardware Export**:
+  - Real-time export route preflight (**Fast Hardware / Segmented Hybrid / Full Frame Render**) plus per-stage timing breakdown.
+  - Native FFmpeg hardware pipeline accelerates multi-segment cuts, local Gaussian blur/mosaic/pixelate, rectangle/circle masks, `.cube` 3D LUT grading, AI voice denoise dry/wet mix, audio ducking, audio cross-fade, linear volume keyframes, `0.25x–4.0x` retiming, and basic transitions.
+  - Complex spans (such as picture-in-picture overlaps or `page-curl` transitions) automatically route only the affected frames through frame-accurate Remotion rendering while keeping the rest of the timeline in the hardware fast path.
+- **Unified Captions & Text Workflow**: Offline Whisper speech recognition, pasted transcript alignment, inline caption styling controls, bundled Chinese/English fonts, and SRT import/export.
+- **Local Visual & Audio Tools**: Shapes, solid backgrounds, canvas-draggable mosaic regions, WebGL effects & transitions, keyframes, masks, on-device segmentation, and local semantic media search.
+- **External MCP Discovery & Status Inspection**: Writes runtime discovery metadata automatically and inspects connected external clients in **Settings → External Control**.
 
 ---
 
 ## Download & Install (Windows x64)
 
-1. Download the latest Windows installer (`ZuorenJiandao-Setup-0.3.3-x64.exe`) from [GitHub Releases](https://github.com/barbarians1999/ZuorenJiandao/releases).
+1. Download the latest Windows installer (`ZuorenJiandao-Setup-0.4.0-x64.exe`) from [GitHub Releases](https://github.com/barbarians1999/ZuorenJiandao/releases).
 2. Double-click to install.
    > **Note**: The installer is currently unsigned (`NotSigned`). If Windows SmartScreen displays a prompt, click **More info → Run anyway** to proceed.
 
@@ -54,7 +61,7 @@
 
 ## External MCP Endpoint
 
-When running, the local external MCP endpoint is available by default at `http://localhost:5199/api/external-mcp/mcp` (see `.mcp.json`). Use the plug icon in the editor top bar or **Settings → External Control** to inspect connection details.
+When running, the local external MCP endpoint is available by default at `http://localhost:5199/api/external-mcp/mcp`. Use the plug icon in the editor top bar or **Settings → External Control** to inspect connection status and client setup.
 
 ---
 
@@ -73,7 +80,7 @@ npm run desktop:dev
 npx tsc -b --pretty false
 npm run lint
 
-# Build Windows installer & unpacked output
+# Build Windows desktop installer & unpacked output
 npm run desktop:dist:win
 ```
 
@@ -81,7 +88,6 @@ See [DEVELOPMENT_BOUNDARIES.md](DEVELOPMENT_BOUNDARIES.md) for feature, storage,
 
 ---
 
-## Attribution & License
+## License
 
-- Forked from [0xsline/OpenChatCut](https://github.com/0xsline/OpenChatCut)
-- Licensed under [AGPL-3.0-or-later](LICENSE)
+- Licensed under [AGPL-3.0-or-later](LICENSE) (originally derived from [OpenChatCut](https://github.com/0xsline/OpenChatCut))

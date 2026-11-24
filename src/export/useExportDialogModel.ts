@@ -35,7 +35,7 @@ import {
 } from '../media/qualityPolicy';
 import type { ExportDestination } from './exportDestination';
 import { exportMediaExtension } from './exportMediaExtension';
-import type { ExportEngineInfo, ExportEngineReason } from './exportWorkflowTypes';
+import type { ExportEngineInfo, ExportEngineReason, ExportRenderDiagnostics } from './exportWorkflowTypes';
 import {
   effectiveIncludeMg,
   useExportWorkflow,
@@ -101,6 +101,7 @@ export interface ExportWorkflowModel {
   chooseDestination: () => Promise<void>;
   choosingDestination: boolean;
   destination: ExportDestination;
+  diagnostics?: ExportRenderDiagnostics | null;
   engineInfo: ExportEngineInfo | null;
   engineReason: ExportEngineReason;
   clock: number;

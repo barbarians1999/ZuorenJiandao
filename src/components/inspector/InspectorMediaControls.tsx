@@ -92,11 +92,11 @@ export function IsolateVoiceControl({
           </button>
         )}
       </div>
-      <div className="cc-insp-muted" style={{ fontSize: 14, marginTop: 4 }}>
-        {active
-          ? t('已应用降噪，源文件不变。')
-          : t('适合稳定底噪，不能把配乐和人声完全分离。')}
-      </div>
+      {active && (
+        <div className="cc-insp-muted" style={{ fontSize: 14, marginTop: 4 }}>
+          {t('已应用降噪')}
+        </div>
+      )}
       {err && (
         <div style={{ fontSize: 14, color: 'var(--cc-danger, #f66)', marginTop: 4 }}>{err}</div>
       )}
@@ -138,9 +138,6 @@ export function SpeedControl({ item, mixed, onChange }: { item: TimelineItem; mi
             {s}×
           </button>
         ))}
-      </div>
-      <div className="cc-insp-muted" style={{ fontSize: 10, marginTop: 4 }}>
-        {t('保调变速（预览/导出）· 时长随速率伸缩并波纹合缝')}
       </div>
     </div>
   );
@@ -373,6 +370,7 @@ export function TransitionControl({ transition, fps, onAdd, onSet, onRemove, aud
     : transition.type !== 'audio-cross-fade')
     ? transition
     : null;
+  const maxDurationFrames = Math.max(4, fps * 2);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ fontSize: audioMode ? 14 : 10.5, color: theme.textDim, opacity: 0.8 }}>
@@ -397,7 +395,7 @@ export function TransitionControl({ transition, fps, onAdd, onSet, onRemove, aud
         <>
           <label style={{ fontSize: audioMode ? 14 : 11, color: theme.textDim }}>
             <div style={{ marginBottom: 4 }}>{t('时长')} <span style={{ opacity: 0.7 }}>{(shown.durationInFrames / fps).toFixed(1)}s</span></div>
-            <input type="range" min={2} max={Math.max(4, fps * 2)} step={1} value={shown.durationInFrames} onChange={(e) => onSet({ durationInFrames: Number(e.target.value) })} style={{ width: '100%' }} />
+            <input type="range" min={2} max={maxDurationFrames} step={1} value={shown.durationInFrames} onChange={(e) => onSet({ durationInFrames: Number(e.target.value) })} style={{ width: '100%' }} />
           </label>
           {needsDir && !audioMode && (
             <label style={{ fontSize: 11, color: theme.textDim, display: 'flex', alignItems: 'center', gap: 8 }}>

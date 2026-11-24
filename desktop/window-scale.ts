@@ -144,16 +144,23 @@ const windowScaleState = new WeakMap<BrowserWindow, DesktopWindowScaleInput>();
 /** Re-apply the composed scale (user scale × shrink-to-fit). Called on
  *  resize and after the saved UI scale changes (settings / shortcuts). */
 export function applyResponsiveWindowScale(win: BrowserWindow): void {
-  if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+  if (win.isDestroyed() || win.webContents.isDestroyed() || win.isMinimized?.()) return;
   const state = windowScaleState.get(win);
   if (!state) return;
   const [contentWidth, contentHeight] = win.getContentSize();
+  // Ignore transient minimized/iconic sizes on Windows ([0, 0] or [160, 28]) so
+  // restoring from the taskbar never briefly renders at the 2/3 floor scale.
+  if (contentWidth < 200 || contentHeight < 150) return;
   const resolution = resolveDesktopWindowScale({
     ...state,
     contentWidth,
     contentHeight,
     userScale: currentUserUiScale(),
   });
+  if (typeof win.webContents.getZoomFactor === 'function'
+    && Math.abs(win.webContents.getZoomFactor() - resolution.zoomFactor) < 0.0005) {
+    return;
+  }
   win.webContents.setZoomFactor(resolution.zoomFactor);
 }
 
@@ -183,5 +190,6 @@ export function installResponsiveWindowScale(win: BrowserWindow): void {
   });
   win.setMinimumSize(minimumWindowSize.width, minimumWindowSize.height);
   win.on('resize', syncScale);
+  win.on('restore', syncScale);
   win.webContents.on('did-finish-load', syncScale);
 }

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { connectExternalClient } from './client-connect';
+import { connectExternalClient, inspectExternalClients } from './client-connect';
 
 const ENDPOINT = 'http://localhost:5199/api/external-mcp/mcp';
 const TOKEN = 'tok_AbC123-_xyz';
@@ -110,6 +110,25 @@ async function main(): Promise<void> {
     const badToken = await connectExternalClient('cursor', ENDPOINT, "'; rm -rf ~", { baseDir: home });
     assert.equal(badToken.ok, false);
     if (!badToken.ok) assert.equal(badToken.error, 'invalid-token');
+
+    // 9. inspectExternalClients reports connected, outdated, invalid-config, and not-configured accurately.
+    await writeFile(path.join(home, '.cursor', 'mcp.json'), '{}');
+    await connectExternalClient('cursor', ENDPOINT, TOKEN, { baseDir: home });
+    await writeFile(
+      path.join(home, '.codex', 'config.toml'),
+      `[mcp_servers.openchatcut]\nurl = "${ENDPOINT}"\nbearer_token_env_var = "OPENCHATCUT_MCP_TOKEN"\n`,
+    );
+    await writeFile(path.join(home, '.claude.json'), '{not-valid-json');
+    await writeFile(
+      path.join(home, '.gemini', 'antigravity', 'mcp_config.json'),
+      JSON.stringify({ mcpServers: { openchatcut: { httpUrl: 'http://127.0.0.1:9999/api/external-mcp/mcp', headers: { Authorization: `Bearer ${TOKEN}` } } } }),
+    );
+    const inspected = await inspectExternalClients(ENDPOINT, TOKEN, { baseDir: home });
+    const byClient = new Map(inspected.map((entry) => [entry.client, entry.status]));
+    assert.equal(byClient.get('cursor'), 'connected');
+    assert.equal(byClient.get('codex'), 'connected');
+    assert.equal(byClient.get('claude'), 'invalid-config');
+    assert.equal(byClient.get('antigravity'), 'outdated');
   } finally {
     await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }

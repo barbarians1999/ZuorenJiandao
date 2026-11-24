@@ -4,8 +4,23 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { handlePreviewProxy, PREVIEW_PROXY_KIND } from './preview-proxy';
+import { buildPreviewProxy, handlePreviewProxy, PREVIEW_PROXY_KIND, previewProxyEncodeArgs, previewProxyReason, probePreviewSource, type PreviewSourceProbe } from './preview-proxy';
 import { ffmpegBin, ffprobeBin } from './media-binaries';
+
+const ordinaryHd: PreviewSourceProbe = {
+  durationMs: 180_000, width: 1920, height: 1080, codec: 'h264',
+  longGop: false, unstableCodec: false, bitrate: 5_000_000, hasBFrames: true, maxKeyframeGapSeconds: 1, frameRate: 30,
+};
+assert.equal(previewProxyReason(ordinaryHd, false), null);
+assert.equal(previewProxyReason({ ...ordinaryHd, width: 1080, height: 1920 }, false), null);
+assert.equal(previewProxyReason({ ...ordinaryHd, bitrate: 14_000_000 }, false), 'high-hd-bitrate');
+assert.equal(previewProxyReason({ ...ordinaryHd, durationMs: 8_000, bitrate: 14_000_000 }, false), null);
+assert.equal(previewProxyReason({ ...ordinaryHd, maxKeyframeGapSeconds: 2.5 }, false), 'long-hd-gop');
+assert.equal(previewProxyReason({ ...ordinaryHd, maxKeyframeGapSeconds: 2.5, hasBFrames: false }, false), null);
+assert.equal(previewProxyReason({ ...ordinaryHd, maxKeyframeGapSeconds: 2.5, durationMs: 60_000 }, false), null);
+assert.equal(previewProxyReason({ ...ordinaryHd, width: 3840, height: 2160 }, false), 'high-resolution');
+assert.equal(previewProxyReason({ ...ordinaryHd, longGop: true }, false), 'long-gop');
+assert.equal(previewProxyReason(ordinaryHd, true), 'direct-preview-failed');
 
 const directory = await mkdtemp(join(tmpdir(), 'zuoren-proxy-retry-'));
 try {
@@ -70,6 +85,32 @@ try {
   if (childStillRunning) process.kill(childPid, 'SIGKILL');
   assert.equal(childStillRunning, false, 'application exit must terminate a retained proxy subprocess');
   await assert.rejects(readFile(status), { code: 'ENOENT' });
+  assert.equal(PREVIEW_PROXY_KIND, 'proxy-720-v2', 'fast-decode proxy bumps derivative kind');
+  const encodeArgs = previewProxyEncodeArgs(original, 'out.mp4');
+  assert.ok(encodeArgs.includes('ultrafast'), 'proxy uses ultrafast preset');
+  assert.ok(encodeArgs.includes('fastdecode'), 'proxy uses fastdecode tune');
+  assert.ok(encodeArgs.includes('baseline'), 'proxy uses baseline profile without B-frames for instant seeking');
+  assert.ok(encodeArgs.includes('expr:gte(t,n_forced*0.5)'), 'proxy inserts 0.5s keyframe cadence');
+  const inputIndex = encodeArgs.indexOf('-i');
+  assert(encodeArgs.slice(0, inputIndex).includes('-filter_threads'));
+  const codecThreadCaps = encodeArgs.flatMap((arg, index) => arg === '-threads' ? [Number(encodeArgs[index + 1])] : []);
+  assert.equal(codecThreadCaps.length, 2, 'cap the decoder and both software/hardware encode routes independently');
+  assert(codecThreadCaps.every(cap => cap >= 1 && cap <= 4));
+  const amf = previewProxyEncodeArgs(original, 'amf.mp4', 'h264_amf', 25);
+  assert(amf.includes('h264_amf') && amf.includes('nv12') && amf.includes('-maxrate'));
+  assert.equal(amf[amf.indexOf('-profile:v') + 1], 'constrained_baseline');
+  assert.equal(amf[amf.indexOf('-g') + 1], '12', 'hardware GOP follows the source frame rate');
+  assert.deepEqual(amf.slice(amf.indexOf('-bf'), amf.indexOf('-bf') + 2), ['-bf', '0']);
+  assert(!amf.includes('ultrafast'), 'do not send software-only options to a hardware encoder');
+  const unavailable = process.platform === 'darwin' ? 'h264_amf' : 'h264_videotoolbox';
+  const fallbackOutput = join(directory, 'fallback.mp4');
+  await buildPreviewProxy(original, fallbackOutput, new AbortController().signal, { preferred: unavailable });
+  assert((await readFile(fallbackOutput)).length > 0, 'a failed hardware encode retries in software');
+  await assert.rejects(buildPreviewProxy(original, join(directory, 'cancelled.mp4'), AbortSignal.abort(), { preferred: unavailable }), { name: 'AbortError' });
+  await assert.rejects(readFile(join(directory, 'cancelled.mp4')), { code: 'ENOENT' });
+  const proxySourceProbe = await probePreviewSource(join(directory, `${PREVIEW_PROXY_KIND}.mp4`), new AbortController().signal);
+  assert.equal(proxySourceProbe.hasBFrames, false);
+  assert(proxySourceProbe.maxKeyframeGapSeconds !== null && proxySourceProbe.maxKeyframeGapSeconds < 0.56);
   console.log('preview-proxy.verify: explicit retry and master isolation passed');
 } finally {
   await rm(directory, { recursive: true, force: true });

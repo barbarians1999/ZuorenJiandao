@@ -30,9 +30,12 @@ interface RenameModel {
 
 interface TransferModel {
   note: string | null;
+  isError: boolean;
   busy: boolean;
+  deletingId: string | null;
   fileRef: RefObject<HTMLInputElement | null>;
   run: (work: Promise<string>) => Promise<void>;
+  runDelete: (id: string, work: Promise<string>) => Promise<void>;
   pickImport: (event: ChangeEvent<HTMLInputElement>) => void;
 }
 
@@ -130,6 +133,14 @@ function useProjectRename(onRename: DashboardProps['onRename']): RenameModel {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!confirmId) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setConfirmId(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [confirmId]);
   const start = (project: ProjectMeta) => {
     setEditingId(project.id);
     setDraft(project.name);
@@ -145,21 +156,32 @@ function useProjectRename(onRename: DashboardProps['onRename']): RenameModel {
 function useProjectTransfer(onImport: DashboardProps['onImport']): TransferModel {
   const translate = useT();
   const [note, setNote] = useState<string | null>(null);
+  const [isError, setIsError] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const run = async (work: Promise<string>) => {
     setBusy(true);
+    setIsError(false);
     setNote(translate('处理中…'));
     try { setNote(await work); }
-    catch (error) { setNote(translate('失败:{error}', { error: error instanceof Error ? error.message : String(error) })); }
+    catch (error) {
+      setIsError(true);
+      setNote(translate('失败:{error}', { error: error instanceof Error ? error.message : String(error) }));
+    }
     finally { setBusy(false); }
+  };
+  const runDelete = async (id: string, work: Promise<string>) => {
+    setDeletingId(id);
+    try { await run(work); }
+    finally { setDeletingId(null); }
   };
   const pickImport = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (file) void run(onImport(file));
   };
-  return { note, busy, fileRef, run, pickImport };
+  return { note, isError, busy, deletingId, fileRef, run, runDelete, pickImport };
 }
 
 function useDashboardDialogs() {

@@ -51,7 +51,14 @@ function splitCaptionAnchor(anchor: CaptionAnchor | undefined): {
   return { v, h };
 }
 
-function RangeRow({ label, value, min, max, step, display, inputScale = 1, onChange }: {
+interface InlineColorOption {
+  label: string;
+  value: string;
+  fallback: string;
+  onChange: (value: string) => void;
+}
+
+function RangeRow({ label, value, min, max, step, display, inputScale = 1, color, onChange }: {
   label: string;
   value: number;
   min: number;
@@ -59,6 +66,7 @@ function RangeRow({ label, value, min, max, step, display, inputScale = 1, onCha
   step: number;
   display: string;
   inputScale?: number;
+  color?: InlineColorOption;
   onChange: (value: number) => void;
 }) {
   const t = useT();
@@ -93,6 +101,17 @@ function RangeRow({ label, value, min, max, step, display, inputScale = 1, onCha
           title={label}
           value={value}
         />
+        {color && (
+          <input
+            type="color"
+            className="cc-caption-inline-color"
+            aria-label={color.label}
+            title={color.label}
+            value={normalizedColor(color.value, color.fallback)}
+            onChange={(event) => color.onChange(event.target.value)}
+            {...gesture}
+          />
+        )}
       </span>
     </div>
   );
@@ -123,22 +142,6 @@ function withShadowColor(textShadow: string, color: string): string {
 function shadowColor(textShadow: string): string {
   const colors = [...textShadow.matchAll(/#[\da-f]{3,8}\b|rgba?\([^)]*\)/gi)];
   return normalizedColor(colors.at(-1)?.[0] ?? '', '#000000');
-}
-
-function CaptionColorInput({ label, value, fallback, onChange }: {
-  label: string;
-  value: string;
-  fallback: string;
-  onChange: (value: string) => void;
-}) {
-  const gesture = useHistoryGesture();
-  return (
-    <label className="cc-insp-mg-field">
-      <span>{label}</span>
-      <input type="color" value={normalizedColor(value, fallback)}
-        onChange={(event) => onChange(event.target.value)} {...gesture} />
-    </label>
-  );
 }
 
 export function CaptionInspectorControls({ selection, onUpdate }: CaptionInspectorControlsProps) {
@@ -220,44 +223,68 @@ export function CaptionInspectorControls({ selection, onUpdate }: CaptionInspect
           onChange={(choice) => onUpdate(fontScope === 'selected'
             ? captionSelectedFontsPatch(captions, choice, fontTargets)
             : captionFontPatch(captions, choice, 'track'))} />
-        <span className="cc-insp-muted">{t('字体只应用到当前字幕轨道。')}</span>
       </div>
       <RangeRow label={t('字号')} value={captionRatioToScale(target.preset.fontSize)}
         min={CAPTION_SCALE_MIN} max={CAPTION_SCALE_MAX} step={CAPTION_SCALE_STEP}
         display={formatFontSizeScale(captionRatioToScale(target.preset.fontSize))}
+        color={{
+          label: t('文字颜色'),
+          value: textColor,
+          fallback: '#ffffff',
+          onChange: (value) => patchStyle({ color: value, highlightColor: value }),
+        }}
         onChange={(scale) => patchStyle({ fontSize: captionScaleToRatio(scale) })} />
       <RangeRow label={t('字重')} value={target.preset.fontWeight} min={100} max={900} step={100}
         display={String(target.preset.fontWeight)} onChange={(value) => patchStyle({ fontWeight: value })} />
       <RangeRow label={t('文字描边')} value={target.preset.strokeWidth} min={0} max={16} step={0.5}
-        display={`${Math.round(target.preset.strokeWidth * 10) / 10}px`} onChange={(value) => patchStyle({ strokeWidth: value })} />
+        display={`${Math.round(target.preset.strokeWidth * 10) / 10}px`}
+        color={{
+          label: t('文字描边颜色'),
+          value: target.preset.strokeColor,
+          fallback: '#000000',
+          onChange: (value) => patchStyle({ strokeColor: value }),
+        }}
+        onChange={(value) => patchStyle({ strokeWidth: value })} />
       <RangeRow label={t('文描透明度')} value={strokeOpacity} min={0} max={1} step={0.01} inputScale={100}
         display={`${Math.round(strokeOpacity * 100)}%`} onChange={(value) => patchStyle({ strokeOpacity: value })} />
       <RangeRow label={t('文字阴影')} value={textShadowSize} min={0} max={48} step={1}
-        display={`${Math.round(textShadowSize)}px`} onChange={(value) => patchStyle({ textShadowSize: value })} />
+        display={`${Math.round(textShadowSize)}px`}
+        color={{
+          label: t('文字阴影颜色'),
+          value: shadowColor(target.preset.textShadow),
+          fallback: '#000000',
+          onChange: (value) => patchStyle({ textShadow: withShadowColor(target.preset.textShadow, value) }),
+        }}
+        onChange={(value) => patchStyle({ textShadowSize: value })} />
       <RangeRow label={t('边框描边')} value={boxBorderWidth} min={0} max={16} step={0.5}
-        display={`${Math.round(boxBorderWidth * 10) / 10}px`} onChange={(value) => patchStyle({ boxBorderWidth: value })} />
+        display={`${Math.round(boxBorderWidth * 10) / 10}px`}
+        color={{
+          label: t('边框描边颜色'),
+          value: boxBorderColor,
+          fallback: '#000000',
+          onChange: (value) => patchStyle({ boxBorderColor: value }),
+        }}
+        onChange={(value) => patchStyle({ boxBorderWidth: value })} />
       <RangeRow label={t('边描透明度')} value={boxBorderOpacity} min={0} max={1} step={0.01} inputScale={100}
         display={`${Math.round(boxBorderOpacity * 100)}%`} onChange={(value) => patchStyle({ boxBorderOpacity: value })} />
       <RangeRow label={t('边框圆角')} value={boxBorderRadius} min={0} max={48} step={1}
-        display={`${Math.round(boxBorderRadius)}px`} onChange={(value) => patchStyle({ boxBorderRadius: value })} />
+        display={`${Math.round(boxBorderRadius)}px`}
+        color={{
+          label: t('边框颜色'),
+          value: backgroundColor,
+          fallback: '#000000',
+          onChange: (value) => patchStyle(target.preset.wholeLine ? { background: value } : { highlightBackground: value }),
+        }}
+        onChange={(value) => patchStyle({ boxBorderRadius: value })} />
       <RangeRow label={t('边框阴影')} value={boxShadowSize} min={0} max={48} step={1}
-        display={`${Math.round(boxShadowSize)}px`} onChange={(value) => patchStyle({ boxShadowSize: value })} />
-      <div className="cc-insp-color-row cc-caption-color-row">
-        <CaptionColorInput label={t('文字颜色')} value={textColor} fallback="#ffffff"
-          onChange={(value) => patchStyle({ color: value, highlightColor: value })} />
-        <CaptionColorInput label={t('文字描边')} value={target.preset.strokeColor} fallback="#000000"
-          onChange={(value) => patchStyle({ strokeColor: value })} />
-        <CaptionColorInput label={t('文字阴影')} value={shadowColor(target.preset.textShadow)} fallback="#000000"
-          onChange={(value) => patchStyle({ textShadow: withShadowColor(target.preset.textShadow, value) })} />
-      </div>
-      <div className="cc-insp-color-row cc-caption-color-row">
-        <CaptionColorInput label={t('边框颜色')} value={backgroundColor} fallback="#000000"
-          onChange={(value) => patchStyle(target.preset.wholeLine ? { background: value } : { highlightBackground: value })} />
-        <CaptionColorInput label={t('边框描边')} value={boxBorderColor} fallback="#000000"
-          onChange={(value) => patchStyle({ boxBorderColor: value })} />
-        <CaptionColorInput label={t('边框阴影')} value={shadowColor(boxShadow || target.preset.textShadow)} fallback="#000000"
-          onChange={(value) => patchStyle({ boxShadow: withShadowColor(boxShadow, value) })} />
-      </div>
+        display={`${Math.round(boxShadowSize)}px`}
+        color={{
+          label: t('边框阴影颜色'),
+          value: shadowColor(boxShadow || target.preset.textShadow),
+          fallback: '#000000',
+          onChange: (value) => patchStyle({ boxShadow: withShadowColor(boxShadow, value) }),
+        }}
+        onChange={(value) => patchStyle({ boxShadowSize: value })} />
 
       <div className="cc-insp-section">
         <span>{t('位置与变换')}</span>

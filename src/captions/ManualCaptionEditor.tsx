@@ -95,7 +95,7 @@ function ManualLanePanel(props: LanePanelProps) {
         <button type="button" className="cc-cap-btn sm" onClick={addLane}>{t('新建车道')}</button>
         {lane && <button type="button" className="cc-cap-btn sm ghost" onClick={() => onUpdate(removeManualLane(captions, lane.id))}>{t('删除车道')}</button>}
       </div>
-      {!lane && <p className="cc-cap-hint">{t('新建手动字幕车道后，可在播放头位置添加字幕，不需要先转写或调用 AI。')}</p>}
+      {!lane && <p className="cc-cap-hint">{t('新建车道后可在播放头添加字幕')}</p>}
       {lane && <ManualCueList key={lane.id} {...{ captions, items, fps, lane, onUpdate, getPlayheadMs, onSeekMs, focusManualLane, onManualFocused, showCueList }} />}
     </div>
   );
