@@ -263,9 +263,12 @@ export function mimeFor(name: string): string {
   return MIME[ext] ?? 'application/octet-stream';
 }
 
+export const OPEN_ENDED_MEDIA_RANGE_MAX_BYTES = 4 * 1024 * 1024;
+
 /** GET/HEAD A disk file, supports single segment Range (206/416, video seek dependent). */
 export async function serveDiskFile(req: IncomingMessage, res: ServerResponse, file: string): Promise<void> {
   const info = await stat(file);
+  const contentType = mimeFor(file);
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
   let start = 0;
   let end = info.size - 1;
@@ -275,6 +278,10 @@ export async function serveDiskFile(req: IncomingMessage, res: ServerResponse, f
     else {
       start = Number(range[1]);
       if (range[2] !== '') end = Math.min(end, Number(range[2]));
+      else if (contentType.startsWith('video/') || contentType.startsWith('audio/')) {
+        // Cap open-ended media Range reads so preload="auto" does not hold HTTP/1.1 sockets open over the entire file.
+        end = Math.min(end, start + OPEN_ENDED_MEDIA_RANGE_MAX_BYTES - 1);
+      }
     }
     if (start > end || start >= info.size) {
       res.writeHead(416, { 'Content-Range': `bytes */${info.size}` });
@@ -283,7 +290,6 @@ export async function serveDiskFile(req: IncomingMessage, res: ServerResponse, f
     }
     status = 206;
   }
-  const contentType = mimeFor(file);
   const headers: Record<string, string> = {
     'Content-Type': contentType,
     'X-Content-Type-Options': 'nosniff',

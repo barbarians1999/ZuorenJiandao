@@ -110,7 +110,7 @@ export function trackKindForSchedule(state, id) {
  */
 export function isVisualOverlayItemVisible(state, item) {
   if (!item || typeof item !== 'object') return false;
-  return !state?.tracks?.[item.track]?.hidden;
+  return !state?.tracks?.[item.track]?.hidden && item.pictureDisabled !== true;
 }
 
 /**
@@ -119,6 +119,7 @@ export function isVisualOverlayItemVisible(state, item) {
  */
 export function hasPotentialClipAudio(item) {
   if (!item || typeof item !== 'object' || !item.src) return false;
+  if (item.pictureDisabled === true) return false;
   if (item.kind !== 'audio' && item.kind !== 'video') return false;
   if (item.kind === 'video' && item.audioDetached) return false;
   const volKfs = item.keyframes?.volume;
@@ -169,7 +170,7 @@ export function resolveTrackRouting(state, {
   const anchorCandidates = anchorItems ?? items;
   const anchorRaw = [];
   for (const it of anchorCandidates) {
-    if (!it?.src) continue;
+    if (!it?.src || it.pictureDisabled === true) continue;
     const tr = tracks[it.track];
     if (tr?.role !== 'anchor' || !isTrackAudible(it.track)) continue;
     anchorRaw.push([it.startFrame, it.startFrame + it.durationInFrames]);
@@ -264,7 +265,7 @@ function isAudioTransitionType(type) {
  * O(N + T) audio crossfade planner indexed by item ID and asset map.
  */
 export function resolveAudioCrossfadePlans(audioItems, audioTransitions = [], assets = [], options = {}) {
-  const byId = new Map(audioItems.map((it) => [it.id, it]));
+  const byId = new Map(audioItems.filter((it) => it && it.pictureDisabled !== true).map((it) => [it.id, it]));
   const assetIndex = buildAssetIndex(assets);
   const plansByItemId = new Map();
   const getPlan = (id) => {

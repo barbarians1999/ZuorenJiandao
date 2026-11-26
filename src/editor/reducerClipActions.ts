@@ -173,9 +173,7 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
       };
     case 'togglePicture': {
       const selected = new Set(a.ids);
-      const eligible = s.items.filter((item) => selected.has(item.id)
-        && item.kind !== 'audio' && item.kind !== 'sequence'
-        && !s.tracks?.[item.track]?.locked);
+      const eligible = s.items.filter((item) => selected.has(item.id) && !s.tracks?.[item.track]?.locked);
       if (!eligible.length) return s;
       const disable = eligible.some((item) => item.pictureDisabled !== true);
       const ids = new Set(eligible.map((item) => item.id));

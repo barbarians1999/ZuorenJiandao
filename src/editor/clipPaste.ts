@@ -8,6 +8,8 @@ export interface ClipPasteOptions {
   foldGroups?: readonly TimelineFoldGroup[];
   /** Duplicate keeps original lanes instead of targeting the selected lane. */
   keepSourceTracks?: boolean;
+  /** Explicitly selected target track (from track header or empty lane click). */
+  targetTrackId?: string | null;
 }
 
 /** Copy placement and identity are planned together, then committed as one undo step. */
@@ -31,9 +33,23 @@ export function planClipPasteResult(state: TimelineState, clips: readonly Timeli
     else order.push(id);
     return id;
   };
-  for (const sourceId of sourceIds) {
+  const isTrackCompatible = (
+    id: string | null | undefined,
+    kind: 'video' | 'audio',
+    isEffectGroup: boolean,
+    members: readonly TimelineItem[],
+    ignoreLocked = false,
+  ) => {
+    if (!id || !order.includes(id) || trackKind(state, id) !== kind) return false;
+    const checkState = ignoreLocked && tracks[id]?.locked
+      ? { ...state, tracks: { ...tracks, [id]: { ...tracks[id], locked: false } } }
+      : state;
+    return members.every((clip) => canTrackAcceptItemKind(checkState, clip.kind, id, main))
+      && (!isEffectGroup || isEffectTrack(checkState, id, main));
+  };
+  const sourceGroups = sourceIds.map((sourceId) => {
     const members = clips.filter((clip) => clip.track === sourceId);
-    const kind = members[0]!.kind === 'audio' ? 'audio' : 'video';
+    const kind: 'video' | 'audio' = members[0]!.kind === 'audio' ? 'audio' : 'video';
     const isTextGroup = kind === 'video' && members.every((clip) => clip.kind === 'text');
     const sourceWasEffect = sourceTracks?.[sourceId]?.visualRole === 'effect';
     const isEffectGroup = kind === 'video' && !isTextGroup && (
@@ -41,27 +57,63 @@ export function planClipPasteResult(state: TimelineState, clips: readonly Timeli
       || (sourceWasEffect && members.every((clip) => isEffectItemKind(clip.kind)))
     );
     const roleForLane: TrackVisualRole | undefined = isTextGroup ? 'text' : isEffectGroup ? 'effect' : undefined;
-    const isValidTarget = (id: string) =>
-      trackKind(state, id) === kind && members.every((clip) => canTrackAcceptItemKind(state, clip.kind, id, main))
-      && (!isEffectGroup || isEffectTrack(state, id, main));
-    let target: string | null | undefined = options.keepSourceTracks && order.includes(sourceId) && isValidTarget(sourceId)
-      ? sourceId
-      : sourceIds.length === 1
-        ? primary && isValidTarget(primary.track)
-          ? primary.track
-          : kind === 'video'
-            ? (isTextGroup
-              ? order.find((id) => id !== main && isTextTrack(state, id, main)) ?? null
-              : isEffectGroup
-                ? order.find((id) => id !== main && isEffectTrack(state, id, main)) ?? null
-                : main)
-            : defaultTrackId(state, kind)
-        : options.sourceMainTrackId === sourceId && kind === 'video' && !isTextGroup && !isEffectGroup
-          ? main
-          : order.includes(sourceId) && isValidTarget(sourceId) ? sourceId : null;
+    return { sourceId, members, kind, isTextGroup, isEffectGroup, roleForLane };
+  });
+  const explicitTargetId = !options.keepSourceTracks && options.targetTrackId && order.includes(options.targetTrackId)
+    ? options.targetTrackId
+    : null;
+  const leadGroupForExplicitTarget = explicitTargetId
+    ? (sourceGroups.length === 1
+      ? (isTrackCompatible(explicitTargetId, sourceGroups[0]!.kind, sourceGroups[0]!.isEffectGroup, sourceGroups[0]!.members, true)
+        ? sourceGroups[0]
+        : undefined)
+      : ((options.sourceMainTrackId
+        ? sourceGroups.find((g) => g.sourceId === options.sourceMainTrackId
+          && isTrackCompatible(explicitTargetId, g.kind, g.isEffectGroup, g.members, true))
+        : undefined)
+        ?? sourceGroups.find((g) => isTrackCompatible(explicitTargetId, g.kind, g.isEffectGroup, g.members, true))))
+    : undefined;
+  for (const group of sourceGroups) {
+    const { sourceId, members, kind, isTextGroup, isEffectGroup, roleForLane } = group;
+    const isValidTarget = (id: string) => isTrackCompatible(id, kind, isEffectGroup, members);
+    const explicitMatches = Boolean(
+      explicitTargetId
+      && leadGroupForExplicitTarget?.sourceId === sourceId
+      && isTrackCompatible(explicitTargetId, kind, isEffectGroup, members, true)
+      && ![...mapping.values()].includes(explicitTargetId),
+    );
+    if (explicitMatches && tracks[explicitTargetId!]?.locked) {
+      return { state, error: '目标轨道已锁定，请先解锁或选择其他轨道。' };
+    }
+    let target: string | null | undefined;
+    if (options.keepSourceTracks && order.includes(sourceId) && isValidTarget(sourceId)) {
+      target = sourceId;
+    } else if (explicitMatches) {
+      target = explicitTargetId!;
+    } else if (sourceIds.length === 1) {
+      if (primary && isValidTarget(primary.track) && (!tracks[primary.track]?.locked || (primary.track === main && state.interaction?.magnet))) {
+        target = primary.track;
+      } else if (order.includes(sourceId) && isValidTarget(sourceId) && (!tracks[sourceId]?.locked || (sourceId === main && state.interaction?.magnet))) {
+        target = sourceId;
+      } else if (kind === 'video') {
+        target = isTextGroup
+          ? order.find((id) => id !== main && isTextTrack(state, id, main)) ?? null
+          : isEffectGroup
+            ? order.find((id) => id !== main && isEffectTrack(state, id, main)) ?? null
+            : main;
+      } else {
+        target = defaultTrackId(state, kind);
+      }
+    } else if (options.sourceMainTrackId === sourceId && kind === 'video' && !isTextGroup && !isEffectGroup) {
+      target = main;
+    } else if (order.includes(sourceId) && isValidTarget(sourceId)) {
+      target = sourceId;
+    } else {
+      target = null;
+    }
     // A copied title/attached overlay stays above the picture track even when
     // the user has cleared selection or selected the main video before pasting.
-    if (target === main && members.every((clip) => clip.kind === 'text' || isEffectItemKind(clip.kind) || !!clip.mainClipId)) {
+    if (!explicitMatches && target === main && members.every((clip) => clip.kind === 'text' || isEffectItemKind(clip.kind) || !!clip.mainClipId)) {
       target = sourceId !== main && order.includes(sourceId) && isValidTarget(sourceId)
         ? sourceId : order.find((id) => id !== main && isValidTarget(id));
     }

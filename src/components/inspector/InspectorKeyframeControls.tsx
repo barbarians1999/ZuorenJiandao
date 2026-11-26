@@ -3,6 +3,7 @@ import type { ClipTransform, Keyframe, KeyframeEasing, KeyframeProp, TimelineIte
 import { sampleKeyframes } from '../../editor/keyframes';
 import { KEYFRAME_PROPS, getKeyframePropertyDefinition } from '../../editor/keyframeRegistry';
 import { useT } from '../../i18n/locale';
+import { isMacPlatform } from '../../shortcuts/match';
 import { Icon } from '../icons';
 import {
   flexCropAxisSize,
@@ -52,7 +53,7 @@ export function SliderRow({
   label, val, min, max, step, fmt, inputScale, mixed = false, onChange, onReset, resetDisabled, disabled, disabledReason,
 }: SliderRowProps) {
   const t = useT();
-  const modKey = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl';
+  const modKey = isMacPlatform() ? '⌘' : 'Ctrl';
   const gesture = useHistoryGesture();
   const progress = Math.min(100, Math.max(0, ((val - min) / (max - min)) * 100));
   return (

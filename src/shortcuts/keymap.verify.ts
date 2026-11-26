@@ -37,6 +37,7 @@ assert.equal(macChord({ key: 'z', ctrlKey: true }), 'Ctrl + Z', 'mac: ctrl is di
 assert.equal(chordFromEvent(ev({ key: 'z', ctrlKey: true }), false), 'Mod + Z', 'non-mac: ctrl+z → Mod + Z');
 assert.equal(chordFromEvent(ev({ key: 'z', metaKey: true }), false), 'Z', 'non-mac: meta is not Mod');
 assert.equal(macChord({ key: 'k', altKey: true }), 'Alt + K', 'alt+k');
+assert.equal(macChord({ key: '©', code: 'KeyG', altKey: true }), 'Alt + G', 'mac option+g uses code fallback');
 assert.equal(macChord({ key: ' ' }), 'Space', 'space');
 assert.equal(macChord({ key: 'ArrowLeft' }), '←', 'arrow');
 assert.equal(macChord({ key: 'Shift', shiftKey: true }), null, 'bare modifier → null');

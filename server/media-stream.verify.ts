@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMiniConnect } from '../desktop/mini-connect.ts';
 import { distStaticMiddleware } from '../desktop/static-files.ts';
-import { serveDiskFile } from './media-dir.ts';
+import { OPEN_ENDED_MEDIA_RANGE_MAX_BYTES, serveDiskFile } from './media-dir.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'occ-media-stream-check-'));
 const errors: NodeJS.ErrnoException[] = [];
@@ -92,6 +92,25 @@ try {
     assert.equal(response.status, 206);
     assert.equal(response.headers.get('content-range'), contentRange);
     assert.equal(await response.text(), expected);
+  }
+  {
+    const openEnded = await fetch(`${origin}/cancel.mp4`, { headers: { range: 'bytes=0-' } });
+    assert.equal(openEnded.status, 206);
+    assert.equal(
+      openEnded.headers.get('content-range'),
+      `bytes 0-${OPEN_ENDED_MEDIA_RANGE_MAX_BYTES - 1}/${8 * 1024 * 1024}`,
+      'open-ended media Range requests are capped so preload=auto does not pin HTTP/1.1 sockets',
+    );
+    await openEnded.arrayBuffer();
+
+    const explicitRange = await fetch(`${origin}/cancel.mp4`, { headers: { range: `bytes=0-${8 * 1024 * 1024 - 1}` } });
+    assert.equal(explicitRange.status, 206);
+    assert.equal(
+      explicitRange.headers.get('content-range'),
+      `bytes 0-${8 * 1024 * 1024 - 1}/${8 * 1024 * 1024}`,
+      'explicit bounded Range requests return the full requested slice',
+    );
+    await explicitRange.arrayBuffer();
   }
   for (const path of ['/clip.mp4', '/empty.mp4']) {
     const response = await fetch(origin + path, { headers: { range: 'bytes=10-20' } });

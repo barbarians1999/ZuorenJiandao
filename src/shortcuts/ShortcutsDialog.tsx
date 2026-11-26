@@ -126,7 +126,7 @@ export function ShortcutsDialog({ onClose }: ShortcutsDialogProps) {
             })}
           </div>
           <span style={{ fontSize: 11, color: theme.textDim, marginLeft: 'auto' }}>
-            {t(activePresetMeta.summary)}
+            {formatShortcutKeys(t(activePresetMeta.summary).replace(/\bCtrl\+/g, 'Mod+'))}
           </span>
         </div>
         <div style={{ overflowY: 'auto', padding: '8px 12px 16px' }}>

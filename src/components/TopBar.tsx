@@ -52,7 +52,7 @@ export function TopBar({ projectName, canUndo, canRedo, saveStatus = 'saved', sa
       <DesktopWindowControls />
       <span className="cc-editor-brand-mark" aria-hidden="true"><BrandMark size={22} /></span>
       {/* Keep the project-list action separate from the brand mark. */}
-      <button className="cc-topbar-home cc-tip" data-tip={t('返回工程列表')} aria-label={t('返回工程列表')} onClick={onHome}
+      <button className="cc-topbar-home cc-tip" data-tip={t('返回工程列表')} aria-label={t('返回工程列表')} onMouseDown={(event) => event.preventDefault()} onClick={onHome}
         style={{ width: 36, height: 36, flexShrink: 0, border: 'none', borderRadius: 6, cursor: onHome ? 'pointer' : 'default', padding: 0, lineHeight: 0, display: 'grid', placeItems: 'center', color: theme.textDim }}
         onMouseEnter={(e) => { if (onHome) { e.currentTarget.style.color = theme.text; e.currentTarget.style.background = theme.panelAlt; } }}
         onMouseLeave={(e) => { e.currentTarget.style.color = theme.textDim; e.currentTarget.style.background = 'none'; }}>
@@ -111,7 +111,7 @@ export function TopBar({ projectName, canUndo, canRedo, saveStatus = 'saved', sa
         <TopBarIconButton icon="palette" label={t('设计风格(品牌)')} onClick={() => invokeAction('open-design', undefined, 'toolbar')} />
       </ToolbarUtilities>
       </div>
-      <button onClick={() => invokeAction('open-export', undefined, 'toolbar')}
+      <button onMouseDown={(event) => event.preventDefault()} onClick={() => invokeAction('open-export', undefined, 'toolbar')}
         className="cc-topbar-export cc-tip cc-tip-r"
         data-tip={exporting ? t('查看后台导出任务') : t('导出')}
         aria-label={exporting ? t('查看后台导出任务') : t('导出')}

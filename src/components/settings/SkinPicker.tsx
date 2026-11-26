@@ -157,6 +157,7 @@ export function SkinPicker() {
         aria-haspopup="menu"
         aria-expanded={open}
         className={`cc-topbar-icon-button cc-skin-picker-trigger cc-tip cc-tip-r${open ? ' is-open' : ''}`}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={() => setOpen((o) => !o)}
       >
         <Icon name="brush" size={19} />

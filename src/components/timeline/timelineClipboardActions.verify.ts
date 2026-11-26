@@ -33,9 +33,10 @@ function harness(state: TimelineState) {
   const clipboard: { current: ItemClipboard } = { current: null };
   const errors: string[] = [];
   const current = () => applySelection(activeTimeline(history.present), selection);
-  const actions = (frame = 100) => createTimelineClipboardActions({
+  const actions = (frame = 100, targetTrackId: string | null = null) => createTimelineClipboardActions({
     state: current(), commands, clipboard, playhead: () => frame, uid, reportError: (error) => errors.push(error),
     copySelectedCaptions: () => false, pasteCaptionClipboard: () => false,
+    targetTrackId: () => targetTrackId,
   });
   return { actions, current, commands, clipboard, errors, history: () => history, doc };
 }
@@ -158,5 +159,74 @@ for (const operation of ['cutSelected', 'deleteSelected'] as const) {
   h.actions().deleteSelected(true);
   assert.equal(h.current().items.find((item) => item.id === 'next-title')?.startFrame, 120, 'explicit ripple on a side lane still closes its own gap with main magnet enabled');
   assert.equal(h.current().items.find((item) => item.id === 'b')?.startFrame, 100, 'title deletion never shifts its parent');
+}
+// Explicit targetTrackId priority and empty-selection source-track preservation
+{
+  const v2Clip: TimelineItem = { id: 'v2clip', name: 'v2clip', kind: 'video', src: '/v2.mp4', track: 'v2', startFrame: 0, durationInFrames: 60 };
+  const a1Clip: TimelineItem = { id: 'a1clip', name: 'a1clip', kind: 'audio', src: '/a1.wav', track: 'a1', startFrame: 0, durationInFrames: 60 };
+  const base: TimelineState = {
+    fps: 30, width: 1920, height: 1080,
+    items: [video('v1clip', 0), v2Clip, a1Clip],
+    tracks: {
+      v2: { kind: 'video' },
+      v: { kind: 'video' },
+      a1: { kind: 'audio' },
+      a2: { kind: 'audio' },
+      lockedV: { kind: 'video', locked: true },
+    },
+    trackOrder: ['lockedV', 'v2', 'v', 'a1', 'a2'],
+    interaction: { mainTrackId: 'v', magnet: true, linkage: false },
+    selectedId: 'v1clip',
+    selectedIds: ['v1clip'],
+  };
+
+  // Copy from V1 (main), explicitly target V2 -> lands on V2 even when V1 clip was selected.
+  const h1 = harness(base);
+  h1.actions().copySelected();
+  h1.actions(200, 'v2').pasteClipboard();
+  assert.deepEqual(h1.errors, []);
+  const pastedToV2 = h1.current().items.find((item) => item.name === 'v1clip' && item.id !== 'v1clip')!;
+  assert.equal(pastedToV2.track, 'v2', 'explicit targetTrackId overrides selected clip track and main track');
+  assert.equal(pastedToV2.startFrame, 200);
+
+  // Copy from V2, clear selection, paste without targetTrackId -> stays on V2 (source track), not V1.
+  const h2 = harness({ ...base, selectedId: 'v2clip', selectedIds: ['v2clip'] });
+  h2.actions().copySelected();
+  h2.commands.selectItems([]);
+  h2.actions(200, null).pasteClipboard();
+  assert.deepEqual(h2.errors, []);
+  const pastedStayV2 = h2.current().items.find((item) => item.name === 'v2clip' && item.id !== 'v2clip')!;
+  assert.equal(pastedStayV2.track, 'v2', 'empty-selection single-track paste preserves original source track');
+
+  // Copy from V2, explicitly target V1 (main) -> lands on V1.
+  const h3 = harness({ ...base, selectedId: 'v2clip', selectedIds: ['v2clip'] });
+  h3.actions().copySelected();
+  h3.actions(60, 'v').pasteClipboard();
+  assert.deepEqual(h3.errors, []);
+  const pastedToV1 = h3.current().items.find((item) => item.name === 'v2clip' && item.id !== 'v2clip')!;
+  assert.equal(pastedToV1.track, 'v', 'explicit targetTrackId=v pastes onto main track');
+
+  // Copy from A1, explicitly target A2 -> lands on A2.
+  const h4 = harness({ ...base, selectedId: 'a1clip', selectedIds: ['a1clip'] });
+  h4.actions().copySelected();
+  h4.actions(200, 'a2').pasteClipboard();
+  assert.deepEqual(h4.errors, []);
+  const pastedToA2 = h4.current().items.find((item) => item.name === 'a1clip' && item.id !== 'a1clip')!;
+  assert.equal(pastedToA2.track, 'a2', 'audio copy pastes onto selected target audio track a2');
+
+  // Explicit locked compatible target track returns explicit error instead of random track.
+  const h5 = harness(base);
+  h5.actions().copySelected();
+  h5.actions(200, 'lockedV').pasteClipboard();
+  assert.equal(h5.errors.length, 1, 'locked explicit target track reports error');
+  assert.equal(h5.current().items.length, base.items.length);
+
+  // Incompatible explicit target track (audio track selected while pasting video) falls back deterministically.
+  const h6 = harness(base);
+  h6.actions().copySelected();
+  h6.actions(200, 'a2').pasteClipboard();
+  assert.deepEqual(h6.errors, []);
+  const fallbackVideo = h6.current().items.find((item) => item.name === 'v1clip' && item.id !== 'v1clip')!;
+  assert.equal(fallbackVideo.track, 'v', 'incompatible targetTrackId falls back deterministically to compatible video track');
 }
 console.log('timelineClipboardActions.verify: ok (magnetic paste, atomic cut/delete/duplicate, cloned linkage and cross-draft safety)');

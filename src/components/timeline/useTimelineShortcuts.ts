@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { PlayerRef } from '@remotion/player';
 import {
   selectedIdsOf, timelineTrackIds, trackKind,
-  type TimelineState,
+  type TimelineState, type TrackId,
 } from '../../editor/types';
 import type { EditorCommands } from '../../editor/store';
 import type { AtomicAction } from '../../editor/store';
@@ -69,6 +69,7 @@ interface ShortcutDeps {
   setFxClip: (fx: FxClip | null) => void;
   copySelectedCaptions: () => boolean;
   pasteCaptionClipboard: () => boolean;
+  targetTrackIdRef?: RefObject<TrackId | null>;
   onSelectCaptionRange?: (
     selections: CaptionSelectionRef[],
     options: { additive: boolean; preserveWithItems: boolean },
@@ -79,7 +80,7 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
   const {
     shortcutApiRef, state, commands, playerRef, playheadRef, total,
     seekFrame, paintPlayhead, cancelPendingScrubSeek, editMode, setEditMode, selectedCaptions, setSnapping, fitToView, zoomBy,
-    bladeSelected, setEditMarker, fxClip, setFxClip, copySelectedCaptions, pasteCaptionClipboard,
+    bladeSelected, setEditMarker, fxClip, setFxClip, copySelectedCaptions, pasteCaptionClipboard, targetTrackIdRef,
     onSelectCaptionRange,
   } = deps;
 
@@ -219,6 +220,7 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
         uid: (prefix) => `${prefix}_${crypto.randomUUID()}`,
         reportError: (error) => showAppToast(error, { error: true }),
         copySelectedCaptions, pasteCaptionClipboard,
+        targetTrackId: () => targetTrackIdRef?.current ?? null,
       }),
       getPlayhead: () => playheadRef.current,
       seekTo: (frame) => seekFrame(frame),

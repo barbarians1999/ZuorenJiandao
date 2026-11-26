@@ -188,7 +188,7 @@ export interface TimelineItem extends TranscriptCarrier {
   sourceContentHash?: string;
   /** Nested sequence reference. Required when kind='sequence'; absent on legacy items. */
   timelineId?: string;
-  /** Disable only this clip's picture; source audio and timeline duration remain active. */
+  /** Disable this clip's picture (transparent) and audio (silent) while preserving timeline position and duration. */
   pictureDisabled?: boolean;
   /** Persistent multicam membership; copied by split so angle identity survives edits. */
   multicamGroupId?: string;

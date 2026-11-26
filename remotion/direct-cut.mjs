@@ -13,6 +13,7 @@ const STATE_KEYS = new Set(['fps', 'width', 'height', 'fit', 'items', 'tracks', 
   'captions', 'watermark', 'fxDefs', 'id', 'name', 'order', 'hidden', 'interaction', 'compositingOrder']);
 const ITEM_KEYS = new Set(['id', 'track', 'startFrame', 'durationInFrames', 'name', 'kind', 'width', 'height',
   'src', 'sourceFilename', 'originalFilePath', 'sourceAssetId', 'sourceRevision', 'sourceContentHash',
+  'pictureDisabled',
   'volume', 'srcInFrame', 'playbackRate', 'fadeInFrames', 'fadeOutFrames', 'transform', 'props',
   'effects', 'filters', 'keyframes', 'backgroundFill', 'mainClipId',
   'transcript', 'transcriptGenerationId', 'transcriptStale', 'variants', 'legacyTimingReview']);
@@ -80,7 +81,8 @@ export function planDirectCutExport({ state, codec = 'h264', scale, frameRange, 
     }
     if ((item.playbackRate ?? 1) !== 1 || (item.fadeInFrames ?? 0) !== 0 || (item.fadeOutFrames ?? 0) !== 0
       || !neutralTransform(item.transform) || !neutralPictureProps(item) || !empty(item.effects)
-      || !empty(item.filters) || !empty(item.keyframes) || item.backgroundFill === true) return refusal('clip-processing');
+      || !empty(item.filters) || !empty(item.keyframes) || item.backgroundFill === true
+      || item.pictureDisabled === true) return refusal('clip-processing');
     if (!Number.isFinite(item.volume ?? 1) || (item.volume ?? 1) < 0 || (item.volume ?? 1) > 2) return refusal('volume');
     end = Math.max(end, item.startFrame + item.durationInFrames);
     if (!integer(end) || !finiteNonNegative((item.srcInFrame ?? 0) + item.durationInFrames)) return refusal('frame-overflow');

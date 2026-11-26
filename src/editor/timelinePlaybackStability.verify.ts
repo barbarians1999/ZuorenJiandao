@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   attachNativeMediaElementGuard,
+  attachNativeVideoStallWatchdog,
+  extractOriginalPreviewSrc,
   nativeAcceptableTimeShiftSeconds,
   withOpenEndedPreviewHash,
 } from '../media/nativePlaybackGuard';
@@ -74,6 +77,10 @@ assert.equal(nativeAcceptableTimeShiftSeconds(2, 2), 8.8);
   }
   assert.equal(nativeSetCalls, 1, '30 rapid readyState===0 writes only issue 1 initial native seek');
   assert.ok(Math.abs(el.currentTime - (45 + 29 * 0.033)) < 1e-6, 'getter exposes latest pending seek while unloaded');
+
+  // Initial mount loadstart on the SAME src must not clear pendingMetadataSeek.
+  mockEl.emit('loadstart');
+  assert.ok(Math.abs(el.currentTime - (45 + 29 * 0.033)) < 1e-6, 'same-src loadstart preserves pending seek');
 
   // Simulate metadata arrival where Chromium had kept nativeCurrentTime at 0.
   nativeCurrentTime = 0;
@@ -222,6 +229,96 @@ assert.equal(nativeAcceptableTimeShiftSeconds(2, 2), 8.8);
   const volFn = sharedAudioVolume([keyframedSilentStart], false, () => 1);
   assert.equal(typeof volFn, 'function', 'volume:0 with positive keyframes stays audible');
   assert.equal((volFn as (f: number) => number)(30), 1);
+}
+
+// 7. Preview source extraction, stall watchdog, zero-dimension fallback, and direct React 19 teardown.
+{
+  assert.equal(extractOriginalPreviewSrc('/media/uploads/demo.mp4#preview'), '/media/uploads/demo.mp4');
+  assert.equal(
+    extractOriginalPreviewSrc('/api/preview-proxy-file?src=%2Fmedia%2Fuploads%2F%E8%BD%BB%E7%9B%88.mp4&revision=2#preview'),
+    '/media/uploads/轻盈.mp4',
+  );
+
+  class FakeWatchdogVideo {
+    readyState = 0;
+    videoWidth = 1920;
+    videoHeight = 1080;
+    currentTime = 12;
+    src = '/media/uploads/hevc.mp4';
+    currentSrc = '/media/uploads/hevc.mp4';
+    isConnected = true;
+    loadCalls = 0;
+    private readonly listeners = new Map<string, Set<() => void>>();
+
+    addEventListener(type: string, fn: () => void, opts?: { once?: boolean }) {
+      const wrapped = opts?.once ? () => { this.removeEventListener(type, wrapped); fn(); } : fn;
+      if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+      this.listeners.get(type)!.add(wrapped);
+    }
+
+    removeEventListener(type: string, fn: () => void) {
+      this.listeners.get(type)?.delete(fn);
+    }
+
+    emit(type: string) {
+      for (const fn of [...(this.listeners.get(type) ?? [])]) fn();
+    }
+
+    load() { this.loadCalls += 1; }
+  }
+
+  // Zero video dimensions (e.g. unsupported HEVC track playing audio-only black frame) triggers immediate fallback.
+  {
+    const v = new FakeWatchdogVideo();
+    v.videoWidth = 0;
+    v.videoHeight = 0;
+    const reasons: string[] = [];
+    const dispose = attachNativeVideoStallWatchdog(v as unknown as HTMLVideoElement, {
+      onFallback: (reason) => reasons.push(reason),
+      retryDelayMs: 20,
+      fallbackDelayMs: 30,
+    });
+    v.readyState = 1;
+    v.emit('loadedmetadata');
+    assert.deepEqual(reasons, ['zero-video-dimensions']);
+    dispose();
+  }
+
+  // Stall recovery: 1 bounded load() retry, then fallback if still readyState < 2.
+  {
+    const v = new FakeWatchdogVideo();
+    const reasons: string[] = [];
+    const dispose = attachNativeVideoStallWatchdog(v as unknown as HTMLVideoElement, {
+      onFallback: (reason) => reasons.push(reason),
+      retryDelayMs: 25,
+      fallbackDelayMs: 25,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    assert.equal(v.loadCalls, 1, 'watchdog performs one bounded load() retry');
+    assert.deepEqual(reasons, ['video-decode-stalled'], 'persistent stall escalates to proxy fallback');
+    dispose();
+  }
+
+  // Healthy ready clip cancels watchdog cleanly without retry or fallback.
+  {
+    const v = new FakeWatchdogVideo();
+    const reasons: string[] = [];
+    const dispose = attachNativeVideoStallWatchdog(v as unknown as HTMLVideoElement, {
+      onFallback: (reason) => reasons.push(reason),
+      retryDelayMs: 25,
+      fallbackDelayMs: 25,
+    });
+    v.readyState = 4;
+    v.emit('loadeddata');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(v.loadCalls, 0);
+    assert.deepEqual(reasons, []);
+    dispose();
+  }
+
+  const runtimeSource = readFileSync(new URL('./RuntimeVideo.tsx', import.meta.url), 'utf8');
+  assert.match(runtimeSource, /releaseNativeVideoElement\(videoElRef\.current\)/,
+    'RuntimeVideo must release unmounted <video> elements directly via element ref (React 19 clears containerRef.current before cleanup)');
 }
 
 console.log('timelinePlaybackStability.verify: all playback stability regressions passed');

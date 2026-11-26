@@ -134,7 +134,7 @@ export async function inspectTimelineExportCapabilities(options) {
   const allowDirectCut = options.allowDirectCut !== false;
   let hasUnresolvedMedia = false;
   for (const item of options.state?.items ?? []) {
-    if (!item || options.state?.tracks?.[item.track]?.hidden) continue;
+    if (!item || options.state?.tracks?.[item.track]?.hidden || item.pictureDisabled === true) continue;
     if ((item.kind === 'video' || item.kind === 'audio' || item.kind === 'gif') && typeof item.src === 'string' && item.src) {
       if (!localVideoPath(item.src, uploadsDirectory, ASSETS_DIR) && !options.resolveMediaSource?.(item.src)) {
         hasUnresolvedMedia = true;

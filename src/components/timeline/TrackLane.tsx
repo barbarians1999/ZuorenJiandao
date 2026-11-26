@@ -73,6 +73,8 @@ interface TrackLaneProps {
   onContextMenu: (menu: { id: string; x: number; y: number }) => void;
   onTransitionContextMenu: (menu: { id: string; x: number; y: number }) => void;
   onTrackContextMenu: (menu: { trackId: TrackId; x: number; y: number; frame: number }) => void;
+  onSelectTrack?: () => void;
+  onClearTrackSelection?: () => void;
   scrollRef: RefObject<HTMLDivElement | null>;
   onDropExternalFiles?: (files: File[], trackId: TrackId, startFrame: number) => void;
 }
@@ -102,7 +104,7 @@ export const TrackLane = memo(function TrackLane({
   trackId, state, commands, pointer, editMode, pickMode, locked, hidden, muted, px, rowHeight,
   visibleWindow, pinnedItemIds, selectionMovePreview, indexes, attachmentFeedback: attachmentFeedbackProp, libDropTarget, setLibDropTarget,
   applyLibraryToClip, applyLibraryToTrack, rippleOnDrop, overwriteOnDrop,
-  frameFromClientX, onContextMenu, onTransitionContextMenu, onTrackContextMenu, scrollRef, onDropExternalFiles,
+  frameFromClientX, onContextMenu, onTransitionContextMenu, onTrackContextMenu, onSelectTrack, onClearTrackSelection, scrollRef, onDropExternalFiles,
 }: TrackLaneProps) {
   const t = useT();
   const { drag, penDrag, setPenDrag, startDrag, startRollDrag, startPick, startMarquee } = pointer;
@@ -299,6 +301,12 @@ export const TrackLane = memo(function TrackLane({
         cursor: pickMode ? 'crosshair' : undefined,
       }}
       onPointerDown={(e) => {
+        if (e.button === 0) {
+          const target = e.target instanceof Element ? e.target : null;
+          if (!target?.closest('[data-timeline-clip], [data-roll-handle], .cc-transition-marker, button')) {
+            onSelectTrack?.();
+          }
+        }
         if (pickMode) { startPick(e, 'lane'); return; }
         // selection mode: empty-lane drag → marquee multi-select
         if (editMode === 'selection' && !locked) startMarquee(e);
@@ -427,6 +435,7 @@ export const TrackLane = memo(function TrackLane({
         const canRateStretch = !collapsedSpan && (it.kind === 'video' || it.kind === 'audio');
         const canSlip = !collapsedSpan && (it.kind === 'video' || it.kind === 'audio');
         const audioMuted = muted && (it.kind === 'audio' || it.kind === 'video');
+        const pictureDisabled = it.pictureDisabled === true;
         const showHandles = !pickMode && editMode !== 'blade' && editMode !== 'pen' && editMode !== 'slip'
           && (editMode !== 'rate-stretch' || canRateStretch);
         const rollEntry = collapsedSpan ? undefined : rollPlansByLeft.get(it.id);
@@ -467,10 +476,11 @@ export const TrackLane = memo(function TrackLane({
         if (editMode === 'slip' && !canSlip) clipTitle = `${displayName} · ${t('此类型没有可滑移的源区间')}`;
         else if (audioMuted) clipTitle += ` · ${t('轨道已静音')}`;
         if (locked) clipTitle += ` · ${t('轨道已锁定，请先解锁')}`;
+        if (pictureDisabled) clipTitle += ` · ${t('片段已停用（按 V 恢复）')}`;
         return (
           <div
             key={it.id}
-            className={`cc-timeline-clip${selected ? ' is-selected' : ''}${isLibOver ? ' is-library-over' : ''}${audioMuted ? ' is-audio-muted' : ''}${attachment?.highlighted ? ' is-linked-follower' : ''}${attachment?.locked ? ' is-link-blocked' : ''}`}
+            className={`cc-timeline-clip${selected ? ' is-selected' : ''}${isLibOver ? ' is-library-over' : ''}${audioMuted ? ' is-audio-muted' : ''}${pictureDisabled ? ' is-picture-disabled' : ''}${attachment?.highlighted ? ' is-linked-follower' : ''}${attachment?.locked ? ' is-link-blocked' : ''}`}
             data-timeline-clip
             data-video-track={isVideoTrack ? 'true' : undefined}
             data-compact-clip={compactClip ? 'true' : undefined}
@@ -479,6 +489,7 @@ export const TrackLane = memo(function TrackLane({
             data-adjacent-right={joinedRight ? 'true' : undefined}
             data-main-clip-id={attachment?.owner.id}
             data-linkage-active={attachment ? attachment.active : undefined}
+            data-picture-disabled={pictureDisabled ? 'true' : undefined}
             data-fold-group-id={itemFoldGroup?.id}
             data-fold-collapsed={collapsedSpan ? 'true' : undefined}
             title={clipTitle}
@@ -486,6 +497,7 @@ export const TrackLane = memo(function TrackLane({
             onDoubleClick={() => { if (it.kind === 'sequence' && it.timelineId) commands.switchTimeline(it.timelineId); }}
             onPointerDown={(e) => {
               if (e.button !== 0) return;
+              onClearTrackSelection?.();
               if (pickMode) { // selection mode: click → item ref, drag → timerange (no editing)
                 commands.selectItem(it.id);
                 startPick(e, 'clip', it);
@@ -689,6 +701,12 @@ export const TrackLane = memo(function TrackLane({
               <span className="cc-legacy-review-badge" title={legacyReview.summary}>⚠ 切点待确认</span>
             )}
             </div>
+            {pictureDisabled && (
+              <span className="cc-clip-picture-disabled-badge" title={t('片段已停用（按 V 恢复）')} aria-label={t('片段已停用')}>
+                <Icon name="eyeOff" size={11} />
+                {dur * px >= 72 && <span>{t('已停用')}</span>}
+              </span>
+            )}
             {joinedRight && <span className="cc-clip-cut-divider" aria-hidden="true" />}
             {showHandles && handleLayout.trimWidth > 0 && <div onPointerDown={(e) => { if (e.button !== 0) return; startDrag(e, it.id, 'trim-left', baseStart, baseDur, it.track, baseSrcIn, collapsedFoldGroup?.id); }}
               style={{ position: 'absolute', left: handleLayout.leftOffset, top: 0, width: handleLayout.trimWidth, height: '100%', cursor: 'ew-resize', background: editMode === 'trim' || editMode === 'rate-stretch' ? themeAlpha.accent(0.35) : 'transparent' }} />}

@@ -33,10 +33,33 @@ const PROJECT_SHORTCUTS = new Set([
   'save-version',
   'keyboard-shortcuts',
   'ask-ai',
+  'open-settings',
   'select-before-playhead',
   'select-after-playhead',
   'select-track-before-playhead',
   'select-track-after-playhead',
+]);
+
+const WORKSPACE_VIEW_SHORTCUTS = new Set([
+  'zoom-in',
+  'zoom-out',
+  'zoom-fit',
+  'fullscreen',
+  'snapping',
+  'selection-mode',
+  'interaction-mode-selection',
+  'interaction-mode-trim',
+  'interaction-mode-slip',
+  'interaction-mode-rate-stretch',
+  'interaction-mode-blade',
+  'interaction-mode-pen',
+  'toggle-picture',
+  'marker-add',
+  'marker-shortcut-add-and-open',
+  'marker-modify-at-playhead',
+  'marker-delete-at-playhead',
+  'marker-prev',
+  'marker-next',
 ]);
 
 export function shortcutAllowedForSurface(actionId: string, surface: ShortcutSurface): boolean {
@@ -44,8 +67,12 @@ export function shortcutAllowedForSurface(actionId: string, surface: ShortcutSur
   if (actionId === 'split') {
     return surface === 'timeline' || surface === 'preview' || surface === 'inspector' || surface === 'other';
   }
+  if (PREVIEW_SHORTCUTS.has(actionId)) {
+    return surface === 'timeline' || surface === 'preview' || surface === 'inspector' || surface === 'other';
+  }
   if (actionId === 'marker-add') return surface === 'timeline' || surface === 'preview' || surface === 'other';
-  if (surface === 'preview') return PREVIEW_SHORTCUTS.has(actionId);
+  if (surface === 'preview') return actionId === 'fullscreen';
+  if (surface === 'other') return WORKSPACE_VIEW_SHORTCUTS.has(actionId);
   return surface === 'timeline';
 }
 

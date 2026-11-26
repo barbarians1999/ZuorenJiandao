@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { compositionPlan, previewLayerWindow, previewVideoMounts } from './compositionPlan';
 import type { TimelineItem, TimelineState } from './types';
 import { sharedVisualFrame } from './transitionAudio';
-import { appearanceAt } from './clipFade';
 import { appendManualCue, newManualCaptions } from '../captions/manualCaptions';
 
 const clip = (id: string, startFrame: number, srcInFrame: number, track = 'V1'): TimelineItem => ({
@@ -85,18 +84,14 @@ assert.deepEqual(bothShared.visualLayers.map((layer) => layer.map((item) => item
 const previewRun: TimelineState = { ...state, items: [
   { ...clip('edge-off', 30, 240), pictureDisabled: true },
   { ...clip('a', 90, 300), transform: { x: 6 } },
-  { ...clip('audio-only', 150, 360), pictureDisabled: true },
+  { ...clip('disabled-mid', 150, 360), pictureDisabled: true },
   { ...clip('b', 210, 420), filters: { brightness: 0.5 } },
 ] };
 const previewPlan = compositionPlan(previewRun, { mode: 'player' });
 assert.deepEqual(previewPlan.ordered.map((item) => item.id), ['a', 'b']);
-assert.deepEqual(previewPlan.visualLayers.map((group) => group.map((item) => item.id)), [['a', 'audio-only', 'b']]);
+assert.deepEqual(previewPlan.visualLayers.map((group) => group.map((item) => item.id)), [['a'], ['b']]);
+assert.deepEqual(previewPlan.videoAudioGroups, []);
 assert.deepEqual(compositionPlan(previewRun).visualLayers.map((group) => group.map((item) => item.id)), [['a'], ['b']]);
-const [run] = previewPlan.sharedVisualGroups;
-const audioOnly = sharedVisualFrame(run!, 179)!;
-assert.equal(appearanceAt(audioOnly.item, audioOnly.localFrame, audioOnly.item.pictureDisabled === true).opacity, 0);
-const nextPicture = sharedVisualFrame(run!, 210)!;
-assert.match(appearanceAt(nextPicture.item, nextPicture.localFrame, false).foregroundStyle.filter!, /brightness\(0\.5\)/);
 const interveningLayer: TimelineItem = { ...clip('overlay', 170, 0), kind: 'image', src: '/overlay.png' };
 assert.deepEqual(compositionPlan({ ...previewRun, items: [...previewRun.items, interveningLayer] }, { mode: 'player' })
   .visualLayers.map((group) => group[0]!.id), ['a', 'overlay', 'b']);

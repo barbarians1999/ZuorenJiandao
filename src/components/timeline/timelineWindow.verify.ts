@@ -4,6 +4,7 @@ import { clipMediaGeometry } from './clipMediaGeometry';
 import {
   MAX_RULER_TICKS,
   buildTimelineIndexes,
+  fmtRuler,
   intersectFrameRange,
   rulerTickWindow,
   timelineFrameWindow,
@@ -84,4 +85,16 @@ const state: TimelineState = {
   assert.equal(geometry.widthPx, 1_200, 'media work is bounded to visible pixels');
   assert.equal(geometry.durationInFrames, 600);
   assert.equal(geometry.srcInFrame, 162_240, 'visible offset maps through playback rate');
+}
+
+{
+  assert.equal(fmtRuler(0, 30), '00:00');
+  assert.equal(fmtRuler(15 * 30, 30), '00:15');
+  assert.equal(fmtRuler(45 * 30, 30), '00:45');
+  assert.equal(fmtRuler(60 * 30, 30), '01:00');
+  assert.equal(fmtRuler(3665 * 30, 30), '01:01:05');
+  assert.equal(fmtRuler(15, 30), '00:00.50');
+  assert.equal(fmtRuler(60 * 30 + 15, 30), '01:00.50');
+  assert.equal(fmtRuler(0, 30, true), '00:00.00');
+  assert.equal(fmtRuler(60 * 30, 30, true), '01:00.00');
 }

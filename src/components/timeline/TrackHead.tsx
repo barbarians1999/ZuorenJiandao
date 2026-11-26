@@ -37,6 +37,8 @@ interface TrackHeadProps {
   onMoveUp?: () => void;
   onMoveDown?: () => void;
   onOpenContextMenu?: (x: number, y: number) => void;
+  selected?: boolean;
+  onSelect?: () => void;
   /** caption menu open on this track → raise head above neighbors */
   menuElevated: boolean;
   width: number;
@@ -62,7 +64,7 @@ function trackDeleteTitle(
 
 export function TrackHead({
   trackId, kind, isText = false, isEffect = false, trackName, customName, config, deleteBlockedReason, onDelete, onStartReorder, isReorderSource = false,
-  canMoveUp = false, canMoveDown = false, onMoveUp, onMoveDown, onOpenContextMenu, menuElevated, width,
+  canMoveUp = false, canMoveDown = false, onMoveUp, onMoveDown, onOpenContextMenu, selected = false, onSelect, menuElevated, width,
   commands, onToggleCaptions, onToggleCaptionMenu, onToggleDuckMenu, duckMenuPos, onCloseDuckMenu, onBackDuckMenu, children,
 }: TrackHeadProps) {
   const t = useT();
@@ -79,14 +81,18 @@ export function TrackHead({
       : baseTitle;
   return (
     <div
-      className={`cc-track-head${isReorderSource ? ' is-reorder-source' : ''}`}
+      className={`cc-track-head${isReorderSource ? ' is-reorder-source' : ''}${selected ? ' is-selected' : ''}`}
+      data-track-selected={selected ? 'true' : undefined}
+      aria-selected={selected || undefined}
       style={{ width, cursor: onStartReorder ? 'grab' : undefined, ...(menuElevated ? { zIndex: 40 } : {}) }}
-      title={t('点上下箭头或按住上下拖动调整轨道顺序')}
+      title={t('点击选中目标轨道（用于粘贴）；点上下箭头或按住上下拖动调整轨道顺序')}
       onLostPointerCapture={(event) => event.stopPropagation()}
       onPointerDown={(event) => {
-        if (!onStartReorder || event.button !== 0) return;
+        if (event.button !== 0) return;
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest('button, input, select, textarea, [role="menu"], .cc-caption-style-menu, .cc-duck-menu')) return;
+        onSelect?.();
+        if (!onStartReorder) return;
         onStartReorder(event);
       }}
       onContextMenu={(event) => {

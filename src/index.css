@@ -168,6 +168,24 @@ button, input, select { font: inherit; }
   border-radius:4px; background:color-mix(in srgb,var(--cc-bg) 78%,transparent);
   color:var(--cc-text-strong); pointer-events:none;
 }
+.cc-timeline-clip.is-picture-disabled .cc-clip-surface {
+  filter:grayscale(1) brightness(0.55) contrast(0.92);
+  opacity:.78;
+}
+.cc-timeline-clip.is-picture-disabled .cc-clip-surface::after {
+  content:""; position:absolute; inset:0; z-index:2; pointer-events:none; border-radius:inherit;
+  background:color-mix(in srgb,var(--cc-bg) 38%,transparent);
+}
+.cc-clip-picture-disabled-badge {
+  position:absolute; top:4px; left:5px; z-index:4; height:18px; padding:0 5px;
+  display:inline-flex; align-items:center; gap:3px;
+  border:0.5px solid color-mix(in srgb,var(--cc-text-strong) 42%,transparent);
+  border-radius:4px; background:color-mix(in srgb,var(--cc-bg) 84%,transparent);
+  color:var(--cc-text-strong); font-size:9.5px; font-weight:600; line-height:1; white-space:nowrap; pointer-events:none;
+}
+.cc-timeline-clip.is-audio-muted .cc-clip-picture-disabled-badge {
+  left:27px;
+}
 
 /* Shared editor surface typography: dialogs, popovers, and inspector use one baseline. */
 :where(.cc-semantic-panel, .cc-export-panel, .cc-inspector) {
@@ -1195,6 +1213,8 @@ html[data-cc-tooltip-host="ready"] .cc-tip::after { display:none !important; }
 .cc-track-row.is-new-track-after::after { bottom:0; }
 .cc-track-head.is-reorder-source { opacity:0.55; cursor:grabbing !important; }
 .cc-track-head { position:sticky; left:0; z-index:20; flex-shrink:0; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; gap:2px; padding:4px 6px; border-right:0.5px solid var(--cc-border); background:var(--cc-panel); overflow:hidden; user-select:none; -webkit-user-select:none; touch-action:none; }
+.cc-track-head.is-selected { box-shadow:inset 3px 0 0 var(--cc-accent); background:color-mix(in srgb, var(--cc-accent) 11%, var(--cc-panel)); }
+.cc-track-row.is-track-selected .cc-track-lane { background:color-mix(in srgb, var(--cc-accent) 5%, var(--cc-tl-track)); }
 /* Keep the highlighted track label and row actions on one compact rhythm. */
 .cc-track-head-controls { display:flex; align-items:center; gap:3px; width:100%; min-width:0; box-sizing:border-box; }
 .cc-track-order-stepper { display:flex; flex-direction:column; gap:1px; flex-shrink:0; }
@@ -1225,7 +1245,7 @@ html[data-cc-tooltip-host="ready"] .cc-tip::after { display:none !important; }
   padding:0 3px 4px;
   border-radius:4px;
 }
-.cc-timeline-clip[data-compact-clip="true"] :is(.cc-clip-duration, .cc-clip-badges, .cc-clip-attachment, .cc-clip-muted-indicator) {
+.cc-timeline-clip[data-compact-clip="true"] :is(.cc-clip-duration, .cc-clip-badges, .cc-clip-attachment, .cc-clip-muted-indicator, .cc-clip-picture-disabled-badge) {
   display:none;
 }
 .cc-timeline-clip[data-narrow-clip="true"] {
@@ -1235,7 +1255,7 @@ html[data-cc-tooltip-host="ready"] .cc-tip::after { display:none !important; }
   padding:0;
   border-radius:2px;
 }
-.cc-timeline-clip[data-narrow-clip="true"] :is(.cc-clip-label, .cc-clip-duration, .cc-clip-badges, .cc-clip-attachment, .cc-clip-muted-indicator) {
+.cc-timeline-clip[data-narrow-clip="true"] :is(.cc-clip-label, .cc-clip-duration, .cc-clip-badges, .cc-clip-attachment, .cc-clip-muted-indicator, .cc-clip-picture-disabled-badge) {
   display:none;
 }
 .cc-timeline-clip[data-adjacent-left="true"],

@@ -221,6 +221,7 @@ function FilmstripLayer({ geometry, heightPx, hasWave, strip, stripUrl, metadata
 
   return (
     <div
+      className="cc-clip-filmstrip"
       aria-hidden
       style={{
         position: 'absolute', left: geometry.leftPx, width: geometry.widthPx, top: 0,

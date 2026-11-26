@@ -32,11 +32,11 @@ const history = { past: [] as ProjectDoc[], present: doc, future: [] as ProjectD
 const selectedIds = timeline.selectedIds ?? [];
 const toggled = historyReduce(history, { type: 'togglePicture', ids: selectedIds });
 const next = toggled.present.timelines[0]!;
-assert.equal(next.items.find((item) => item.id === 'v1')?.pictureDisabled, true, 'enabled selected picture turns off');
+assert.equal(next.items.find((item) => item.id === 'v1')?.pictureDisabled, true, 'enabled selected video turns off');
 assert.equal(next.items.find((item) => item.id === 'v2')?.pictureDisabled, true, 'mixed selection normalizes to off');
 assert.equal(next.items.find((item) => item.id === 'locked')?.pictureDisabled, undefined, 'locked track is skipped');
-assert.equal(next.items.find((item) => item.id === 'audio')?.pictureDisabled, undefined, 'pure audio is skipped');
-assert.equal(next.items.find((item) => item.id === 'nested')?.pictureDisabled, undefined, 'nested sequences are skipped');
+assert.equal(next.items.find((item) => item.id === 'audio')?.pictureDisabled, true, 'pure audio can be disabled');
+assert.equal(next.items.find((item) => item.id === 'nested')?.pictureDisabled, true, 'nested sequences can be disabled');
 assert.equal(historyReduce(toggled, { type: 'undo' }).present, doc, 'undo restores exact prior document');
 assert.equal(historyReduce(historyReduce(toggled, { type: 'undo' }), { type: 'redo' }).present.timelines[0]!.items[0]!.pictureDisabled, true);
 
@@ -48,13 +48,11 @@ assert.equal(allEnabled.items.find((item) => item.id === 'v2')?.pictureDisabled,
 const cloneState: TimelineState = { ...timeline, trackOrder: ['V1'], tracks: { V1: { kind: 'video' } },
   selectedId: 'source', selectedIds: ['source'], items: [clip('source', 'video', 'V1', { pictureDisabled: true })] };
 assert.equal(reduce(cloneState, { type: 'duplicate', id: 'source', newId: 'copy' }).items.find((item) => item.id === 'copy')?.pictureDisabled,
-  true, 'duplicate inherits picture state');
+  true, 'duplicate inherits disabled state');
 assert.equal(reduce(cloneState, { type: 'split', id: 'source', atFrame: 30, newId: 'right' }).items.find((item) => item.id === 'right')?.pictureDisabled,
-  true, 'split inherits picture state');
-for (const ids of [['audio'], ['nested']]) {
-  const noOp = { ...timeline, selectedId: ids[0]!, selectedIds: ids };
-  assert.equal(reduce(noOp, { type: 'togglePicture', ids }), noOp, 'no eligible selection creates no mutation');
-}
+  true, 'split inherits disabled state');
+const noOp = { ...timeline, selectedId: 'locked', selectedIds: ['locked'] };
+assert.equal(reduce(noOp, { type: 'togglePicture', ids: ['locked'] }), noOp, 'locked selection creates no mutation');
 
 const detachedState: TimelineState = {
   ...timeline, selectedId: null, selectedIds: [], trackOrder: ['V1', 'A1'],
@@ -62,22 +60,34 @@ const detachedState: TimelineState = {
   items: [clip('detached-source', 'video', 'V1', { pictureDisabled: true, volume: 0 })],
 };
 const detached = detachAudio(detachedState, 'detached-source', (prefix) => `${prefix}-audio`);
-assert.equal(detached.items[0]?.pictureDisabled, true, 'audio separation preserves source picture state');
-assert.equal(detached.items[1]?.pictureDisabled, undefined, 'new audio clip does not inherit picture state');
+assert.equal(detached.items[0]?.pictureDisabled, true, 'audio separation preserves source disabled state');
+assert.equal(detached.items[1]?.pictureDisabled, undefined, 'new audio clip does not inherit disabled state');
 assert.equal(detached.items[1]?.kind, 'audio');
-assert.equal(compositionPlan(detached).audio.length, 1, 'separated audio remains in composition plan');
+assert.equal(compositionPlan(detached).audio.length, 1, 'separated active audio remains in composition plan');
 
 const plan = compositionPlan(detachedState);
-assert.deepEqual(plan.ordered.map((item) => item.id), [], 'disabled picture is not rendered');
-assert.deepEqual(plan.videoAudioGroups.map((group) => group.map((item) => item.id)), [['detached-source']],
-  'picture-disabled single video gets an explicit embedded-audio renderer');
-assert.equal(plan.groupedVideoIds.has('detached-source'), true);
-assert.equal(detachedState.items[0]?.durationInFrames, 60, 'picture toggle does not alter clip duration');
-const audioBearingPictureDisabled: TimelineState = { ...detachedState, items: [clip('picture-off', 'video', 'V1', { pictureDisabled: true })] };
-const audioBearingPlan = compositionPlan(audioBearingPictureDisabled);
-assert.deepEqual(audioBearingPlan.videoAudioGroups.map((group) => group.map((item) => item.id)), [['picture-off']],
-  'picture-disabled video retains its embedded audio renderer');
-assert.equal(audioBearingPlan.groupedVideoIds.has('picture-off'), true);
+assert.deepEqual(plan.ordered.map((item) => item.id), [], 'disabled video picture is transparent');
+assert.deepEqual(plan.videoAudioGroups, [], 'disabled video does not mount an embedded audio renderer');
+assert.equal(plan.groupedVideoIds.has('detached-source'), false);
+assert.equal(detachedState.items[0]?.durationInFrames, 60, 'clip disable does not alter clip duration');
+const audioBearingDisabled: TimelineState = { ...detachedState, items: [clip('clip-off', 'video', 'V1', { pictureDisabled: true })] };
+const audioBearingPlan = compositionPlan(audioBearingDisabled);
+assert.deepEqual(audioBearingPlan.ordered.map((item) => item.id), [], 'disabled video renders no picture');
+assert.deepEqual(audioBearingPlan.videoAudioGroups, [], 'disabled video silences its embedded audio');
+assert.equal(audioBearingPlan.groupedVideoIds.has('clip-off'), false);
+const disabledAudioAndSequence: TimelineState = {
+  ...detachedState,
+  tracks: { V1: { kind: 'video', role: 'anchor' }, A1: { kind: 'audio', role: 'follower' } },
+  items: [
+    clip('anchor-off', 'video', 'V1', { pictureDisabled: true }),
+    clip('music-off', 'audio', 'A1', { pictureDisabled: true }),
+    clip('seq-off', 'sequence', 'V1', { timelineId: 'child', pictureDisabled: true }),
+  ],
+};
+const disabledExtrasPlan = compositionPlan(disabledAudioAndSequence);
+assert.deepEqual(disabledExtrasPlan.audio, [], 'disabled pure audio is excluded from playback/render');
+assert.deepEqual(disabledExtrasPlan.ordered, [], 'disabled nested sequence is excluded from playback/render');
+assert.equal(disabledExtrasPlan.gainAt('A1', 10), 1, 'disabled anchor clip does not duck followers');
 const legacyVisible = compositionPlan({ ...detachedState, items: [clip('legacy', 'video')] });
 assert.deepEqual(legacyVisible.ordered.map((item) => item.id), ['legacy'], 'legacy clips remain visible when the field is absent');
 

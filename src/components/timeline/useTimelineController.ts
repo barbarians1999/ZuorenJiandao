@@ -162,6 +162,17 @@ export function useTimelineController({
   const [captionSelectionMovePreview, setCaptionSelectionMovePreview] = useState<TimelineSelectionMovePreview | null>(null);
   const captionClipboardRef = useRef<CaptionTimelineClipboard | null>(null);
   const timelineId = (state as { id?: string }).id;
+  const [selectedTrackId, setSelectedTrackId] = useState<TrackId | null>(null);
+  const selectedTrackIdRef = useRef<TrackId | null>(selectedTrackId);
+  selectedTrackIdRef.current = selectedTrackId;
+  useEffect(() => {
+    setSelectedTrackId(null);
+  }, [projectId, timelineId]);
+  useEffect(() => {
+    if (selectedTrackId && !trackIds.includes(selectedTrackId)) {
+      setSelectedTrackId(null);
+    }
+  }, [selectedTrackId, trackIds]);
   const commitTimelineSelectionMove = useCallback((
     itemIds: readonly string[],
     captionSelections: readonly CaptionSelectionRef[],
@@ -899,6 +910,7 @@ export function useTimelineController({
     editMode, setEditMode, selectedCaptions, setSnapping, fitToView, zoomBy,
     bladeSelected, setEditMarker, fxClip, setFxClip,
     copySelectedCaptions: copyCaptionSelections, pasteCaptionClipboard,
+    targetTrackIdRef: selectedTrackIdRef,
     onSelectCaptionRange: onMarqueeCaptionSelect,
   });
   useEffect(() => {
@@ -949,5 +961,6 @@ export function useTimelineController({
     applyLibraryToClip, applyLibraryToTrack, seekTo, scrubTo, seekFrame,
     clearHoverPreview, updateHoverPreview, startSeekGesture, updateSeekGesture, finishSeekGesture,
     markers, zoneIn, zoneOut, editing, editMarker, setEditMarker, pinnedItemIds,
+    selectedTrackId, setSelectedTrackId,
   };
 }

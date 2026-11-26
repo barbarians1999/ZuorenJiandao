@@ -151,5 +151,40 @@ assert.strictEqual(
   matchShortcut(keyN({ key: 'β', code: 'KeyB', ctrlKey: true }), catalog, { held: new Set(), isMac: false }),
   'split',
 );
+// macOS Option symbol & Dead-key fallbacks via event.code
+assert.strictEqual(
+  matchShortcut(keyN({ key: '√', code: 'KeyV', metaKey: true, altKey: true }), catalog, { held: new Set(), isMac: true }),
+  'paste-effects',
+);
+assert.strictEqual(
+  matchShortcut(keyN({ key: '©', code: 'KeyG', altKey: true }), catalog, { held: new Set(), isMac: true }),
+  'create-subdraft',
+);
+assert.strictEqual(
+  matchShortcut(keyN({ key: '˚', code: 'KeyK', metaKey: true, altKey: true }), catalog, { held: new Set(), isMac: true }),
+  'keyboard-shortcuts',
+);
+assert.strictEqual(
+  matchShortcut(keyN({ key: 'Dead', code: 'KeyE', altKey: true }), [{ id: 'opt-e', keys: 'Alt + E' }], { held: new Set(), isMac: true }),
+  'opt-e',
+);
+// macOS Chinese IME punctuation + stray Ctrl rejection
+assert.strictEqual(
+  matchShortcut(keyN({ key: '，', code: 'Comma', metaKey: true }), catalog, { held: new Set(), isMac: true }),
+  'open-settings',
+);
+assert.strictEqual(
+  matchShortcut(keyN({ key: '、', code: 'Slash' }), catalog, { held: new Set(), isMac: true }),
+  'zone-clip',
+);
+assert.strictEqual(
+  matchShortcut(keyN({ key: '·', code: 'Backquote' }), catalog, { held: new Set(), isMac: true }),
+  'fullscreen',
+);
+assert.strictEqual(
+  matchShortcut(keyN({ key: 'a', code: 'KeyA', ctrlKey: true }), catalog, { held: new Set(), isMac: true }),
+  null,
+  'macOS stray Ctrl+A must not fire bare A shortcut',
+);
 
 console.log('shortcuts catalog.verify: ok');

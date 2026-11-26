@@ -88,6 +88,7 @@ declare global {
       setClosePromptReady?(ready: boolean): Promise<void>;
       setTitlebarAppearance?(value: { color: string; symbolColor: string; height: number }): Promise<void>;
       zoomStep(step: number | 'reset'): Promise<void>;
+      nativeEdit?(action: 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll'): Promise<void>;
       subscribeUiScale(listener: (scale: number) => void): () => void;
       openTranscriptWindow(payload: TranscriptWindowPayload): Promise<void>;
       subscribeTranscriptWindow(listener: (payload: TranscriptWindowPayload) => void): () => void;

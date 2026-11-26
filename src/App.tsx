@@ -7,6 +7,7 @@ import {
 } from './app/appShell';
 import { AppSplash, DashboardRoute, EditorRoute } from './app/AppViews';
 import { useInferenceWarmup } from './hooks/useInferenceWarmup';
+import { useMacNativeEditFallback } from './hooks/useMacNativeEditFallback';
 import { useUiScaleShortcuts } from './hooks/useUiScaleShortcuts';
 import { WindowCloseConfirmDialog } from './components/WindowCloseConfirmDialog';
 
@@ -15,7 +16,8 @@ export default function App() {
   const route = useAppRoute();
   useAgentBackendSync();
   useInferenceWarmup(route.name === 'editor');
-  useUiScaleShortcuts();
+  useUiScaleShortcuts(route.name === 'editor');
+  useMacNativeEditFallback();
   const { projects, refresh } = useProjects();
 
   return (

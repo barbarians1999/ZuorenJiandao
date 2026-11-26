@@ -229,16 +229,18 @@ export function rulerMinorCount(majorSec: number): number {
   return 9;
 }
 
-export function fmtRuler(frames: number, fps: number): string {
-  const s = frames / fps;
-  if (s < 60) {
-    const ss = Math.floor(s);
-    const cs = Math.floor((s * 100) % 100);
-    return `${String(ss).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
-  }
-  const mm = Math.floor(s / 60);
-  const ss = Math.floor(s % 60);
-  return `${mm}:${String(ss).padStart(2, '0')}`;
+export function fmtRuler(frames: number, fps: number, showSubseconds = false): string {
+  const safeFps = Math.max(1, fps);
+  const totalCs = Math.max(0, Math.round((frames / safeFps) * 100));
+  const cs = totalCs % 100;
+  const totalSeconds = Math.floor(totalCs / 100);
+  const hh = Math.floor(totalSeconds / 3600);
+  const mm = Math.floor((totalSeconds % 3600) / 60);
+  const ss = totalSeconds % 60;
+  const base = hh > 0
+    ? `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
+    : `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+  return showSubseconds || cs !== 0 ? `${base}.${String(cs).padStart(2, '0')}` : base;
 }
 
 export type DragMode = 'move' | 'trim-left' | 'trim-right' | 'slip' | 'roll';

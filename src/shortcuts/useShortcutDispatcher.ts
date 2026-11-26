@@ -1,10 +1,22 @@
 import { useEffect } from 'react';
-import { isShortcutImeComposing, matchShortcut, normalizeKey, shouldIgnoreShortcutRepeat, isTypingTarget } from './match';
+import { isMacPlatform, isShortcutImeComposing, matchShortcut, normalizeKey, shouldIgnoreShortcutRepeat, isTypingTarget } from './match';
 import { effectiveMatchingCatalog } from './keymap';
 import { invokeAction } from './actionRegistry';
 import { shortcutAllowedForSurface, shortcutSurfaceFromTarget } from './shortcutScope';
 
 export type ShortcutHandler = (ctx: { shift: boolean; alt: boolean; mod: boolean }) => void;
+
+export function isShortcutBlockedByModalOrMenu(
+  target: EventTarget | null,
+  hasOpenModal: boolean,
+): boolean {
+  if (hasOpenModal) return true;
+  if (typeof Element !== 'undefined' && target instanceof Element
+    && target.closest('[role="dialog"], [role="menu"], [popover]:popover-open')) {
+    return true;
+  }
+  return false;
+}
 
 /**
  * Global keydown dispatcher for the default preset.
@@ -29,6 +41,7 @@ export function useShortcutDispatcher(
       const nk = normalizeKey(e.key);
       if (!['shift', 'control', 'alt', 'meta'].includes(nk)) held.add(nk);
       if (e.defaultPrevented) return;
+      if (isShortcutBlockedByModalOrMenu(e.target, Boolean(document.querySelector('[aria-modal="true"]')))) return;
 
       // Shift+Backspace is ripple-delete — special case: still match delete with shift
       const selection = window.getSelection();
@@ -37,12 +50,11 @@ export function useShortcutDispatcher(
       if (!id) return;
       if (!shortcutAllowedForSurface(id, shortcutSurfaceFromTarget(e.target))) return;
       if (shouldIgnoreShortcutRepeat(id, e)) return;
-      if (id === 'marker-add' && document.querySelector('[aria-modal="true"]')) return;
 
       // Tab in non-typing: ask-ai; don't steal tab in inputs
       if (id === 'ask-ai' && isTypingTarget(e.target)) return;
 
-      const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+      const isMac = isMacPlatform();
       const handled = invokeAction(id, {
         shift: e.shiftKey,
         alt: e.altKey,

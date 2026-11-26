@@ -3,7 +3,7 @@
 // against effectiveCatalog(); the settings dialog rebinds via setBinding/resetBinding. Kept
 // pure of React so both can share it (a tiny listener store drives re-renders).
 import { SHORTCUT_CATALOG, type ShortcutAction } from './catalog';
-import { parseBindingAlts, normalizeKey, type ParsedChord } from './match';
+import { eventShortcutKey, isMacPlatform, parseBindingAlts, type ParsedChord } from './match';
 
 const LS_KEY = 'cc.keymap.v1';
 const LS_PRESET_KEY = 'cc.keymap.preset.v1';
@@ -14,7 +14,7 @@ export type BuiltinShortcutPresetId = 'jianying' | 'premiere';
 export type ShortcutPresetId = BuiltinShortcutPresetId | 'custom';
 
 export const SHORTCUT_PRESETS: ReadonlyArray<{ id: ShortcutPresetId; label: string; summary: string }> = [
-  { id: 'jianying', label: '剪映', summary: 'A 选择 · B 刀片 · Ctrl+B 切分 · V 停用画面' },
+  { id: 'jianying', label: '剪映', summary: 'A 选择 · B 刀片 · Ctrl+B 切分 · V 停用片段' },
   { id: 'premiere', label: 'PR', summary: 'V 选择 · C 剃刀 · Ctrl+K 切分 · A/Shift+A 单轨全选' },
   { id: 'custom', label: '自定义', summary: '基于当前方案微调，切换预设会保留你的自定义键位' },
 ];
@@ -189,10 +189,6 @@ const DISPLAY: Record<string, string> = {
   backspace: 'Backspace', delete: 'Delete', enter: 'Enter', tab: 'Tab',
 };
 
-function isMacPlatform(): boolean {
-  return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
-}
-
 export function formatShortcutKeys(keys: string): string {
   return keys.replace(/\bMod\b/g, isMacPlatform() ? '⌘' : 'Ctrl');
 }
@@ -202,9 +198,12 @@ export function formatShortcutKeys(keys: string): string {
  *  convention the catalog + matcher use (⌘ on Mac, Ctrl elsewhere). `isMac` is injectable so
  *  verifies stay deterministic regardless of the host platform (navigator is absent under
  *  CI/node); callers that omit it keep the runtime platform probe. */
-export function chordFromEvent(e: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>, isMac?: boolean): string | null {
-  const key = normalizeKey(e.key);
-  if (['shift', 'control', 'alt', 'meta', 'escape', 'unidentified'].includes(key)) return null;
+export function chordFromEvent(
+  e: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'> & { code?: string },
+  isMac?: boolean,
+): string | null {
+  const key = eventShortcutKey(e);
+  if (['shift', 'control', 'alt', 'meta', 'escape', 'unidentified', 'process'].includes(key)) return null;
   const mac = isMac ?? isMacPlatform();
   const parts: string[] = [];
   if (mac ? e.metaKey : e.ctrlKey) parts.push('Mod');

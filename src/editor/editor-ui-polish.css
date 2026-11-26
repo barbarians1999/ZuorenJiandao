@@ -272,6 +272,7 @@
 /* Keep the editing surface compact while leaving every existing control present. */
 .cc-editor-shell .cc-topbar {
   min-width: 0;
+  z-index: 50;
 }
 
 .cc-editor-shell .cc-topbar:has(.cc-utilities-popover, .cc-skin-picker-popover) {
@@ -957,6 +958,8 @@
 }
 
 .cc-editor-shell .cc-timeline-toolbar {
+  position: relative;
+  z-index: 35;
   background: transparent !important;
   border: 0 !important;
   min-height: 0 !important;

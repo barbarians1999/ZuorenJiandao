@@ -31,7 +31,7 @@ export function ToolbarUtilities({ children, icon = 'grid', label, triggerText }
     onKeyDown={(event) => { if (event.key === 'Tab') event.stopPropagation(); }}
     onBlur={(event) => { if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
     <button type="button" ref={trigger} className="cc-utilities-trigger" aria-label={triggerText ? `${name} · ${triggerText}` : name}
-      aria-expanded={open} aria-controls={id} onClick={() => setOpen((value) => !value)}>
+      aria-expanded={open} aria-controls={id} onMouseDown={(event) => event.preventDefault()} onClick={() => setOpen((value) => !value)}>
       <Icon name={icon} size={18} /><span>{triggerText ?? name}</span>
     </button>
     {open && <div className="cc-utilities-popover" id={id} aria-label={name}

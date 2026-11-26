@@ -44,7 +44,7 @@ export const SHORTCUT_CATALOG: ShortcutAction[] = [
   { id: 'copy', label: 'Copy', labelZh: '复制', group: 'edit', keys: 'Mod + C' },
   { id: 'cut', label: 'Cut', labelZh: '剪切', group: 'edit', keys: 'Mod + X' },
   { id: 'paste', label: 'Paste', labelZh: '粘贴', group: 'edit', keys: 'Mod + V' },
-  { id: 'toggle-picture', label: 'Toggle picture', labelZh: '停用/启用画面', group: 'edit', keys: 'V' },
+  { id: 'toggle-picture', label: 'Toggle clip enabled', labelZh: '停用/启用片段', group: 'edit', keys: 'V' },
   { id: 'paste-effects', label: 'Paste Effects', labelZh: '粘贴效果', group: 'edit', keys: 'Mod + Alt + V / Mod + Shift + B' },
   { id: 'duplicate', label: 'Duplicate', labelZh: '复制片段', group: 'edit', keys: 'Mod + D' },
   { id: 'delete', label: 'Delete', labelZh: '删除', group: 'edit', keys: 'Backspace / Delete' },

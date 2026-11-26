@@ -13,6 +13,7 @@ import {
   type OpenDialogOptions,
   type SaveDialogOptions,
 } from 'electron';
+import { installDesktopApplicationMenu, isNativeEditAction } from './app-menu.ts';
 import { buildTextContextMenuTemplate } from './context-menu.ts';
 import { startEmbeddedServer } from './embedded-server.ts';
 import { createTransparentMovProxy, importLocalMedia } from './local-media-import.ts';
@@ -295,6 +296,10 @@ function registerDesktopHandlers(trustedOrigin: string): void {
     applyResponsiveWindowScale(win);
     win.webContents.send('openchatcut:ui-scale-changed', next);
   }));
+  ipcMain.handle('openchatcut:native-edit', trustedDesktopHandler(trustedOrigin, (event, action: unknown) => {
+    if (!isNativeEditAction(action)) throw new Error('invalid native edit action');
+    event.sender[action]();
+  }));
   ipcMain.handle('openchatcut:reveal-export', trustedDesktopHandler(trustedOrigin, async (
     _event,
     destinationId: unknown,
@@ -320,6 +325,12 @@ async function boot(): Promise<void> {
   await app.whenReady();
   if (process.platform === 'darwin') {
     app.setName('左人剪刀');
+    installDesktopApplicationMenu({
+      appName: '左人剪刀',
+      isPackaged: app.isPackaged,
+      menuApi: Menu,
+      getFocusedWindow: () => BrowserWindow.getFocusedWindow(),
+    });
   }
   if (app.isPackaged) {
     const missing = missingRuntimeAssets(packagedRuntimeAssetChecks({

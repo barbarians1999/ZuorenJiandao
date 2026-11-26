@@ -94,10 +94,9 @@ export function compositionPlan(state: TimelineState, {
   const isMuted = (t: TimelineItem['track']) => isTrackEffectivelyMuted(state, t, forceMuted, anySolo);
   const trackIds = timelineTrackIds(state);
   const visualTracks = trackIds.filter((id) => trackKind(state, id) === 'video');
-  // hidden track = fully disabled (no picture, no sound)
+  // hidden track or disabled clip = fully disabled (no picture, no sound)
   const visualCandidates = state.items.filter((it) => isVisualItemKind(it.kind) && visualTracks.includes(it.track) && !isHidden(it.track));
-  // A picture-disabled nested sequence is unsupported: its child picture and sound share one renderer.
-  const visual = visualCandidates.filter((it) => it.kind === 'sequence' || it.pictureDisabled !== true);
+  const visual = visualCandidates.filter((it) => it.pictureDisabled !== true);
   // Paint visual bottom-to-top. Timeline rows are stored top-to-bottom.
   const paintOrder = (a: TimelineItem, b: TimelineItem) => a.track === b.track
     ? a.startFrame - b.startFrame
@@ -106,10 +105,10 @@ export function compositionPlan(state: TimelineState, {
   const player = mode === 'player';
   // Existing projects retain their established paint order until they use an adjustment layer.
   const usesTrackCompositing = state.compositingOrder === 'tracks' || state.items.some((item) => item.kind === 'mosaic');
-  const audio = state.items.filter((it) => it.kind === 'audio' && it.src && !isHidden(it.track));
+  const audio = state.items.filter((it) => it.kind === 'audio' && it.src && !isHidden(it.track) && it.pictureDisabled !== true);
   const captionEntries = captionTrackEntries(state);
   const anchorRanges = state.items.filter((item) => state.tracks?.[item.track]?.role === 'anchor'
-    && !isHidden(item.track) && !isMuted(item.track) && !!item.src)
+    && !isHidden(item.track) && !isMuted(item.track) && !!item.src && item.pictureDisabled !== true)
     .map((item) => [item.startFrame, item.startFrame + item.durationInFrames] as const);
   const duckGain = (track: TimelineItem['track'], frame: number): number => {
     const config = state.tracks?.[track];
@@ -119,13 +118,12 @@ export function compositionPlan(state: TimelineState, {
   const gainAt = (track: TimelineItem['track'], frame: number): number =>
     audioGainAt(state, track, duckGain(track, frame));
   const fit: AspectFit = state.fit ?? 'contain';
-  // Build embedded-video audio from pre-picture-filter candidates so hiding a clip's picture
-  // does not remove its sound. Disabled singletons need an explicit audio renderer too.
-  const videoAudioGroups = continuousVideoAudioGroups(visualCandidates.filter((item) => item.kind === 'video'), state.transitions);
+  // Disabled clips omit both picture and audio; only active videos join continuous audio groups.
+  const videoAudioGroups = continuousVideoAudioGroups(ordered.filter((item) => item.kind === 'video'), state.transitions);
   const groupedVideoIds = new Set(videoAudioGroups.flatMap((group) => group.map((item) => item.id)));
-  const visualVideoGroups = player ? videoAudioGroups : continuousVideoAudioGroups(ordered, state.transitions);
+  const visualVideoGroups = videoAudioGroups;
   const playerPaintPositions = player
-    ? new Map(visualCandidates.toSorted(paintOrder).map((item, index) => [item.id, index]))
+    ? new Map(ordered.map((item, index) => [item.id, index]))
     : undefined;
 
   // In the Player, only the transition into the selected clip pays the dual
@@ -140,7 +138,7 @@ export function compositionPlan(state: TimelineState, {
   const texturable = (it?: TimelineItem) => !!it && isRasterMediaKind(it.kind) && it.kind !== 'svg' && it.kind !== 'gif';
   const enabledTransitions = (state.transitions ?? []).filter((t) => t.enabled !== false);
   const pictureDisabledIds = new Set(visualCandidates
-    .filter((item) => item.kind !== 'sequence' && item.pictureDisabled === true)
+    .filter((item) => item.pictureDisabled === true)
     .map((item) => item.id));
   const visualTransitions = enabledTransitions.filter((t) => !isAudioTransition(t.type)
     && !pictureDisabledIds.has(t.outgoingItemId) && !pictureDisabledIds.has(t.incomingItemId));

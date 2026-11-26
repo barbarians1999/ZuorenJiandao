@@ -58,4 +58,31 @@ assert.match(
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 assert.match(appSource, /<WindowCloseConfirmDialog\s*\/>/, 'App mounts WindowCloseConfirmDialog on all routes');
 
+const polishCss = readFileSync(new URL('../editor/editor-ui-polish.css', import.meta.url), 'utf8');
+assert.doesNotMatch(
+  skinCss,
+  /html\[data-cc-skin-family='liquid-glass'\][\s\S]*?\.cc-timeline-tool-group\s*\{[^}]*backdrop-filter:/,
+  'liquid-glass must not put backdrop-filter on .cc-timeline-tool-group so video tracks never cover toolbar controls',
+);
+assert.doesNotMatch(
+  skinCss,
+  /html\[data-cc-skin-family='liquid-glass'\][\s\S]*?\.cc-right-panel-shell\s*\{[^}]*backdrop-filter:/,
+  'liquid-glass must not trap fixed popovers inside .cc-right-panel-shell backdrop-filter',
+);
+assert.doesNotMatch(
+  skinCss,
+  /html\[data-cc-skin-family='liquid-glass'\][\s\S]*?\.cc-topbar,\s*[\s\S]*?\.cc-dashboard-titlebar\s*\{[^}]*backdrop-filter:/,
+  'liquid-glass must not put backdrop-filter on .cc-topbar',
+);
+assert.doesNotMatch(
+  skinCss,
+  /\.cc-timeline-clip\.is-selected\s*\{[^}]*filter:/,
+  'liquid-glass selected clips must not create filter stacking layers over sticky track-head buttons',
+);
+assert.match(
+  polishCss,
+  /\.cc-editor-shell\s+\.cc-timeline-toolbar\s*\{[^}]*z-index:\s*35;/s,
+  'timeline toolbar must stack above ruler, playhead, and sticky track headers',
+);
+
 console.log('window-close-dialog verification passed');

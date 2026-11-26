@@ -362,7 +362,23 @@ export const PreviewPanel = memo(function PreviewPanel({
     dropCaptionStyleRef.current(payload, clientX, clientY);
   }), []);
   return (
-    <section className="cc-preview-panel" data-cc-shortcut-surface="preview" style={{ display: 'flex', flex: 1, flexDirection: 'column', background: theme.panel, minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
+    <section
+      className="cc-preview-panel"
+      data-cc-shortcut-surface="preview"
+      tabIndex={-1}
+      onPointerDownCapture={(event) => {
+        const target = event.target as HTMLElement;
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && !event.currentTarget.contains(active)
+          && !target.closest('input, select, textarea, [contenteditable="true"]')) {
+          active.blur();
+        }
+        if (!target.closest('button, input, select, textarea, [contenteditable="true"], [role="slider"]')) {
+          event.currentTarget.focus({ preventScroll: true });
+        }
+      }}
+      style={{ display: 'flex', flex: 1, flexDirection: 'column', background: theme.panel, minHeight: 0, minWidth: 0, overflow: 'hidden' }}
+    >
       <div className="cc-preview-header" style={{ height: 30, padding: '0 12px', display: 'flex', alignItems: 'center', borderBottom: `0.5px solid ${theme.border}`, flexShrink: 0 }}>
         {previewAsset ? (
           <>

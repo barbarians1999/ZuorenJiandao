@@ -20,6 +20,7 @@ export function TopBarIconButton({ icon, label, onClick, disabled = false, press
       data-tip={label}
       aria-label={label}
       aria-pressed={pressed}
+      onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
       disabled={disabled}
       style={{ position: 'relative', width: 36, height: 36, background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', padding: 0, borderRadius: 6, lineHeight: 0, display: 'grid', placeItems: 'center', color: theme.textDim, opacity: disabled ? 0.35 : 1 }}

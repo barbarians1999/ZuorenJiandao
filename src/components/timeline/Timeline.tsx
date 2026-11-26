@@ -58,11 +58,19 @@ export function Timeline(props: TimelineProps) {
     applyLibraryToClip, applyLibraryToTrack, seekTo, scrubTo, seekFrame,
     clearHoverPreview, updateHoverPreview, startSeekGesture, updateSeekGesture, finishSeekGesture,
     markers, zoneIn, zoneOut, editing, editMarker, setEditMarker, pinnedItemIds,
+    selectedTrackId, setSelectedTrackId,
   } = useTimelineController(props);
   const lastPlayheadGripX = useRef<number | null>(null);
+  const sectionRef = useRef<HTMLElement>(null);
   const [trackReorderDrag, setTrackReorderDrag] = useState<{ sourceId: TrackId; targetId: TrackId | null; side: TrackDropSide | null; order: number | null } | null>(null);
   const trackReorderCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => { trackReorderCleanupRef.current?.(); }, []);
+  useEffect(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body) {
+      sectionRef.current?.focus({ preventScroll: true });
+    }
+  }, []);
   const startTrackHeaderReorder = (event: ReactPointerEvent<HTMLDivElement>, sourceId: TrackId) => {
     event.preventDefault();
     event.stopPropagation();
@@ -230,11 +238,13 @@ export function Timeline(props: TimelineProps) {
     setCaptionMenu(null);
     setDuckMenu(null);
     setTransitionMenu(null);
+    setSelectedTrackId(menu.trackId);
     setTrackMenu(menu);
-  }, [setCaptionMenu, setCtxMenu, setDuckMenu, setTrackMenu, setTransitionMenu]);
+  }, [setCaptionMenu, setCtxMenu, setDuckMenu, setSelectedTrackId, setTrackMenu, setTransitionMenu]);
 
   return (
     <section
+      ref={sectionRef}
       className="cc-timeline"
       data-cc-shortcut-surface="timeline"
       tabIndex={-1}
@@ -343,9 +353,11 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
             const reorderTargetSide = trackReorderDrag?.targetId === trackId ? trackReorderDrag.side : null;
             const isVideoBottomNewTrackTarget = !!drag && drag.mode === 'move' && drag.newTrackDrop && drag.newTrackPlacement === 'bottom' && trackId === lastVideoTrackId && draggedItem?.kind !== 'audio';
             return (
-              <div key={trackId} data-timeline-track-row={trackId} className={`cc-track-row${reorderTargetSide ? ` is-reorder-${reorderTargetSide}` : ''}${isVideoBottomNewTrackTarget ? ' is-new-track-after' : ''}`} style={{ height: rowHeightOf(trackId), background: isDropTarget ? `color-mix(in srgb, ${theme.success} 15%, ${theme.bg})` : undefined }}>
+              <div key={trackId} data-timeline-track-row={trackId} className={`cc-track-row${reorderTargetSide ? ` is-reorder-${reorderTargetSide}` : ''}${isVideoBottomNewTrackTarget ? ' is-new-track-after' : ''}${selectedTrackId === trackId ? ' is-track-selected' : ''}`} style={{ height: rowHeightOf(trackId), background: isDropTarget ? `color-mix(in srgb, ${theme.success} 15%, ${theme.bg})` : undefined }}>
                 <TrackHead
                   trackId={trackId} kind={meta.kind} isText={isText} isEffect={isEffect} trackName={titleName} customName={customName} config={headConfig}
+                  selected={selectedTrackId === trackId}
+                  onSelect={() => setSelectedTrackId(trackId)}
                   onStartReorder={(event) => startTrackHeaderReorder(event, trackId)}
                   isReorderSource={trackReorderDrag?.sourceId === trackId}
                   canMoveUp={reorderPlan.canMoveUp}
@@ -432,7 +444,10 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
                   onDropExternalFiles={onDropExternalFiles}
                   frameFromClientX={frameFromClientX} onContextMenu={openClipContextMenu}
                   onTransitionContextMenu={openTransitionContextMenu}
-                  onTrackContextMenu={openTrackContextMenu} scrollRef={scrollRef}
+                  onTrackContextMenu={openTrackContextMenu}
+                  onSelectTrack={() => setSelectedTrackId(trackId)}
+                  onClearTrackSelection={() => setSelectedTrackId(null)}
+                  scrollRef={scrollRef}
                 />}
               </div>
             );

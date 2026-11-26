@@ -290,6 +290,13 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
       <Sep />
       <Item label={t('复制')} icon="copy" shortcut={shortcut('copy')} disabled={!onCopy} onClick={run(() => onCopy?.())} />
       <Item label={t('粘贴到播放头')} icon="clipboard" shortcut={shortcut('paste')} disabled={!onPaste} onClick={run(() => onPaste?.())} />
+      <Item
+        label={item.pictureDisabled ? t('启用片段') : t('停用片段')}
+        icon={item.pictureDisabled ? 'eye' : 'eyeOff'}
+        shortcut={shortcut('toggle-picture')}
+        disabled={!!timeline.tracks?.[item.track]?.locked}
+        onClick={run(() => commands.toggleSelectedPicture(batchIds.length ? batchIds : [item.id]))}
+      />
       <Item label={t('此轨向左全选')} icon="prev" disabled={!!timeline.tracks?.[item.track]?.locked}
         onClick={run(() => commands.selectItems(selectableItemIdsOnTrackSide(timeline, item.track, item.startFrame, 'left', { anchorItemId: item.id })))} />
       <Item label={t('此轨向右全选')} icon="next" disabled={!!timeline.tracks?.[item.track]?.locked}

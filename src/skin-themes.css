@@ -99,8 +99,7 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-right-panel-shell 
   border: 1px solid rgba(var(--cc-ink-rgb), 0.12);
   background:
     linear-gradient(180deg, rgba(var(--cc-ink-rgb), 0.055) 0%, transparent 28%),
-    color-mix(in srgb, var(--cc-panel) 84%, transparent);
-  backdrop-filter: blur(24px) saturate(165%);
+    color-mix(in srgb, var(--cc-panel) 94%, transparent);
   box-shadow:
     inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.16),
     0 8px 24px rgba(var(--cc-shadow-rgb), 0.20);
@@ -123,7 +122,6 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
   .cc-caption-workspace-tabs
 ) {
   background: rgba(var(--cc-shadow-rgb), 0.32);
-  backdrop-filter: blur(22px) saturate(180%);
   border: 1px solid rgba(var(--cc-ink-rgb), 0.10);
   box-shadow:
     inset 0 1px 2px rgba(var(--cc-shadow-rgb), 0.24),
@@ -158,7 +156,6 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
   .cc-animation-sample
 ) {
   background: color-mix(in srgb, var(--cc-panel-alt) 62%, transparent);
-  backdrop-filter: blur(16px) saturate(160%);
   border: 1px solid rgba(var(--cc-ink-rgb), 0.12);
   box-shadow:
     inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.16),
@@ -192,8 +189,7 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-topbar,
 html[data-cc-skin-family='liquid-glass'] .cc-dashboard .cc-dashboard-titlebar {
   background:
     linear-gradient(180deg, rgba(var(--cc-ink-rgb), 0.05) 0%, rgba(var(--cc-ink-rgb), 0.015) 100%),
-    color-mix(in srgb, var(--cc-bg) 74%, transparent) !important;
-  backdrop-filter: blur(28px) saturate(185%);
+    color-mix(in srgb, var(--cc-bg) 92%, var(--cc-panel) 8%) !important;
   border-bottom: 1px solid rgba(var(--cc-ink-rgb), 0.09) !important;
   box-shadow: inset 0 -1px 0 rgba(var(--cc-shadow-rgb), 0.24);
 }
@@ -220,7 +216,6 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
     rgba(var(--cc-ink-rgb), 0.085) 0%,
     rgba(var(--cc-ink-rgb), 0.03) 100%
   ) !important;
-  backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid rgba(var(--cc-ink-rgb), 0.13) !important;
   box-shadow:
     inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.20),
@@ -311,34 +306,29 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
 }
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-timeline-clip.is-selected {
-  filter: brightness(1.16) saturate(1.06);
   box-shadow:
     inset 0 0 0 2px rgba(var(--cc-ink-rgb), 0.88),
     0 4px 12px rgba(var(--cc-shadow-rgb), 0.34) !important;
 }
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-caption-track-cue.selected {
-  filter: brightness(1.14);
   outline: 0 !important;
   box-shadow: inset 0 0 0 2px rgba(var(--cc-ink-rgb), 0.88) !important;
 }
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-timeline-tool-group {
-  background: color-mix(in srgb, var(--cc-inset) 74%, transparent);
-  backdrop-filter: blur(18px) saturate(165%);
+  background: color-mix(in srgb, var(--cc-inset) 88%, var(--cc-panel) 12%);
   border: 1px solid rgba(var(--cc-ink-rgb), 0.12);
   box-shadow: inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.14), 0 4px 14px rgba(var(--cc-shadow-rgb), 0.22);
 }
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-preview-monitor-bar {
-  background: color-mix(in srgb, var(--cc-panel-alt) 68%, transparent);
-  backdrop-filter: blur(20px) saturate(165%);
+  background: color-mix(in srgb, var(--cc-panel-alt) 88%, transparent);
   border-top: 1px solid rgba(var(--cc-ink-rgb), 0.10);
 }
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-preview-monitor-bar .cc-preview-transport {
   background: transparent;
-  backdrop-filter: none;
   border: 0;
   box-shadow: none;
 }
@@ -359,7 +349,7 @@ html[data-cc-skin-family='liquid-glass'] :is(
   .cc-modal,
   .cc-settings-readable,
   .cc-export-panel,
-  .cc-shortcuts-dialog,
+  .cc-shortcuts-dialog > div,
   .cc-window-close-dialog,
   .cc-scene-dialog,
   .cc-tracking-dialog,
@@ -382,7 +372,7 @@ html[data-cc-skin-family='liquid-glass'] .cc-app-toast {
 }
 
 html[data-cc-skin-family='liquid-glass'] :is(
-  .cc-shortcuts-dialog,
+  .cc-shortcuts-dialog > div,
   .cc-window-close-dialog,
   .cc-scene-dialog,
   .cc-tracking-dialog,
@@ -527,14 +517,12 @@ html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-s
 }
 
 html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell .cc-timeline-clip.is-selected {
-  filter: brightness(1.08);
   box-shadow:
     inset 0 0 0 2px var(--cc-heading-bg),
     0 4px 12px rgba(var(--cc-shadow-rgb), 0.16) !important;
 }
 
 html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell .cc-caption-track-cue.selected {
-  filter: brightness(1.08);
   outline: 0 !important;
   box-shadow: inset 0 0 0 2px var(--cc-heading-bg) !important;
 }
@@ -619,7 +607,7 @@ html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] :is(
   .cc-modal,
   .cc-settings-readable,
   .cc-export-panel,
-  .cc-shortcuts-dialog,
+  .cc-shortcuts-dialog > div,
   .cc-window-close-dialog,
   .cc-scene-dialog,
   .cc-tracking-dialog,

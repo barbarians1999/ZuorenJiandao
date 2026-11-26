@@ -1,10 +1,18 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Video as BrowserVideo, type VideoProps } from '@remotion/media';
 import { getInputProps, Html5Video, OffthreadVideo, useRemotionEnvironment } from 'remotion';
-import { isBrowserPlayableNativeAlpha, isBrowserPlayableNativeVideo, usePreviewSourceAlpha } from '../media/previewMedia';
+import {
+  isBrowserPlayableNativeAlpha,
+  isBrowserPlayableNativeVideo,
+  reportPreviewPlaybackFailure,
+  usePreviewSourceAlpha,
+} from '../media/previewMedia';
 import {
   attachNativeMediaElementGuard,
+  attachNativeVideoStallWatchdog,
+  extractOriginalPreviewSrc,
   nativeAcceptableTimeShiftSeconds,
+  releaseNativeVideoElement,
   withOpenEndedPreviewHash,
 } from '../media/nativePlaybackGuard';
 import { usePreviewPlaybackRate } from './PreviewPlaybackContext';
@@ -55,22 +63,44 @@ export function shouldUseNativePlayerVideo(args: {
 export function RuntimeVideo({ browserRenderer, style, ...props }: RuntimeVideoProps) {
   const environment = useRemotionEnvironment();
   const containerRef = useRef<HTMLDivElement>(null);
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const watchdogCleanupRef = useRef<(() => void) | null>(null);
+  const srcRef = useRef(props.src);
+  srcRef.current = props.src;
   const isAlpha = usePreviewSourceAlpha(props.src);
   const globalPlaybackRate = usePreviewPlaybackRate();
 
+  const handleNativeVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    watchdogCleanupRef.current?.();
+    watchdogCleanupRef.current = null;
+    if (!el) {
+      releaseNativeVideoElement(videoElRef.current);
+      videoElRef.current = null;
+      return;
+    }
+    videoElRef.current = el;
+    attachNativeMediaElementGuard(el);
+    if (environment.isPlayer) {
+      watchdogCleanupRef.current = attachNativeVideoStallWatchdog(el, {
+        onFallback: (reason) => {
+          const originalSrc = extractOriginalPreviewSrc(srcRef.current);
+          if (originalSrc) reportPreviewPlaybackFailure(originalSrc, reason);
+        },
+      });
+    }
+  }, [environment.isPlayer]);
+
   useEffect(() => {
+    const container = containerRef.current;
     return () => {
-      if (environment.isPlayer && containerRef.current) {
-        const video = containerRef.current.querySelector('video');
-        if (video) {
-          try {
-            video.pause();
-            video.removeAttribute('src');
-            video.load();
-          } catch {
-            // Ignore teardown errors on detached nodes
-          }
-        }
+      watchdogCleanupRef.current?.();
+      watchdogCleanupRef.current = null;
+      if (videoElRef.current) {
+        releaseNativeVideoElement(videoElRef.current);
+        videoElRef.current = null;
+      }
+      if (environment.isPlayer && container) {
+        releaseNativeVideoElement(container.querySelector('video'));
       }
     };
   }, [environment.isPlayer]);
@@ -93,7 +123,7 @@ export function RuntimeVideo({ browserRenderer, style, ...props }: RuntimeVideoP
       <div ref={containerRef} style={{ width: '100%', height: '100%', display: 'contents' }}>
         <Html5Video
           {...props}
-          ref={attachNativeMediaElementGuard}
+          ref={handleNativeVideoRef}
           src={withOpenEndedPreviewHash(props.src)}
           acceptableTimeShiftInSeconds={nativeAcceptableTimeShiftSeconds(props.playbackRate, globalPlaybackRate)}
           style={style}

@@ -54,7 +54,7 @@ export function continuousVideoAudioGroups(
     .filter((transition) => transition.enabled !== false && isAudioTransition(transition.type))
     .map((transition) => `${transition.outgoingItemId}:${transition.incomingItemId}`));
   const videos = items
-    .filter((item) => item.kind === 'video' && !!item.src)
+    .filter((item) => item.kind === 'video' && !!item.src && item.pictureDisabled !== true)
     .sort((a, b) => a.track.localeCompare(b.track) || a.startFrame - b.startFrame);
   const groups: TimelineItem[][] = [];
   for (const item of videos) {
@@ -62,7 +62,7 @@ export function continuousVideoAudioGroups(
     if (group?.length && canShareAudio(group.at(-1)!, item, audioTransitionPairs)) group.push(item);
     else groups.push([item]);
   }
-  return groups.filter((group) => group.length > 1 || group.some((item) => item.pictureDisabled === true));
+  return groups.filter((group) => group.length > 1);
 }
 
 /** The preview group can apply each clip's static transform and CSS filters

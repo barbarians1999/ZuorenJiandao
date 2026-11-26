@@ -49,6 +49,7 @@ export function DesktopWindowControlButtons({
         className="cc-window-control cc-window-control--close cc-tip"
         aria-label={translate('关闭窗口')}
         data-tip={translate('关闭窗口')}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={() => onAction('close')}
       >
         <span className="cc-window-control-glyph" aria-hidden="true">×</span>
@@ -58,6 +59,7 @@ export function DesktopWindowControlButtons({
         className="cc-window-control cc-window-control--minimize cc-tip"
         aria-label={translate('最小化窗口')}
         data-tip={translate('最小化窗口')}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={() => onAction('minimize')}
       >
         <span className="cc-window-control-glyph" aria-hidden="true">−</span>
@@ -67,6 +69,7 @@ export function DesktopWindowControlButtons({
         className="cc-window-control cc-window-control--maximize cc-tip"
         aria-label={translate('缩放窗口')}
         data-tip={translate('缩放窗口')}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={() => onAction('toggle-maximize')}
       >
         <span className="cc-window-control-glyph" aria-hidden="true">+</span>

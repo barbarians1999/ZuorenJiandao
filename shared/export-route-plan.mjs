@@ -749,6 +749,7 @@ export function planOverlayHybridExport({
     if (!item || typeof item !== 'object') return refusal('invalid-item');
     const track = tracks[item.track];
     if (track?.hidden) continue;
+    if (item.pictureDisabled === true) continue;
     if (!integer(item.startFrame) || !integer(item.durationInFrames, 1)) return refusal('item-timing');
 
     if (item.kind === 'sequence') {

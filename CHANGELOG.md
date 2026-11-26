@@ -6,6 +6,15 @@ All notable changes to ZuorenJiandao are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use [Semantic Versioning](https://semver.org/).  
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.3] - 2026-11-26
+
+### 修复与体验优化
+- **macOS 快捷键全面兼容与防抢焦（`desktop/app-menu.ts`、`src/shortcuts/match.ts`、`src/shortcuts/shortcutScope.ts`、`src/components/TopBar.tsx`、`src/components/PreviewPanel.tsx`、`src/components/timeline/Timeline.tsx`）**：重写自定义 macOS 应用菜单以释放 `Cmd+Z/Shift+Z/X/C/V/A` 与缩放快捷键，修复 Option/中文输入法键位匹配及修饰键干扰；消除顶栏按钮鼠标焦点陷阱，确保空格播放与剪辑快捷键在预览区和检查器聚焦时也稳定生效。
+- **默认「液态玻璃」皮肤层级遮挡修复（`src/skin-themes.css`、`src/editor/editor-ui-polish.css`）**：移除布局/工具栏容器的 `backdrop-filter` 与选中片段的 `filter` 层叠上下文，并抬升顶栏与时间轴工具栏层级，彻底解决视频轨遮挡按钮、下拉框及粘性轨道头的问题。
+- **本地与 macOS 视频播放防卡加载与防黑屏（`server/media-dir.ts`、`src/media/nativePlaybackGuard.ts`、`src/editor/RuntimeVideo.tsx`）**：为开放式 `video/*`/`audio/*` Range 响应增加 4MB 分段上限避免浏览器连接池饥饿；修复同源 `pendingMetadataSeek` 被误清问题与 React 19 `<video>` 卸载释放，并增加停滞/零尺寸自动代理回退看门狗。
+- **时间轴轨道选中与确定性复制粘贴优先级（`src/editor/clipPaste.ts`、`src/components/timeline/timelineClipboardActions.ts`、`src/components/timeline/TrackHead.tsx`、`src/components/timeline/TrackLane.tsx`）**：支持点击轨道空白或轨头选中目标轨并高亮显示，粘贴按「显式选中目标轨 → 选中片段所在轨 → 原来源轨 → 同类默认轨 → 自动新建轨」确定性执行，锁定目标轨直接提示不可粘贴。
+- **`V` 一键停用/启用片段（音画全停用）与时间线变灰压暗效果（`src/editor/reducerClipActions.ts`、`src/editor/compositionPlan.ts`、`shared/timeline-media-schedule.mjs`、`shared/export-route-plan.mjs`、`src/components/timeline/TrackLane.tsx`、`src/index.css`）**：扩展 `V` 与右键「停用/启用片段」到全类型片段（含纯音频与复合片段），停用后画面透明且音频与自动压低同步关闭；时间线整块呈现黑白灰度压暗效果，并在外层保留清晰可读的 `已停用` 角标。
+
 ## [0.5.1] - 2026-11-26
 
 ### 修复与体验优化

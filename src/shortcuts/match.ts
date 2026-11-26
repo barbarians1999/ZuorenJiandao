@@ -24,7 +24,27 @@ const ARROW: Record<string, string> = {
 const CODE_KEY_FALLBACK: Record<string, string> = {
   BracketLeft: '[',
   BracketRight: ']',
+  Comma: ',',
+  Period: '.',
+  Slash: '/',
+  Backslash: '\\',
+  Backquote: '`',
+  Equal: '=',
+  Minus: '-',
+  Space: 'space',
 };
+
+export function isMacPlatform(): boolean {
+  if (typeof window !== 'undefined' && window.openChatCutDesktop?.platform) {
+    return window.openChatCutDesktop.platform === 'darwin';
+  }
+  if (typeof navigator === 'undefined') return false;
+  const uaDataPlatform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform;
+  if (typeof uaDataPlatform === 'string' && uaDataPlatform) {
+    return /mac|iphone|ipad/i.test(uaDataPlatform);
+  }
+  return /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+}
 
 export function normalizeKey(key: string): string {
   const k = key.length === 1 ? key.toLowerCase() : key.toLowerCase();
@@ -41,6 +61,9 @@ export function normalizeKey(key: string): string {
   if (k === '-' || k === 'subtract' || k === 'minus') return '-';
   if (k === '【' || k === '{') return '[';
   if (k === '】' || k === '}') return ']';
+  if (k === '，') return ',';
+  if (k === '。') return '.';
+  if (k === '·') return '`';
   if (k.startsWith('arrow')) return k; // arrowleft …
   return k;
 }
@@ -51,15 +74,21 @@ function codeToShortcutKey(code: string): string | undefined {
   return CODE_KEY_FALLBACK[code];
 }
 
-function eventShortcutKey(e: Pick<KeyboardEvent, 'key' | 'code' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>): string {
+export function eventShortcutKey(
+  e: Pick<KeyboardEvent, 'key' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'> & { code?: string },
+): string {
   const normalized = normalizeKey(e.key);
+  const code = e.code ?? '';
   const hasModifier = e.altKey || e.ctrlKey || e.metaKey;
   if (normalized === 'process' || normalized === 'unidentified') {
-    if (!hasModifier) return CODE_KEY_FALLBACK[e.code] ?? normalized;
-    return codeToShortcutKey(e.code) ?? normalized;
+    if (!hasModifier) return CODE_KEY_FALLBACK[code] ?? normalized;
+    return codeToShortcutKey(code) ?? normalized;
+  }
+  if (!hasModifier && CODE_KEY_FALLBACK[code] && !/^[a-z0-9`\-=[\]\\;',./ ]$/i.test(e.key)) {
+    return CODE_KEY_FALLBACK[code]!;
   }
   if (hasModifier && !/^[a-z0-9`\-=[\]\\;',./]$/.test(normalized) && !normalized.startsWith('arrow')) {
-    return codeToShortcutKey(e.code) ?? normalized;
+    return codeToShortcutKey(code) ?? normalized;
   }
   return normalized;
 }
@@ -107,11 +136,16 @@ export function parseChord(raw: string): ParsedChord | null {
   return { mod, alt, shift, ctrl, key: keys[keys.length - 1]!, withKey: keys[0] };
 }
 
-/** Split "A / B / C" into alternative chords. */
+/** Split "A / B / C" into alternative chords (preserving literal "/" bindings). */
 export function parseBindingAlts(keys: string): ParsedChord[] {
-  if (!keys.trim()) return [];
-  return keys
-    .split('/')
+  const trimmed = keys.trim();
+  if (!trimmed) return [];
+  if (trimmed === '/') {
+    const slash = parseChord('/');
+    return slash ? [slash] : [];
+  }
+  return trimmed
+    .split(/\s+\/\s+/)
     .map((s) => parseChord(s.trim()))
     .filter((c): c is ParsedChord => !!c);
 }
@@ -167,7 +201,7 @@ export function matchShortcut(
   if (['shift', 'control', 'alt', 'meta'].includes(key)) return null;
 
   const typing = isTypingTarget(e.target);
-  const isMac = ctx.isMac ?? (typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform));
+  const isMac = ctx.isMac ?? isMacPlatform();
 
   type Cand = { id: string; score: number };
   const cands: Cand[] = [];
@@ -188,9 +222,10 @@ export function matchShortcut(
       if (chord.ctrl) {
         if (!e.ctrlKey) continue;
         // if also mod and mac, both meta and ctrl unusual — require ctrl
-      } else if (!wantMod && e.ctrlKey && !isMac) {
-        // bare key shouldn't fire with ctrl held unless chord wants mod
-        // (already handled by wantMod)
+      } else if (isMac && e.ctrlKey) {
+        continue;
+      } else if (!isMac && e.metaKey) {
+        continue;
       }
       // when not wanting mod, reject accidental cmd/ctrl
       if (!wantMod && !chord.ctrl) {

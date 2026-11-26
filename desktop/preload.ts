@@ -119,6 +119,7 @@ export interface OpenChatCutDesktopApi {
   setClosePromptReady(ready: boolean): Promise<void>;
   setTitlebarAppearance(value: { color: string; symbolColor: string; height: number }): Promise<void>;
   zoomStep(step: number | 'reset'): Promise<void>;
+  nativeEdit(action: 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll'): Promise<void>;
   subscribeUiScale(listener: (scale: number) => void): () => void;
   openTranscriptWindow(payload: TranscriptWindowPayload): Promise<void>;
   subscribeTranscriptWindow(listener: (payload: TranscriptWindowPayload) => void): () => void;
@@ -202,6 +203,8 @@ const api: OpenChatCutDesktopApi = {
   setTitlebarAppearance: (value) => ipcRenderer.invoke('openchatcut:titlebar-appearance', value) as Promise<void>,
   zoomStep: (step) =>
     ipcRenderer.invoke('openchatcut:zoom-step', step) as Promise<void>,
+  nativeEdit: (action) =>
+    ipcRenderer.invoke('openchatcut:native-edit', action) as Promise<void>,
   subscribeUiScale: (listener) => {
     const handleScale = (_event: IpcRendererEvent, value: unknown): void => {
       if (typeof value === 'number' && Number.isFinite(value)) listener(value);

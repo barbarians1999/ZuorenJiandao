@@ -15,6 +15,7 @@ interface ClipboardActionDeps {
   reportError: (error: string) => void;
   copySelectedCaptions: () => boolean;
   pasteCaptionClipboard: () => boolean;
+  targetTrackId?: () => string | null;
 }
 
 /** These are the actual menu/keyboard operations; hook/UI only supply dependencies. */
@@ -72,7 +73,10 @@ export function createTimelineClipboardActions(deps: ClipboardActionDeps): Pick<
       const clip = deps.clipboard.current;
       if (!clip) return;
       commit(planClipPasteResult(state, clip.multi?.length ? clip.multi : [clip.item], clip.tracks, deps.playhead(), deps.uid, {
-        sourceMainTrackId: clip.sourceMainTrackId, groups: clip.groups, foldGroups: clip.foldGroups,
+        sourceMainTrackId: clip.sourceMainTrackId,
+        groups: clip.groups,
+        foldGroups: clip.foldGroups,
+        targetTrackId: deps.targetTrackId?.() ?? null,
       }));
     },
     duplicateSelected: () => {

@@ -91,7 +91,7 @@ export const TimelineRuler = memo(function TimelineRuler({
                 <div key={i} style={{ position: 'absolute', left, top: 0, height: '100%', pointerEvents: 'none' }}>
                   <div style={{ position: 'absolute', left: 0, bottom: 0, width: 1, height: 10, background: theme.borderLight }} />
                   <span style={{ position: 'absolute', left: 4, top: 5, whiteSpace: 'nowrap', color: theme.textMuted, fontVariantNumeric: 'tabular-nums' }}>
-                    {fmtRuler(f, state.fps)}
+                    {fmtRuler(f, state.fps, majorFrames < state.fps)}
                   </span>
                   {/* minor ticks between majors (density scales with zoom) */}
                   {Array.from({ length: minorTicksPerMajor }).map((__, m) => {
