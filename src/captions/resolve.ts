@@ -1,7 +1,7 @@
 import type { CaptionsData, CaptionSourceEntry, CaptionWordOverride } from './types';
 import type { TimelineItem } from '../editor/types';
 import type { TranscriptWord } from '../transcript/types';
-import { itemEditOpts, itemWindow, projectMediaWindowWords, projectRetimedWords } from '../transcript/edit';
+import { projectMediaWindowWords } from '../transcript/edit';
 import { hasOperationalTranscript } from '../transcript/types';
 import { isStableIdentity } from '../transcript/identity';
 import { findVariantByLang, resolveVariantText } from '../transcript/variants';
@@ -18,12 +18,9 @@ const emptyProjection = (): CaptionProjection => ({ words: [], indices: [], word
 const encodeWordRef = (scope: readonly string[], generationId: string, wordId: string): string =>
   `cw2.${encodeURIComponent(JSON.stringify([...scope, generationId, wordId]))}`;
 
-// Audio uses the edited stream; video uses its continuous media window.
-// Resolve words and indices together so overrides and stable refs cannot drift.
+// Resolve words and indices strictly from each clip's real media window.
 function projectItem(item: TimelineItem, src: TranscriptWord[], fps: number, laneId?: string): CaptionProjection {
-  const projection = item.kind === 'audio'
-    ? projectRetimedWords(src, new Set(item.deletedWordIdx ?? []), fps, item.startFrame, { ...itemEditOpts(item), window: itemWindow(item) })
-    : projectMediaWindowWords(src, fps, item);
+  const projection = projectMediaWindowWords(src, fps, item);
   const scope = laneId ? ['lane', laneId] : ['item', item.id];
   const wordRefs = projection.indices.map((index) => {
     const wordId = item.transcript?.[index]?.id;
@@ -47,19 +44,64 @@ function mergedSourceItems(captions: CaptionsData, items: TimelineItem[]): Timel
   return undefined;
 }
 
-export function resolveEntryProjection(entry: CaptionSourceEntry, items: TimelineItem[], fps: number): CaptionProjection {
-  if (entry.words) return {
-    words: entry.words.map((word) => ({ ...word })),
-    indices: entry.words.map((_, index) => index),
-    wordRefs: entry.words.map((word) => isStableIdentity(entry.id) && isStableIdentity(word.id)
-      ? encodeWordRef(['lane', entry.id], 'manual', word.id) : ''),
-  };
-  const item = items.find((it) => it.id === entry.itemId);
+const wordRefIndexMemo = new WeakMap<CaptionProjection, Map<string, number>>();
+const manualEntryProjectionMemo = new WeakMap<CaptionSourceEntry, CaptionProjection>();
+const itemEntryProjectionMemo = new WeakMap<TimelineItem, WeakMap<CaptionSourceEntry, Map<number, CaptionProjection>>>();
+const captionProjectionMemo = new WeakMap<TimelineItem[], WeakMap<CaptionsData, Map<number, CaptionProjection>>>();
+
+export function wordRefIndexMap(projection: CaptionProjection): ReadonlyMap<string, number> {
+  let map = wordRefIndexMemo.get(projection);
+  if (!map) {
+    map = new Map();
+    for (let i = 0; i < projection.wordRefs.length; i += 1) {
+      const ref = projection.wordRefs[i]!;
+      if (!map.has(ref)) map.set(ref, i);
+    }
+    wordRefIndexMemo.set(projection, map);
+  }
+  return map;
+}
+
+export function resolveEntryProjection(
+  entry: CaptionSourceEntry,
+  items: TimelineItem[],
+  fps: number,
+  itemsById?: ReadonlyMap<string, TimelineItem>,
+): CaptionProjection {
+  if (entry.words) {
+    let cached = manualEntryProjectionMemo.get(entry);
+    if (!cached) {
+      cached = {
+        words: entry.words.map((word) => ({ ...word })),
+        indices: entry.words.map((_, index) => index),
+        wordRefs: entry.words.map((word) => isStableIdentity(entry.id) && isStableIdentity(word.id)
+          ? encodeWordRef(['lane', entry.id], 'manual', word.id) : ''),
+      };
+      manualEntryProjectionMemo.set(entry, cached);
+    }
+    return cached;
+  }
+  const item = itemsById ? itemsById.get(entry.itemId) : items.find((it) => it.id === entry.itemId);
   if (!hasOperationalTranscript(item)) return emptyProjection();
-  const variant = entry.variant
-    ? findVariantByLang(item.variants ?? [], entry.variant.languageCode, entry.variant.variantKind)
-    : undefined;
-  return projectItem(item, variant ? resolveVariantText(item.transcript, variant) : item.transcript, fps, entry.id);
+  let byEntry = itemEntryProjectionMemo.get(item);
+  if (!byEntry) {
+    byEntry = new WeakMap();
+    itemEntryProjectionMemo.set(item, byEntry);
+  }
+  let byFps = byEntry.get(entry);
+  if (!byFps) {
+    byFps = new Map();
+    byEntry.set(entry, byFps);
+  }
+  let cached = byFps.get(fps);
+  if (!cached) {
+    const variant = entry.variant
+      ? findVariantByLang(item.variants ?? [], entry.variant.languageCode, entry.variant.variantKind)
+      : undefined;
+    cached = projectItem(item, variant ? resolveVariantText(item.transcript, variant) : item.transcript, fps, entry.id);
+    byFps.set(fps, cached);
+  }
+  return cached;
 }
 
 function mergeProjections(projections: CaptionProjection[], sortEnd: boolean): CaptionProjection {
@@ -70,10 +112,29 @@ function mergeProjections(projections: CaptionProjection[], sortEnd: boolean): C
 
 /** One pure projection per caption snapshot, shared by pagination and identity lookup. */
 export function resolveCaptionProjection(captions: CaptionsData, items: TimelineItem[], fps: number): CaptionProjection {
+  let byCaptions = captionProjectionMemo.get(items);
+  if (!byCaptions) {
+    byCaptions = new WeakMap();
+    captionProjectionMemo.set(items, byCaptions);
+  }
+  let byFps = byCaptions.get(captions);
+  if (!byFps) {
+    byFps = new Map();
+    byCaptions.set(captions, byFps);
+  }
+  const cached = byFps.get(fps);
+  if (cached) return cached;
+  const computed = computeCaptionProjection(captions, items, fps);
+  byFps.set(fps, computed);
+  return computed;
+}
+
+function computeCaptionProjection(captions: CaptionsData, items: TimelineItem[], fps: number): CaptionProjection {
   if (captions.sourceEntries?.length) {
+    const itemsById = new Map(items.map((item) => [item.id, item]));
     const projected = orderedCaptionSourceEntries(captions.sourceEntries)
       .filter((entry) => entry.visible !== false)
-      .map((entry) => [entry, resolveEntryProjection(entry, items, fps)] as const);
+      .map((entry) => [entry, resolveEntryProjection(entry, items, fps, itemsById)] as const);
     return { ...mergeProjections(projected.map(([, projection]) => projection), true), entries: new Map(projected) };
   }
   const merged = mergedSourceItems(captions, items);

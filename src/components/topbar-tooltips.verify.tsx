@@ -14,4 +14,11 @@ assert.doesNotMatch(
   '导出历史按钮不应使用样式不可控的原生 title',
 );
 
+const topBar = await readFile(new URL('./TopBar.tsx', import.meta.url), 'utf8');
+assert.match(
+  topBar,
+  /<TopBarIconButton[\s\S]*?icon="refresh"[\s\S]*?同步工程/,
+  '顶栏应包含使用 TopBarIconButton 的同步工程轻刷新按钮',
+);
+
 console.log('top bar immediate tooltips verified');

@@ -34,6 +34,12 @@ export class ProjectAutosaveQueue {
   };
   hasPending = (): boolean => this.pending !== null;
 
+  /** Drop any queued or failed snapshot when explicitly adopting an external revision. */
+  discardPending(): void {
+    this.pending = null;
+    this.publish({ status: 'saved' });
+  }
+
   private publish(feedback: ProjectSaveFeedback): void {
     if (feedback.status === this.feedback.status && feedback.error === this.feedback.error) return;
     this.feedback = feedback;

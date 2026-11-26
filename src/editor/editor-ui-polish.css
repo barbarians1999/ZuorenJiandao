@@ -145,15 +145,11 @@
 }
 
 .cc-editor-shell :is(.cc-insp-scalar, .cc-insp-number):focus-visible {
-  outline: none;
-  background: var(--cc-surface);
-  box-shadow: 0 0 0 2px rgba(var(--cc-accent-rgb), 0.42);
-}
-
-.cc-editor-shell :is(.cc-insp-scalar, .cc-insp-number):focus-visible {
   outline: 2px solid var(--cc-accent);
   outline-offset: 1px;
   border-color: var(--cc-accent);
+  background: var(--cc-panel);
+  box-shadow: 0 0 0 2px rgba(var(--cc-accent-rgb), 0.35);
 }
 
 .cc-editor-shell .cc-insp-range {
@@ -212,10 +208,6 @@
     grid-template-columns: minmax(48px, .75fr) minmax(28px, .75fr) minmax(80px, 1.15fr);
     gap: 4px;
   }
-}
-
-.cc-editor-shell .cc-insp-header:hover {
-  box-shadow: inset 3px 0 0 var(--cc-accent);
 }
 
 .cc-editor-shell .cc-insp-tabs button.active {
@@ -368,13 +360,20 @@
 }
 
 /* Track colors remain semantic; choose readable label ink per material color. */
-.cc-editor-shell .cc-track-name.is-video,
-.cc-editor-shell .cc-track-name.is-caption {
-  color: #fff !important;
+.cc-editor-shell .cc-track-name.is-video {
+  color: var(--cc-track-video-ink) !important;
 }
 
 .cc-editor-shell .cc-track-name.is-audio {
-  color: #21170b !important;
+  color: var(--cc-track-audio-ink) !important;
+}
+
+.cc-editor-shell .cc-track-name.is-caption {
+  color: var(--cc-track-caption-ink) !important;
+}
+
+.cc-editor-shell .cc-track-name:is(.is-text, .is-effect) {
+  color: var(--cc-clip-ink) !important;
 }
 
 .cc-editor-shell .cc-track-name-custom {
@@ -666,8 +665,8 @@
 
 .cc-editor-shell .cc-topbar {
   margin-inline: -12px;
-  background: var(--cc-bg) !important;
-  border-bottom: none !important;
+  background: var(--cc-bg);
+  border-bottom: none;
 }
 
 .cc-editor-shell .cc-topbar:not(.cc-window-titlebar--mac) {
@@ -883,20 +882,30 @@
 }
 
 .cc-editor-shell .cc-insp-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
   margin: 8px 10px 4px;
   padding: 3px;
-  gap: 3px;
+  gap: 2px;
   border-radius: 999px;
   background: var(--cc-inset);
   border: 1px solid transparent;
   border-bottom: 1px solid transparent;
 }
 
+.cc-editor-shell .cc-insp-tabs::-webkit-scrollbar {
+  display: none;
+}
+
 .cc-editor-shell .cc-insp-tabs button {
+  flex: 1 0 auto;
   height: 32px !important;
+  padding: 0 4px;
   border-radius: 999px;
   border-bottom: 0 !important;
   font-size: 13px !important;
+  white-space: nowrap;
 }
 
 .cc-editor-shell .cc-insp-tabs button.active {
@@ -1006,13 +1015,13 @@
 .cc-editor-shell .cc-effects-browser {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
 .cc-editor-shell .cc-effects-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .cc-editor-shell .cc-effects-section-title {
@@ -1026,11 +1035,7 @@
 .cc-editor-shell .cc-effects-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.cc-editor-shell .cc-effects-grid-wide {
-  grid-template-columns: minmax(0, 1fr);
+  gap: 10px 8px;
 }
 
 .cc-editor-shell .cc-effect-card {
@@ -1038,79 +1043,60 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 4px;
-  padding: 8px 5px;
-  border-radius: 14px;
-  border: 1px solid transparent;
-  background: var(--cc-panel-alt);
-  color: var(--cc-text);
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--cc-text-muted);
   cursor: pointer;
-  transition: background-color 140ms ease, transform 120ms ease, box-shadow 140ms ease;
 }
 
-.cc-editor-shell .cc-effect-card-wide {
-  flex-direction: row;
-  text-align: left;
+.cc-editor-shell .cc-effect-card:focus-visible {
+  outline: none;
+}
+
+.cc-editor-shell .cc-effect-card-thumb {
+  width: 100%;
+  max-width: 118px;
+  aspect-ratio: 16 / 11;
+  border-radius: 12px;
+  background: var(--cc-panel-alt);
+  border: 1px solid transparent;
+  display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background-color 140ms ease, transform 120ms ease, box-shadow 140ms ease, border-color 140ms ease;
 }
 
-.cc-editor-shell .cc-effect-card:hover {
+.cc-editor-shell .cc-effect-card:is(:hover, :focus-visible) .cc-effect-card-thumb {
   border-color: transparent;
   background: var(--cc-hover);
   box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--cc-accent) 70%, transparent), 0 4px 12px rgba(var(--cc-shadow-rgb), 0.35);
   transform: translateY(-1px);
 }
 
-.cc-editor-shell .cc-effect-card:active {
+.cc-editor-shell .cc-effect-card:active .cc-effect-card-thumb {
   transform: translateY(0);
 }
 
-.cc-editor-shell .cc-effect-card-thumb {
-  width: 48px;
-  height: 30px;
-  border-radius: 10px;
-  background: var(--cc-inset);
-  border: 1px solid transparent;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.cc-editor-shell .cc-effect-card-wide .cc-effect-card-thumb {
-  width: 56px;
-  height: 36px;
-  border-radius: 10px;
-}
-
-.cc-editor-shell .cc-effect-card-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
 .cc-editor-shell .cc-effect-card-label {
+  width: 100%;
+  max-width: 118px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--cc-text-muted);
+  text-align: center;
+  padding: 0 2px;
+  word-break: keep-all;
+  transition: color 120ms ease;
+}
+
+.cc-editor-shell .cc-effect-card:is(:hover, :focus-visible) .cc-effect-card-label {
   color: var(--cc-text-strong);
-}
-
-.cc-editor-shell .cc-effect-card-wide .cc-effect-card-label {
-  font-size: 13px;
-}
-
-.cc-editor-shell .cc-effect-card-hint {
-  font-size: 10.5px;
-  line-height: 1.25;
-  color: var(--cc-text-dim);
-}
-
-.cc-editor-shell .cc-effect-card-wide .cc-effect-card-hint {
-  font-size: 11px;
-  line-height: 1.35;
 }
 
 /* --- Polish pass: reclaim preview/timeline room, fix keyframe bar & contrast --- */
@@ -1131,7 +1117,8 @@
   border-radius: 999px;
   padding: 2px 8px;
   font-size: 10.5px;
-  background: rgba(var(--cc-shadow-rgb), 0.72);
+  background: color-mix(in srgb, var(--cc-panel) 88%, transparent);
+  color: var(--cc-text);
   border: 1px solid var(--cc-border-light);
   backdrop-filter: blur(6px);
 }
@@ -1437,6 +1424,9 @@ body > div > .cc-modal {
   position: relative;
   width: 36px;
   height: 20px;
+  min-height: 20px;
+  max-height: 20px;
+  box-sizing: border-box;
   flex: 0 0 36px;
   margin: 0;
   appearance: none;

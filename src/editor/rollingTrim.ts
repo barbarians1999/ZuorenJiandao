@@ -1,10 +1,86 @@
 import { hasOperationalTranscript } from '../transcript/types.js';
-import type { TimelineItem, TimelineState, TrackId } from './types.js';
+import type { MediaAsset, TimelineItem, TimelineState, TrackId, TransitionItem } from './types.js';
 import { fitItemToDuration } from './clipFit.js';
 import { linkedItemIds, retimeItemWithGroups } from './linkGroups.js';
 import { introducesTrackOverlap } from './trackCollision.js';
 import { timelineFramesToSourceFrames } from './sourceLimit.js';
 import { reconcileTransitions } from './transitionReconcile.js';
+
+interface RollingTrimIndex {
+  byId: Map<string, TimelineItem>;
+  sortedByTrack: Map<TrackId, TimelineItem[]>;
+  indexInTrack: Map<string, number>;
+  tracksWithOverlap: Set<TrackId>;
+}
+
+interface AssetLookupIndex {
+  byId: Map<string, MediaAsset>;
+  bySrc: Map<string, MediaAsset>;
+}
+
+const rollingTrimIndexCache = new WeakMap<readonly TimelineItem[], RollingTrimIndex>();
+const assetLookupCache = new WeakMap<readonly MediaAsset[], AssetLookupIndex>();
+const consistentTransitionsCache = new WeakMap<readonly TimelineItem[], WeakMap<readonly TransitionItem[], boolean>>();
+
+function getRollingTrimIndex(items: readonly TimelineItem[]): RollingTrimIndex {
+  const cached = rollingTrimIndexCache.get(items);
+  if (cached) return cached;
+  const byId = new Map<string, TimelineItem>();
+  const sortedByTrack = new Map<TrackId, TimelineItem[]>();
+  const indexInTrack = new Map<string, number>();
+  const tracksWithOverlap = new Set<TrackId>();
+  for (const item of items) {
+    if (!byId.has(item.id)) byId.set(item.id, item);
+    let lane = sortedByTrack.get(item.track);
+    if (!lane) {
+      lane = [];
+      sortedByTrack.set(item.track, lane);
+    }
+    lane.push(item);
+  }
+  for (const [track, lane] of sortedByTrack) {
+    lane.sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id));
+    let maxEnd = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < lane.length; i += 1) {
+      const item = lane[i]!;
+      indexInTrack.set(item.id, i);
+      if (item.startFrame < maxEnd) tracksWithOverlap.add(track);
+      maxEnd = Math.max(maxEnd, item.startFrame + item.durationInFrames);
+    }
+  }
+  const index: RollingTrimIndex = { byId, sortedByTrack, indexInTrack, tracksWithOverlap };
+  rollingTrimIndexCache.set(items, index);
+  return index;
+}
+
+function findMediaAsset(assets: readonly MediaAsset[], item: Pick<TimelineItem, 'sourceAssetId' | 'src'>): MediaAsset | undefined {
+  let lookup = assetLookupCache.get(assets);
+  if (!lookup) {
+    const byId = new Map<string, MediaAsset>();
+    const bySrc = new Map<string, MediaAsset>();
+    for (const candidate of assets) {
+      if (!byId.has(candidate.id)) byId.set(candidate.id, candidate);
+      if (candidate.src && !bySrc.has(candidate.src)) bySrc.set(candidate.src, candidate);
+    }
+    lookup = { byId, bySrc };
+    assetLookupCache.set(assets, lookup);
+  }
+  return item.sourceAssetId ? lookup.byId.get(item.sourceAssetId) : lookup.bySrc.get(item.src!);
+}
+
+function hasConsistentTransitions(items: readonly TimelineItem[], transitions: readonly TransitionItem[]): boolean {
+  let perItems = consistentTransitionsCache.get(items);
+  if (perItems) {
+    const cached = perItems.get(transitions);
+    if (cached !== undefined) return cached;
+  } else {
+    perItems = new WeakMap<readonly TransitionItem[], boolean>();
+    consistentTransitionsCache.set(items, perItems);
+  }
+  const consistent = reconcileTransitions(items, transitions) === transitions;
+  perItems.set(transitions, consistent);
+  return consistent;
+}
 
 export interface RollingTrimPlan {
   state: TimelineState;
@@ -19,43 +95,47 @@ interface SourceBounds {
   end: number;
   length: number;
   rate: number;
+  unboundedSource?: boolean;
 }
+
+const SOURCE_FREE_ROLL_KINDS = new Set<TimelineItem['kind']>([
+  'image', 'gif', 'svg', 'motion-graphic', 'text', 'solid',
+]);
 
 const fail = (state: TimelineState, error: string): RollingTrimPlan => ({ state, deltaF: 0, error });
 
 function sourceBounds(state: TimelineState, item: TimelineItem): SourceBounds | null {
+  if (item.multicamGroupId || !Number.isInteger(item.durationInFrames) || item.durationInFrames < 1) return null;
+  if (SOURCE_FREE_ROLL_KINDS.has(item.kind)) {
+    return { item, start: 0, end: 0, length: Number.POSITIVE_INFINITY, rate: 1, unboundedSource: true };
+  }
   if ((item.kind !== 'video' && item.kind !== 'audio') || !item.src
-    || (item.kind === 'audio' && hasOperationalTranscript(item))
-    || item.multicamGroupId) return null;
-  const asset = item.sourceAssetId
-    ? state.assets?.find((candidate) => candidate.id === item.sourceAssetId)
-    : state.assets?.find((candidate) => candidate.src === item.src);
+    || (item.kind === 'audio' && hasOperationalTranscript(item))) return null;
+  const asset = state.assets?.length ? findMediaAsset(state.assets, item) : undefined;
   const length = asset?.durationInFrames;
   if (!Number.isFinite(length) || (length ?? 0) < 1) return null;
   const rate = item.playbackRate ?? 1;
   const start = item.srcInFrame ?? 0;
-  if (!Number.isFinite(rate) || rate <= 0 || !Number.isFinite(start) || start < 0
-    || !Number.isInteger(item.durationInFrames) || item.durationInFrames < 1) return null;
+  if (!Number.isFinite(rate) || rate <= 0 || !Number.isFinite(start) || start < 0) return null;
   const end = start + timelineFramesToSourceFrames(item, item.durationInFrames);
   if (!Number.isFinite(end) || end > length! + 1e-7) return null;
   return { item, start, end, length: length!, rate: Math.max(0.01, rate) };
 }
 
 function validateSidePairs(
-  state: TimelineState,
+  index: RollingTrimIndex,
   leftIds: readonly string[],
   rightIds: readonly string[],
 ): { pairs: Array<{ left: TimelineItem; right: TimelineItem }>; error?: string } {
-  const items = new Map(state.items.map((item) => [item.id, item]));
   const leftByTrack = new Map<TrackId, TimelineItem>();
   const rightByTrack = new Map<TrackId, TimelineItem>();
   for (const id of leftIds) {
-    const item = items.get(id);
+    const item = index.byId.get(id);
     if (!item || leftByTrack.has(item.track)) return { pairs: [], error: '联动左侧片段的轨道关系不明确，无法滚动裁剪。' };
     leftByTrack.set(item.track, item);
   }
   for (const id of rightIds) {
-    const item = items.get(id);
+    const item = index.byId.get(id);
     if (!item || rightByTrack.has(item.track)) return { pairs: [], error: '联动右侧片段的轨道关系不明确，无法滚动裁剪。' };
     rightByTrack.set(item.track, item);
   }
@@ -65,14 +145,13 @@ function validateSidePairs(
   }
   const pairs = [...leftByTrack].map(([track, left]) => ({ left, right: rightByTrack.get(track)! }));
   for (const { left, right } of pairs) {
-    const lane = state.items.filter((item) => item.track === left.track)
-      .toSorted((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id));
-    const leftIndex = lane.findIndex((item) => item.id === left.id);
+    const lane = index.sortedByTrack.get(left.track) ?? [];
+    const leftIndex = index.indexInTrack.get(left.id) ?? -1;
     if (left.startFrame + left.durationInFrames !== right.startFrame
       || leftIndex < 0 || lane[leftIndex + 1]?.id !== right.id) {
       return { pairs: [], error: '左右片段必须在每条关联轨道上精确相邻，间隙或重叠无法滚动裁剪。' };
     }
-    if (lane.some((item) => item.id !== left.id && item.id !== right.id
+    if (index.tracksWithOverlap.has(left.track) && lane.some((item) => item.id !== left.id && item.id !== right.id
       && ((item.startFrame < left.startFrame + left.durationInFrames
         && item.startFrame + item.durationInFrames > left.startFrame)
         || (item.startFrame < right.startFrame + right.durationInFrames
@@ -90,9 +169,11 @@ export function planRollingTrim(
   rightId: string,
   requestedDeltaF: number,
 ): RollingTrimPlan {
-  const left = state.items.find((item) => item.id === leftId);
-  const right = state.items.find((item) => item.id === rightId);
-  if (!left || !right || left.id === right.id) return fail(state, '找不到滚动裁剪的片段。');
+  if (leftId === rightId) return fail(state, '找不到滚动裁剪的片段。');
+  const index = getRollingTrimIndex(state.items);
+  const left = index.byId.get(leftId);
+  const right = index.byId.get(rightId);
+  if (!left || !right) return fail(state, '找不到滚动裁剪的片段。');
   if (!Number.isFinite(requestedDeltaF)) return fail(state, '滚动裁剪位置无效。');
   if (left.track !== right.track) return fail(state, '滚动裁剪只能作用于同一轨道的相邻片段。');
   if (state.tracks?.[left.track]?.locked) return fail(state, '轨道已锁定，无法滚动裁剪。');
@@ -105,8 +186,14 @@ export function planRollingTrim(
   const leftSet = new Set(leftIds);
   const rightSet = new Set(rightIds);
   if (leftIds.some((id) => rightSet.has(id))) return fail(state, '左右片段属于同一联动组，无法滚动裁剪。');
-  if (state.items.some((item) => [...leftSet, ...rightSet].includes(item.id)
-    && state.tracks?.[item.track]?.locked)) return fail(state, '关联片段所在轨道已锁定，无法滚动裁剪。');
+  for (const id of leftSet) {
+    const item = index.byId.get(id);
+    if (item && state.tracks?.[item.track]?.locked) return fail(state, '关联片段所在轨道已锁定，无法滚动裁剪。');
+  }
+  for (const id of rightSet) {
+    const item = index.byId.get(id);
+    if (item && state.tracks?.[item.track]?.locked) return fail(state, '关联片段所在轨道已锁定，无法滚动裁剪。');
+  }
   if ((state.multicamGroups ?? []).some((group) => group.angles.some((angle) =>
     leftSet.has(angle.itemId) || rightSet.has(angle.itemId)
     || leftSet.has(angle.source.id) || rightSet.has(angle.source.id)))) {
@@ -118,7 +205,7 @@ export function planRollingTrim(
     return fail(state, '右侧片段受同步锁定；请先解除同步锁定再滚动裁剪。');
   }
 
-  const paired = validateSidePairs(state, leftIds, rightIds);
+  const paired = validateSidePairs(index, leftIds, rightIds);
   if (paired.error) return fail(state, paired.error);
   if ((state.transitions ?? []).some((transition) => paired.pairs.some(({ left, right }) =>
     transition.trackId === left.track && transition.outgoingItemId === left.id && transition.incomingItemId === right.id))) {
@@ -127,16 +214,20 @@ export function planRollingTrim(
   const leftBounds: SourceBounds[] = [];
   const rightBounds: SourceBounds[] = [];
   for (const id of leftIds) {
-    const item = state.items.find((candidate) => candidate.id === id)!;
+    const item = index.byId.get(id)!;
     const bounds = sourceBounds(state, item);
     if (!bounds) return fail(state, `${item.name} 的源长度未知或剪辑方式不受支持，无法安全滚动裁剪。`);
     leftBounds.push(bounds);
   }
   for (const id of rightIds) {
-    const item = state.items.find((candidate) => candidate.id === id)!;
+    const item = index.byId.get(id)!;
     const bounds = sourceBounds(state, item);
     if (!bounds) return fail(state, `${item.name} 的源长度未知或剪辑方式不受支持，无法安全滚动裁剪。`);
     rightBounds.push(bounds);
+  }
+  if ((leftBounds.some((b) => b.unboundedSource) && leftBounds.some((b) => !b.unboundedSource))
+    || (rightBounds.some((b) => b.unboundedSource) && rightBounds.some((b) => !b.unboundedSource))) {
+    return fail(state, '联动片段的源长度类型不一致，无法安全滚动裁剪。');
   }
 
   let minDelta = Number.NEGATIVE_INFINITY;
@@ -151,15 +242,15 @@ export function planRollingTrim(
     if (value < maxDelta) { maxDelta = value; maxReasons.clear(); maxReasons.add(reason); }
     else if (value === maxDelta) maxReasons.add(reason);
   };
-  for (const { item, end, length, rate } of leftBounds) {
+  for (const { item, end, length, rate, unboundedSource } of leftBounds) {
     const minimumDuration = Math.max(6, Math.round(state.fps * 0.5));
     setMin(item.durationInFrames < minimumDuration ? 0 : -(item.durationInFrames - minimumDuration),
       item.durationInFrames < minimumDuration ? '短片段只能向延长方向滚动。' : '左侧片段需至少保留半秒。');
-    setMax(Math.floor((length - end) / rate + 1e-7), '左侧素材没有更多源画面。');
+    if (!unboundedSource) setMax(Math.floor((length - end) / rate + 1e-7), '左侧素材没有更多源画面。');
   }
-  for (const { item, start, rate } of rightBounds) {
+  for (const { item, start, rate, unboundedSource } of rightBounds) {
     const minimumDuration = Math.max(6, Math.round(state.fps * 0.5));
-    setMin(Math.ceil(-start / rate - 1e-7), '右侧素材已到源入点。');
+    if (!unboundedSource) setMin(Math.ceil(-start / rate - 1e-7), '右侧素材已到源入点。');
     setMin(-item.startFrame, '已到时间线起点。');
     setMax(item.durationInFrames < minimumDuration ? 0 : item.durationInFrames - minimumDuration,
       item.durationInFrames < minimumDuration ? '短片段只能向延长方向滚动。' : '右侧片段需至少保留半秒。');
@@ -174,14 +265,14 @@ export function planRollingTrim(
   const limitMessage = requested > deltaF ? [...maxReasons].join(' ')
     : requested < deltaF ? [...minReasons].join(' ') : undefined;
   if (deltaF === 0) {
-    if (state.transitions?.length && reconcileTransitions(state.items, state.transitions) !== state.transitions) {
+    if (state.transitions?.length && !hasConsistentTransitions(state.items, state.transitions)) {
       return fail(state, '现有转场与片段位置不匹配，先修复转场再滚动裁剪。');
     }
     return { state, deltaF, limitMessage };
   }
 
   let planned = state;
-  const leftTarget = state.items.find((item) => item.id === leftId)!;
+  const leftTarget = index.byId.get(leftId)!;
   const leftRetime = retimeItemWithGroups(planned, leftId, {
     startFrame: leftTarget.startFrame,
     durationInFrames: leftTarget.durationInFrames + deltaF,
@@ -193,7 +284,9 @@ export function planRollingTrim(
   const rightRetime = retimeItemWithGroups(planned, rightId, {
     startFrame: rightTarget.startFrame + deltaF,
     durationInFrames: rightTarget.durationInFrames - deltaF,
-    srcInFrame: (rightTarget.srcInFrame ?? 0) + timelineFramesToSourceFrames(rightTarget, deltaF),
+    srcInFrame: SOURCE_FREE_ROLL_KINDS.has(rightTarget.kind)
+      ? rightTarget.srcInFrame
+      : (rightTarget.srcInFrame ?? 0) + timelineFramesToSourceFrames(rightTarget, deltaF),
   });
   if (!rightRetime) return fail(state, '右侧联动片段无法保持源时间，操作未执行。');
   const affectedIds = new Set([...leftIds, ...rightIds]);

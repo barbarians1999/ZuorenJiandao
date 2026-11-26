@@ -7,7 +7,7 @@ import { theme, themeAlpha } from '../../theme';
 import { Icon } from '../icons';
 import {
   TRANSITION_LABELS, isEffectTrack, isItemSelected, isTextTrack, timelineTrackIds, trackKind,
-  type TimelineItem, type TimelineState, type TrackId, type TransitionType,
+  type TimelineItem, type TimelineState, type TrackId, type TransitionItem, type TransitionType,
 } from '../../editor/types';
 import { mainTrackId } from '../../editor/magneticTimeline';
 import { upsertKeyframe } from '../../editor/keyframes';
@@ -18,7 +18,6 @@ import { planSlip } from '../../editor/slip';
 import type { EditorCommands } from '../../editor/store';
 import { hasLibraryDrag, parseLibraryDrag, type LibraryDragPayload } from '../../library/drag';
 import { tData, useT } from '../../i18n/locale';
-import { hasOperationalTranscript } from '../../transcript/types';
 import {
   CLIP_COLOR, clipEdgeHandleLayout, fmt, intersectFrameRange, visibleTimelineItems, waveformPath,
   type EditMode, type TimelineFrameWindow, type TimelineIndexes,
@@ -30,8 +29,10 @@ import { canDropMediaAsset, hasCompatibleMediaDrag, parseMediaAssetDrop } from '
 import { mediaPlacementVolume } from '../../media/placementPurpose';
 import { parseEditorDrag, mediaAssetIds, mediaSourceRangeFor } from '../../editor/editorDrag';
 import { placeMediaAssets } from '../../editor/mediaAssetPlacement';
-import { canItemMoveToTrack } from '../../editor/multiSelect';
-import { groupedItemIds } from '../../editor/linkGroups';
+import { canItemMoveToTrack, expandSelectionItemIds } from '../../editor/multiSelect';
+import {
+  isFoldGroupVisuallyCollapsed, resolveFoldGroupSpan, type ResolvedFoldGroupSpan,
+} from '../../editor/foldGroups';
 import type { useTimelinePointer } from './useTimelinePointer';
 import { topClipOverlapSpans, type TimelineOverlapSpan } from './trackOverlap';
 import {
@@ -39,7 +40,7 @@ import {
   type TimelineSelectionMovePreview,
 } from '../../captions/captionGroupMove';
 import { droppedFiles, hasExternalFiles } from '../../media/externalFileDrop';
-import { timelineAttachmentFeedback } from './timelineAttachmentFeedback';
+import { timelineAttachmentFeedback, type TimelineAttachmentFeedback } from './timelineAttachmentFeedback';
 import { planRollingTrim } from '../../editor/rollingTrim';
 import { showAppToast } from '../../ui/appToast';
 import '../editorFeedback.css';
@@ -48,6 +49,7 @@ import '../editorFeedback.css';
 interface TrackLaneProps {
   trackId: TrackId;
   indexes: TimelineIndexes;
+  attachmentFeedback?: Map<string, TimelineAttachmentFeedback>;
   state: TimelineState;
   commands: EditorCommands;
   pointer: ReturnType<typeof useTimelinePointer>;
@@ -76,6 +78,8 @@ interface TrackLaneProps {
 }
 
 const EMPTY_OVERLAP_SPANS: TimelineOverlapSpan[] = [];
+const EMPTY_ITEMS: TimelineItem[] = [];
+const EMPTY_TRANSITIONS: TransitionItem[] = [];
 
 function topClipOverlapSpansInPrefix(
   startFrame: number,
@@ -96,25 +100,30 @@ function topClipOverlapSpansInPrefix(
 
 export const TrackLane = memo(function TrackLane({
   trackId, state, commands, pointer, editMode, pickMode, locked, hidden, muted, px, rowHeight,
-  visibleWindow, pinnedItemIds, selectionMovePreview, indexes, libDropTarget, setLibDropTarget,
+  visibleWindow, pinnedItemIds, selectionMovePreview, indexes, attachmentFeedback: attachmentFeedbackProp, libDropTarget, setLibDropTarget,
   applyLibraryToClip, applyLibraryToTrack, rippleOnDrop, overwriteOnDrop,
   frameFromClientX, onContextMenu, onTransitionContextMenu, onTrackContextMenu, scrollRef, onDropExternalFiles,
 }: TrackLaneProps) {
   const t = useT();
   const { drag, penDrag, setPenDrag, startDrag, startRollDrag, startPick, startMarquee } = pointer;
-  const attachmentFeedback = useMemo(() => timelineAttachmentFeedback(state), [state]);
+  const attachmentFeedback = useMemo(
+    () => attachmentFeedbackProp ?? timelineAttachmentFeedback(state),
+    [attachmentFeedbackProp, state],
+  );
   const plannedItems = useMemo(() => new Map(drag?.plannedState?.items.map((item) => [item.id, item]) ?? []), [drag?.plannedState]);
   const trackIds = timelineTrackIds(state);
-  const items = indexes.itemsByTrack.get(trackId) ?? [];
+  const items = indexes.itemsByTrack.get(trackId) ?? EMPTY_ITEMS;
   const previewPinnedItemIds = useMemo(() => {
-    if (!selectionMovePreview?.itemIds.length && !plannedItems.size) return pinnedItemIds;
+    const activeRollId = drag?.mode === 'roll' && drag.baseTrack === trackId ? drag.id : null;
+    if (!selectionMovePreview?.itemIds.length && !plannedItems.size && !activeRollId) return pinnedItemIds;
     return new Set([...pinnedItemIds, ...(selectionMovePreview?.itemIds ?? []),
+      ...(activeRollId ? [activeRollId] : []),
       ...state.items.filter((item) => {
         const planned = plannedItems.get(item.id);
         return planned && (planned.startFrame !== item.startFrame || planned.durationInFrames !== item.durationInFrames
           || planned.track !== item.track || planned.srcInFrame !== item.srcInFrame);
       }).map((item) => item.id)]);
-  }, [pinnedItemIds, selectionMovePreview, plannedItems, state.items]);
+  }, [drag?.baseTrack, drag?.id, drag?.mode, pinnedItemIds, plannedItems, selectionMovePreview, state.items, trackId]);
   const itemGeometryById = useMemo(() => {
     const indexById = new Map<string, number>();
     const staticOverlapById = new Map<string, TimelineOverlapSpan[]>();
@@ -147,33 +156,112 @@ export const TrackLane = memo(function TrackLane({
     }
     return { previousById, nextById };
   }, [items]);
+  const {
+    assets: stateAssets,
+    fps: stateFps,
+    height: stateHeight,
+    items: stateItems,
+    linkGroups: stateLinkGroups,
+    multicamGroups: stateMulticamGroups,
+    tracks: stateTracks,
+    transitions: stateTransitions,
+    width: stateWidth,
+  } = state;
   const rollTrimState = useMemo<TimelineState>(() => ({
-    ...state,
-    fps: state.fps,
-    items: state.items,
-    tracks: state.tracks,
-    assets: state.assets,
-    linkGroups: state.linkGroups,
-    multicamGroups: state.multicamGroups,
-    transitions: state.transitions,
-  }), [state.assets, state.fps, state.items, state.linkGroups, state.multicamGroups, state.tracks, state.transitions]);
+    width: stateWidth,
+    height: stateHeight,
+    selectedId: null,
+    fps: stateFps,
+    items: stateItems,
+    tracks: stateTracks,
+    assets: stateAssets,
+    linkGroups: stateLinkGroups,
+    multicamGroups: stateMulticamGroups,
+    transitions: stateTransitions,
+  }), [stateAssets, stateFps, stateHeight, stateItems, stateLinkGroups, stateMulticamGroups, stateTracks, stateTransitions, stateWidth]);
+  const foldMeta = useMemo(() => {
+    const collapsedByAnchorId = new Map<string, ResolvedFoldGroupSpan>();
+    const hiddenCollapsedMemberIds = new Set<string>();
+    const foldGroupByItemId = new Map<string, NonNullable<TimelineState['foldGroups']>[number]>();
+    const collapsedSpans: ResolvedFoldGroupSpan[] = [];
+    for (const group of state.foldGroups ?? []) {
+      for (const id of group.itemIds) foldGroupByItemId.set(id, group);
+      if (!isFoldGroupVisuallyCollapsed(group)) continue;
+      const span = resolveFoldGroupSpan({ items: stateItems }, group);
+      if (!span || span.firstItem.track !== trackId) continue;
+      collapsedByAnchorId.set(span.firstItem.id, span);
+      collapsedSpans.push(span);
+      for (const member of span.items) {
+        if (member.id !== span.firstItem.id) hiddenCollapsedMemberIds.add(member.id);
+      }
+    }
+    return { collapsedByAnchorId, hiddenCollapsedMemberIds, foldGroupByItemId, collapsedSpans };
+  }, [state.foldGroups, stateItems, trackId]);
+  const renderedItems = useMemo(() => {
+    const baseVisible = visibleTimelineItems(
+      indexes.itemWindowsByTrack.get(trackId),
+      visibleWindow,
+      previewPinnedItemIds,
+      indexes.itemById,
+      indexes.itemOrderById,
+      trackId,
+    );
+    if (!foldMeta.collapsedSpans.length) return baseVisible;
+    const result = baseVisible.filter((item) => !foldMeta.hiddenCollapsedMemberIds.has(item.id));
+    const presentIds = new Set(result.map((item) => item.id));
+    let addedAnchor = false;
+    for (const span of foldMeta.collapsedSpans) {
+      if (presentIds.has(span.firstItem.id)) continue;
+      const spanVisible = !!intersectFrameRange(span.startFrame, span.durationInFrames, visibleWindow)
+        || span.items.some((member) => previewPinnedItemIds.has(member.id));
+      if (!spanVisible) continue;
+      result.push(span.firstItem);
+      presentIds.add(span.firstItem.id);
+      addedAnchor = true;
+    }
+    if (addedAnchor) {
+      result.sort((a, b) => a.startFrame - b.startFrame || (indexes.itemOrderById.get(a.id) ?? 0) - (indexes.itemOrderById.get(b.id) ?? 0));
+    }
+    return result;
+  }, [foldMeta, indexes, previewPinnedItemIds, trackId, visibleWindow]);
   const rollPlansByLeft = useMemo(() => {
     const plans = new Map<string, { right: TimelineItem; plan: ReturnType<typeof planRollingTrim> }>();
     if (pickMode || editMode !== 'selection') return plans;
-    for (const [leftId, right] of adjacentItems.nextById) {
-      plans.set(leftId, { right, plan: planRollingTrim(rollTrimState, leftId, right.id, 0) });
+    for (const item of renderedItems) {
+      if (foldMeta.collapsedByAnchorId.has(item.id)) continue;
+      const right = adjacentItems.nextById.get(item.id);
+      if (!right || foldMeta.hiddenCollapsedMemberIds.has(right.id)) continue;
+      plans.set(item.id, { right, plan: planRollingTrim(rollTrimState, item.id, right.id, 0) });
     }
     return plans;
-  }, [adjacentItems, editMode, pickMode, rollTrimState]);
-  const renderedItems = useMemo(() => visibleTimelineItems(
-    indexes.itemWindowsByTrack.get(trackId),
-    visibleWindow,
-    previewPinnedItemIds,
-    indexes.itemById,
-    indexes.itemOrderById,
-    trackId,
-  ), [indexes, previewPinnedItemIds, trackId, visibleWindow]);
-  const transitions = useMemo(() => indexes.transitionsByTrack.get(trackId) ?? [], [indexes, trackId]);
+  }, [adjacentItems, editMode, foldMeta, pickMode, renderedItems, rollTrimState]);
+  const isUsableRollPlan = (plan: ReturnType<typeof planRollingTrim> | undefined) =>
+    !!plan && !plan.error && !(plan.limitMessage && plan.deltaF === 0);
+  const activeRollLeftId = drag?.mode === 'roll' && drag.baseTrack === trackId ? drag.id : null;
+  const rollGrips = useMemo(() => {
+    const grips: Array<{ left: TimelineItem; right: TimelineItem; boundaryFrame: number }> = [];
+    if (pickMode || editMode !== 'selection') return grips;
+    for (const left of renderedItems) {
+      if (foldMeta.collapsedByAnchorId.has(left.id)) continue;
+      const rollEntry = rollPlansByLeft.get(left.id);
+      const right = rollEntry?.right ?? adjacentItems.nextById.get(left.id);
+      if (!right || foldMeta.hiddenCollapsedMemberIds.has(right.id)) continue;
+      const isActive = activeRollLeftId === left.id;
+      if (!isActive && !isUsableRollPlan(rollEntry?.plan)) continue;
+      const leftPrev = adjacentItems.previousById.get(left.id);
+      const hasLeft = !!leftPrev && (isUsableRollPlan(rollPlansByLeft.get(leftPrev.id)?.plan) || activeRollLeftId === leftPrev.id);
+      if (!isActive && !clipEdgeHandleLayout(left.durationInFrames * px, editMode, hasLeft, true, right.durationInFrames * px).showRollRight) {
+        continue;
+      }
+      const plannedLeft = plannedItems.get(left.id);
+      const boundaryFrame = plannedLeft
+        ? plannedLeft.startFrame + plannedLeft.durationInFrames
+        : left.startFrame + left.durationInFrames;
+      grips.push({ left, right, boundaryFrame });
+    }
+    return grips;
+  }, [activeRollLeftId, adjacentItems, editMode, foldMeta, pickMode, plannedItems, px, renderedItems, rollPlansByLeft]);
+  const transitions = useMemo(() => indexes.transitionsByTrack.get(trackId) ?? EMPTY_TRANSITIONS, [indexes, trackId]);
   const visibleTransitions = useMemo(() => transitions.filter((transition) => {
     const incoming = indexes.itemById.get(transition.incomingItemId);
     if (!incoming) return false;
@@ -295,8 +383,20 @@ export const TrackLane = memo(function TrackLane({
       }}
     >
       {renderedItems.map((it) => {
+        const itemFoldGroup = foldMeta.foldGroupByItemId.get(it.id);
+        const collapsedSpan = foldMeta.collapsedByAnchorId.get(it.id);
+        const collapsedFoldGroup = collapsedSpan?.group;
+        const showFoldPill = !!itemFoldGroup && (!!collapsedSpan || itemFoldGroup.itemIds[0] === it.id) && itemFoldGroup.itemIds.length >= 2;
+        const baseStart = collapsedSpan ? collapsedSpan.startFrame : it.startFrame;
+        const baseDur = collapsedSpan ? collapsedSpan.durationInFrames : it.durationInFrames;
+        const baseSrcIn = collapsedSpan ? (collapsedSpan.firstItem.srcInFrame ?? 0) : (it.srcInFrame ?? 0);
         const planned = plannedItems.get(it.id);
-        const selected = isItemSelected(state, it.id);
+        const plannedSpan = collapsedSpan && drag?.plannedState
+          ? resolveFoldGroupSpan(drag.plannedState, collapsedSpan.group)
+          : null;
+        const selected = collapsedSpan
+          ? collapsedSpan.items.some((member) => isItemSelected(state, member.id))
+          : isItemSelected(state, it.id);
         const captionInitiatedDelta = selectionMovePreviewDeltaForItem(it.id, selectionMovePreview);
         const captionInitiatedMove = selectionMovePreview?.itemIds.includes(it.id) ?? false;
         // Group-move preview: every selected clip rides the same delta as the grab handle.
@@ -305,60 +405,65 @@ export const TrackLane = memo(function TrackLane({
           && pointer.dragSelection.itemIds.includes(it.id));
         const dragging = drag?.id === it.id || groupMove;
         const stretchEdge = drag?.mode === 'trim-left' ? 'left' : drag?.mode === 'trim-right' ? 'right' : null;
-        const stretch = editMode === 'rate-stretch' && drag?.id === it.id && stretchEdge
+        const stretch = !collapsedSpan && editMode === 'rate-stretch' && drag?.id === it.id && stretchEdge
           ? rateStretchGeometry(it, stretchEdge, drag.deltaF) : null;
         const moveDelta = captionInitiatedMove
           ? captionInitiatedDelta
           : dragging && drag && (drag.mode === 'move' || drag.mode === 'trim-left') ? drag.deltaF : 0;
-        const start = planned?.startFrame ?? stretch?.startFrame ?? (it.startFrame + moveDelta);
+        const start = plannedSpan?.startFrame ?? planned?.startFrame ?? stretch?.startFrame ?? (baseStart + moveDelta);
         const durTrim = drag?.id === it.id && drag.mode === 'trim-left' ? -drag.deltaF
           : drag?.id === it.id && drag.mode === 'trim-right' ? drag.deltaF : 0;
-        const dur = planned?.durationInFrames ?? stretch?.durationInFrames ?? Math.max(1, it.durationInFrames + durTrim);
+        const dur = plannedSpan?.durationInFrames ?? planned?.durationInFrames ?? stretch?.durationInFrames ?? Math.max(1, baseDur + durTrim);
         const mediaIntersection = intersectFrameRange(start, dur, visibleWindow);
-        const liveSlip = drag?.id === it.id && drag.mode === 'slip'
+        const liveSlip = !collapsedSpan && drag?.id === it.id && drag.mode === 'slip'
           ? planSlip(state, it.id, drag.deltaF)
           : null;
         const renderSrcIn = planned ? planned.srcInFrame ?? 0 : liveSlip?.ok
           ? liveSlip.srcInFrame
-          : drag?.id === it.id && drag.mode === 'trim-left' && !stretch
-            ? sourceWindowForTimelineRange(
-                it.kind === 'audio' && hasOperationalTranscript(it) ? { ...it, playbackRate: 1 } : it,
-                drag.deltaF,
-                dur,
-              ).startFrame
-            : it.srcInFrame ?? 0;
+          : !collapsedSpan && drag?.id === it.id && drag.mode === 'trim-left' && !stretch
+            ? sourceWindowForTimelineRange(it, drag.deltaF, dur).startFrame
+            : baseSrcIn;
         const renderPlaybackRate = stretch?.playbackRate ?? (it.playbackRate ?? 1);
-        const canRateStretch = it.kind === 'video' || it.kind === 'audio';
-        const canSlip = it.kind === 'video' || it.kind === 'audio';
+        const canRateStretch = !collapsedSpan && (it.kind === 'video' || it.kind === 'audio');
+        const canSlip = !collapsedSpan && (it.kind === 'video' || it.kind === 'audio');
         const audioMuted = muted && (it.kind === 'audio' || it.kind === 'video');
         const showHandles = !pickMode && editMode !== 'blade' && editMode !== 'pen' && editMode !== 'slip'
           && (editMode !== 'rate-stretch' || canRateStretch);
-        const rollEntry = rollPlansByLeft.get(it.id);
+        const rollEntry = collapsedSpan ? undefined : rollPlansByLeft.get(it.id);
         const rollRight = rollEntry?.right;
-        const rollLeft = !pickMode && editMode === 'selection' ? adjacentItems.previousById.get(it.id) : undefined;
+        const rollLeft = !pickMode && editMode === 'selection' && !collapsedSpan ? adjacentItems.previousById.get(it.id) : undefined;
         const rollPlan = rollEntry?.plan ?? null;
-        const rollBlocked = !!rollPlan?.error || !!(rollPlan?.limitMessage && rollPlan.deltaF === 0);
+        const hasUsableRollRight = !!rollRight && (isUsableRollPlan(rollPlan ?? undefined) || activeRollLeftId === it.id);
+        const hasUsableRollLeft = !!rollLeft && (isUsableRollPlan(rollPlansByLeft.get(rollLeft.id)?.plan) || activeRollLeftId === rollLeft.id);
         const rawClipWidthPx = dur * px;
         const clipWidthPx = Math.max(2, rawClipWidthPx);
         const compactClip = clipWidthPx < 28;
         const narrowClip = clipWidthPx < 16;
         const leftNeighbor = adjacentItems.previousById.get(it.id);
-        const rightNeighbor = adjacentItems.nextById.get(it.id);
+        const rightNeighbor = adjacentItems.nextById.get(collapsedSpan ? collapsedSpan.lastItem.id : it.id);
         const joinedLeft = isVideoTrack && !dragging && !!leftNeighbor && !isItemActivelyMoving(leftNeighbor.id);
         const joinedRight = isVideoTrack && !dragging && !!rightNeighbor && !isItemActivelyMoving(rightNeighbor.id);
-        const handleLayout = clipEdgeHandleLayout(rawClipWidthPx, editMode, !!rollLeft, !!(rollRight && rollPlan), rollRight ? rollRight.durationInFrames * px : 0);
+        const rollRightWidthPx = rollRight
+          ? (plannedItems.get(rollRight.id)?.durationInFrames ?? rollRight.durationInFrames) * px
+          : 0;
+        const handleLayout = clipEdgeHandleLayout(rawClipWidthPx, editMode, hasUsableRollLeft, hasUsableRollRight, rollRightWidthPx);
         const isLibOver = libDropTarget === it.id;
         const itemIndex = itemGeometryById.indexById.get(it.id) ?? 0;
-        const overlapSpans = start === it.startFrame && dur === it.durationInFrames
+        const overlapSpans = start === baseStart && dur === baseDur && !collapsedSpan
           ? (itemGeometryById.staticOverlapById.get(it.id) ?? EMPTY_OVERLAP_SPANS)
           : topClipOverlapSpansInPrefix(start, dur, items, itemIndex);
         const attachment = attachmentFeedback.get(it.id);
+        const legacyReview = collapsedSpan
+          ? (collapsedSpan.items.find((member) => member.legacyTimingReview)?.legacyTimingReview ?? it.legacyTimingReview)
+          : it.legacyTimingReview;
         const attachmentHint = attachment
           ? `${t('依附主片段')}：${attachment.owner.name} · ${t(!attachment.active ? '联动已关闭或此类型未启用，当前不会跟随'
             : attachment.locked ? '关联轨道已锁定，请先解锁后再移动主片段' : '跟随主片段移动或删除；可右键解除依附')}`
           : undefined;
         const displayName = it.kind === 'audio' && it.src?.startsWith('/sound-effects/') ? tData(it.name) : it.name;
         let clipTitle = attachmentHint ? `${displayName} · ${attachmentHint}` : displayName;
+        if (collapsedSpan) clipTitle += ` · ${t(`已折叠片段组（${collapsedSpan.items.length} 段）`)}`;
+        if (legacyReview) clipTitle += ` · ⚠ ${legacyReview.summary}`;
         if (editMode === 'slip' && !canSlip) clipTitle = `${displayName} · ${t('此类型没有可滑移的源区间')}`;
         else if (audioMuted) clipTitle += ` · ${t('轨道已静音')}`;
         if (locked) clipTitle += ` · ${t('轨道已锁定，请先解锁')}`;
@@ -374,6 +479,8 @@ export const TrackLane = memo(function TrackLane({
             data-adjacent-right={joinedRight ? 'true' : undefined}
             data-main-clip-id={attachment?.owner.id}
             data-linkage-active={attachment ? attachment.active : undefined}
+            data-fold-group-id={itemFoldGroup?.id}
+            data-fold-collapsed={collapsedSpan ? 'true' : undefined}
             title={clipTitle}
             data-clip-kind={it.kind}
             onDoubleClick={() => { if (it.kind === 'sequence' && it.timelineId) commands.switchTimeline(it.timelineId); }}
@@ -393,10 +500,14 @@ export const TrackLane = memo(function TrackLane({
                 }
                 return;
               }
-              if (editMode === 'blade') { // blade mode: click cuts the clip here
+              if (editMode === 'blade') { // blade mode: click cuts the clip (or collapsed fold group) here
                 e.stopPropagation();
                 const f = Math.round(frameFromClientX(e.clientX));
-                if (f > it.startFrame && f < it.startFrame + it.durationInFrames) commands.splitItem(it.id, f);
+                if (collapsedFoldGroup) {
+                  if (f > baseStart && f < baseStart + baseDur) commands.splitFoldGroup(collapsedFoldGroup.id, f);
+                } else if (f > it.startFrame && f < it.startFrame + it.durationInFrames) {
+                  commands.splitItem(it.id, f);
+                }
                 return;
               }
               if (editMode === 'pen') { // pen: 1st click selects, next clicks punch a kf (vertical = value; audio = volume, rest = transparency)
@@ -412,13 +523,12 @@ export const TrackLane = memo(function TrackLane({
                 commands.setItemKeyframe(it.id, prop, f, Math.round((lo + frac * (hi - lo)) * 100) / 100);
                 return;
               }
-              startDrag(e, it.id, 'move', it.startFrame, it.durationInFrames, it.track, it.srcInFrame ?? 0);
+              startDrag(e, it.id, 'move', baseStart, baseDur, it.track, baseSrcIn, collapsedFoldGroup?.id);
             }}
             onContextMenu={(e) => {
               e.preventDefault();
-              // Keep multi-select when right-clicking an already-selected clip
-              // The context menu does not collapse the current selection set.
-              if (!isItemSelected(state, it.id)) commands.selectItems(groupedItemIds(state, [it.id]));
+              // Keep multi-select when right-clicking an already-selected clip or folded bar
+              if (!selected) commands.selectItems(expandSelectionItemIds(state, [it.id]));
               onContextMenu({ id: it.id, x: e.clientX, y: e.clientY });
             }}
             onDragOver={(e) => {
@@ -548,43 +658,81 @@ export const TrackLane = memo(function TrackLane({
             })()}
             {/* trim handles (hidden in blade / pen / selection-pick modes) */}
             <span className={`cc-clip-label${it.kind === 'audio' ? ' audio' : ''}`}>{displayName}</span>
+            {collapsedSpan && collapsedSpan.items.slice(1).map((sub) => {
+              const seamLeftPx = (sub.startFrame - collapsedSpan.startFrame) * px;
+              if (seamLeftPx <= 2 || seamLeftPx >= clipWidthPx - 2) return null;
+              return (
+                <span
+                  key={`seam:${sub.id}`}
+                  className="cc-fold-seam"
+                  aria-hidden="true"
+                  style={{ left: seamLeftPx }}
+                />
+              );
+            })}
+            {showFoldPill && itemFoldGroup && (
+              <button
+                type="button"
+                className="cc-fold-pill"
+                data-fold-toggle={itemFoldGroup.id}
+                title={t(collapsedSpan ? '展开片段组（显示分段细节）' : '折叠片段组（合并显示为一个片段条）')}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  commands.toggleFoldGroup(itemFoldGroup.id);
+                }}
+              >
+                {collapsedSpan ? `▾ ${collapsedSpan.items.length}段` : '▴ 收起'}
+              </button>
+            )}
+            {legacyReview && clipWidthPx >= 56 && (
+              <span className="cc-legacy-review-badge" title={legacyReview.summary}>⚠ 切点待确认</span>
+            )}
             </div>
             {joinedRight && <span className="cc-clip-cut-divider" aria-hidden="true" />}
-            {rollRight && rollPlan && handleLayout.showRollRight && <button type="button" data-roll-handle
-              className="cc-roll-grip" aria-label={t('滚动裁剪左右片段')}
-              aria-disabled={rollBlocked} aria-keyshortcuts="ArrowLeft ArrowRight"
-              title={rollPlan.error ?? rollPlan.limitMessage ?? t('拖动接缝同时调整左右片段边界；箭头键逐帧调整')}
-              style={{ position: 'absolute', right: -4, top: 0, bottom: 0 }}
-              onPointerDown={(event) => { if (event.button !== 0) return;
-                event.preventDefault();
-                event.stopPropagation();
-                const livePlan = planRollingTrim(commands.getState?.() ?? state, it.id, rollRight.id, 0);
-                const reason = livePlan.error ?? (livePlan.limitMessage && livePlan.deltaF === 0 ? livePlan.limitMessage : undefined);
-                if (reason) { showAppToast(reason, { error: !!livePlan.error }); return; }
-                startRollDrag(event, it.id, rollRight.id);
-              }}
-              onKeyDown={(event) => {
-                const delta = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
-                if (!delta && event.key !== 'Enter' && event.key !== ' ') return;
-                event.preventDefault();
-                event.stopPropagation();
-                if (!delta) { showAppToast(t('拖动握柄连续调整；使用左右方向键逐帧滚动裁剪。')); return; }
-                const liveState = commands.getState?.() ?? state;
-                const next = planRollingTrim(liveState, it.id, rollRight.id, delta);
-                if (next.error) showAppToast(next.error, { error: true });
-                else {
-                  if (next.state !== liveState) commands.applyRollingTrim(it.id, rollRight.id, delta);
-                  if (next.limitMessage) showAppToast(next.limitMessage);
-                }
-              }}
-            />}
-            {showHandles && handleLayout.trimWidth > 0 && <div onPointerDown={(e) => { if (e.button !== 0) return; startDrag(e, it.id, 'trim-left', it.startFrame, it.durationInFrames, it.track, it.srcInFrame ?? 0); }}
+            {showHandles && handleLayout.trimWidth > 0 && <div onPointerDown={(e) => { if (e.button !== 0) return; startDrag(e, it.id, 'trim-left', baseStart, baseDur, it.track, baseSrcIn, collapsedFoldGroup?.id); }}
               style={{ position: 'absolute', left: handleLayout.leftOffset, top: 0, width: handleLayout.trimWidth, height: '100%', cursor: 'ew-resize', background: editMode === 'trim' || editMode === 'rate-stretch' ? themeAlpha.accent(0.35) : 'transparent' }} />}
-            {showHandles && handleLayout.trimWidth > 0 && <div onPointerDown={(e) => { if (e.button !== 0) return; startDrag(e, it.id, 'trim-right', it.startFrame, it.durationInFrames, it.track, it.srcInFrame ?? 0); }}
+            {showHandles && handleLayout.trimWidth > 0 && <div onPointerDown={(e) => { if (e.button !== 0) return; startDrag(e, it.id, 'trim-right', baseStart, baseDur, it.track, baseSrcIn, collapsedFoldGroup?.id); }}
               style={{ position: 'absolute', right: handleLayout.rightOffset, top: 0, width: handleLayout.trimWidth, height: '100%', cursor: 'ew-resize', background: editMode === 'trim' || editMode === 'rate-stretch' ? themeAlpha.accent(0.35) : 'transparent' }} />}
           </div>
         );
       })}
+      {/* seam roll grips live at lane level so the right clip's stacking context never covers the right half */}
+      {rollGrips.map(({ left, right, boundaryFrame }) => (
+        <button
+          key={`roll:${left.id}:${right.id}`}
+          type="button"
+          data-roll-handle
+          className="cc-roll-grip"
+          aria-label={t('滚动裁剪左右片段')}
+          aria-keyshortcuts="ArrowLeft ArrowRight"
+          title={t('拖动接缝同时调整左右片段边界；箭头键逐帧调整')}
+          style={{ position: 'absolute', left: boundaryFrame * px - 4, top: 4, height: rowHeight - 8 }}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const livePlan = planRollingTrim(commands.getState?.() ?? state, left.id, right.id, 0);
+            const reason = livePlan.error ?? (livePlan.limitMessage && livePlan.deltaF === 0 ? livePlan.limitMessage : undefined);
+            if (reason) { showAppToast(reason, { error: !!livePlan.error }); return; }
+            startRollDrag(event, left.id, right.id);
+          }}
+          onKeyDown={(event) => {
+            const delta = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+            if (!delta && event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (!delta) { showAppToast(t('拖动握柄连续调整；使用左右方向键逐帧滚动裁剪。')); return; }
+            const liveState = commands.getState?.() ?? state;
+            const next = planRollingTrim(liveState, left.id, right.id, delta);
+            if (next.error) showAppToast(next.error, { error: true });
+            else {
+              if (next.state !== liveState) commands.applyRollingTrim(left.id, right.id, delta);
+              if (next.limitMessage) showAppToast(next.limitMessage);
+            }
+          }}
+        />
+      ))}
       {/* transition badges at each cut on this track */}
       {visibleTransitions.map((tn) => {
         const inItem = indexes.itemById.get(tn.incomingItemId);

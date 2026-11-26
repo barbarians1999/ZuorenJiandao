@@ -60,8 +60,8 @@ const newId = () =>
     ? crypto.randomUUID()
     : `v_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
 
-function sameDocument(left: ProjectDoc, right: ProjectDoc): boolean {
-  const normalizedLeft = migrateProjectDoc(left);
+function sameDocument(left: ProjectDoc, right: ProjectDoc, leftAlreadyNormalized = false): boolean {
+  const normalizedLeft = leftAlreadyNormalized ? left : migrateProjectDoc(left);
   const normalizedRight = migrateProjectDoc(right);
   return normalizedLeft !== null
     && normalizedRight !== null
@@ -81,6 +81,7 @@ async function persistVersion(
   name: string,
   doc: ProjectDoc,
   automatic: boolean,
+  partitioned?: { valid: readonly ProjectVersion[]; opaque: readonly unknown[] },
 ): Promise<ProjectVersion> {
   const version: ProjectVersion = {
     id: newId(),
@@ -89,7 +90,7 @@ async function persistVersion(
     automatic,
     doc,
   };
-  const { valid, opaque } = await readPartitioned(projectId);
+  const { valid, opaque } = partitioned ?? await readPartitioned(projectId);
   const next = [version, ...valid];
   const retainedAutomaticIds = new Set(
     next.filter((item) => item.automatic).slice(0, MAX_AUTOMATIC_VERSIONS).map((item) => item.id),
@@ -113,9 +114,13 @@ export function saveAutomaticVersion(
   doc: ProjectDoc,
 ): Promise<ProjectVersion | null> {
   return serializeMutation(projectId, async () => {
-    const latest = (await readAll(projectId)).sort((a, b) => b.createdAt - a.createdAt)[0];
-    if (latest && sameDocument(latest.doc, doc)) return null;
-    return persistVersion(projectId, name, doc, true);
+    const partitioned = await readPartitioned(projectId);
+    let latest: ProjectVersion | undefined;
+    for (const candidate of partitioned.valid) {
+      if (!latest || candidate.createdAt > latest.createdAt) latest = candidate;
+    }
+    if (latest && sameDocument(latest.doc, doc, true)) return null;
+    return persistVersion(projectId, name, doc, true, partitioned);
   });
 }
 

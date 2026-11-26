@@ -18,8 +18,9 @@ import { InspectorAudioControls } from './InspectorAudioControls';
 import { MosaicControl } from './MosaicControl';
 import { CompositionMosaicControl } from './CompositionMosaicControl';
 import { PreviewFidelityStatus } from './PreviewFidelityStatus';
+import { hasPrivacyMosaic } from '../../editor/mosaic';
 
-export type InspectorTab = 'basic' | 'video' | 'audio' | 'speed' | 'animation' | 'mask' | 'mosaic';
+export type InspectorTab = 'basic' | 'video' | 'audio' | 'speed' | 'animation' | 'mask' | 'effects' | 'mosaic';
 
 interface InspectorContentProps {
   panel: InspectorPanelProps;
@@ -31,11 +32,12 @@ interface InspectorContentProps {
 }
 
 const TAB_DEFS: ReadonlyArray<{ id: InspectorTab; label: string }> = [
-  { id: 'basic', label: '画面 / 文字' },
+  { id: 'basic', label: '画面' },
   { id: 'audio', label: '音频' },
   { id: 'speed', label: '变速' },
   { id: 'animation', label: '动画' },
   { id: 'mask', label: '蒙版' },
+  { id: 'effects', label: '特效' },
   { id: 'mosaic', label: '马赛克' },
   { id: 'video', label: '调整' },
 ];
@@ -67,8 +69,8 @@ export function InspectorContent(props: InspectorContentProps) {
     animation: selection.every((entry) => entry.kind !== 'audio' && entry.kind !== 'mosaic' && entry.kind === item.kind),
     speed: !!panel.onItemSpeedChange && selection.every((entry) => ['audio', 'video', 'sequence'].includes(entry.kind)),
     mask: selection.every((entry) => entry.kind !== 'audio' && entry.kind !== 'mosaic'),
-    mosaic: selection.every((entry) => entry.kind === 'video' || entry.kind === 'image')
-      || (selection.length === 1 && selection[0]?.kind === 'mosaic' && !!panel.onCompositionMosaicChange),
+    effects: selection.every((entry) => entry.kind === 'video' || entry.kind === 'image'),
+    mosaic: selection.length === 1 && selection[0]?.kind === 'mosaic' && !!panel.onCompositionMosaicChange,
   };
   const activeAvailable = available[activeTab];
   const fallback = TAB_DEFS.find((tab) => available[tab.id])?.id ?? 'basic';
@@ -76,9 +78,10 @@ export function InspectorContent(props: InspectorContentProps) {
     if (!activeAvailable) onTabChange(fallback);
   }, [activeAvailable, fallback, onTabChange]);
   const visibleTab = available[activeTab] ? activeTab : fallback;
+  const basicTabLabel = selection.every((entry) => entry.kind === 'text') ? '文字' : '画面';
   return (
     <>
-      <InspectorTabBar id={tabGroupId} activeTab={visibleTab} available={available} onChange={onTabChange} />
+      <InspectorTabBar id={tabGroupId} activeTab={visibleTab} available={available} basicLabel={basicTabLabel} onChange={onTabChange} />
       <div
         id={`${tabGroupId}-panel`}
         className="cc-insp-body"
@@ -94,10 +97,11 @@ export function InspectorContent(props: InspectorContentProps) {
   );
 }
 
-function InspectorTabBar({ id, activeTab, available, onChange }: {
+function InspectorTabBar({ id, activeTab, available, basicLabel, onChange }: {
   id: string;
   activeTab: InspectorTab;
   available: Record<InspectorTab, boolean>;
+  basicLabel: string;
   onChange: (tab: InspectorTab) => void;
 }) {
   const t = useT();
@@ -122,7 +126,7 @@ function InspectorTabBar({ id, activeTab, available, onChange }: {
         className={activeTab === tab.id ? 'active' : ''}
         onClick={() => onChange(tab.id)}
         onKeyDown={(event) => selectFromKey(event, tab.id)}
-      >{t(tab.label)}</button>)}
+      >{t(tab.id === 'basic' ? basicLabel : tab.label)}</button>)}
     </div>
   );
 }
@@ -133,6 +137,7 @@ function InspectorTabContent(props: InspectorContentProps) {
   if (props.activeTab === 'audio') return <AudioTab {...props} />;
   if (props.activeTab === 'animation') return <AnimationTab {...props} />;
   if (props.activeTab === 'mask') return <MaskTab {...props} />;
+  if (props.activeTab === 'effects') return <EffectsTab {...props} />;
   if (props.activeTab === 'mosaic') return <MosaicTab {...props} />;
   return <BasicTab {...props} />;
 }
@@ -205,16 +210,6 @@ function VideoTab({ panel, item }: InspectorContentProps) {
         saturate: isMixed(panel, (entry) => entry.filters?.saturate ?? 1),
         blur: isMixed(panel, (entry) => entry.filters?.blur ?? 0),
       }} onChange={panel.onItemFiltersChange} autoGrade={panel.autoGrade} />
-      {panel.selectedItems.length === 1 && (item.kind === 'video' || item.kind === 'image') && (
-        <>
-          <SectionLabel>{t('画面特效与 LUT')}</SectionLabel>
-          <EffectsControl
-            item={item}
-            onChange={panel.onItemEffectsChange}
-            previewStatus={panel.selectedPreviewStatuses?.find((status) => status.kind === 'effect' && status.targetId === item.id)}
-          />
-        </>
-      )}
     </>
   );
 }
@@ -240,18 +235,41 @@ function MaskTab({ panel, item, playheadLocal }: InspectorContentProps) {
     </>;
 }
 
-function MosaicTab({ panel, item, playheadLocal }: InspectorContentProps) {
+function EffectsTab({ panel, item, playheadLocal }: InspectorContentProps) {
+  const t = useT();
+  if (panel.selectedItems.length !== 1) {
+    return <p className="cc-region-note">{t('特效与马赛克请只选中一个视频或图片片段。')}</p>;
+  }
+  const effectStatus = panel.selectedPreviewStatuses?.find((status) => status.kind === 'effect' && status.targetId === item.id);
+  return <>
+    <SectionLabel>{t('马赛克')}</SectionLabel>
+    {hasPrivacyMosaic(item) && <PreviewFidelityStatus protectedSource status={effectStatus} />}
+    <MosaicControl
+      item={item}
+      localFrame={playheadLocal.localFrame}
+      fit={panel.fit ?? 'contain'}
+      canvasWidth={panel.canvasWidth}
+      canvasHeight={panel.canvasHeight}
+      selectedEffectId={panel.selectedMosaicEffectId ?? null}
+      onSelectEffect={panel.onSelectMosaicEffect}
+      onChange={panel.onItemEffectsChange}
+    />
+    <SectionLabel>{t('画面特效与 LUT')}</SectionLabel>
+    <EffectsControl
+      item={item}
+      excludeMosaic
+      onChange={panel.onItemEffectsChange}
+      previewStatus={effectStatus}
+    />
+  </>;
+}
+
+function MosaicTab({ panel, item }: InspectorContentProps) {
   const t = useT();
   if (item.kind === 'mosaic') return panel.onCompositionMosaicChange
     ? <CompositionMosaicControl value={item.mosaic} onChange={(patch) => panel.onCompositionMosaicChange?.(patch)} />
     : <p className="cc-region-note">{t('此独立马赛克当前不可编辑。')}</p>;
-  if (panel.selectedItems.length !== 1) return <p className="cc-region-note">{t('马赛克请只选中一个视频或图片，以免覆盖其他片段的效果。')}</p>;
-  return <>
-    <SectionLabel>{t('马赛克')}</SectionLabel>
-    <PreviewFidelityStatus protectedSource status={panel.selectedPreviewStatuses?.find((status) => status.kind === 'effect' && status.targetId === item.id)} />
-    <MosaicControl item={item} localFrame={playheadLocal.localFrame} fit={panel.fit ?? 'contain'}
-      canvasWidth={panel.canvasWidth} canvasHeight={panel.canvasHeight} onChange={panel.onItemEffectsChange} />
-  </>;
+  return null;
 }
 
 function AudioTab({ panel, item, playheadLocal }: InspectorContentProps) {
@@ -302,7 +320,18 @@ function AnimationTab({ panel, item }: InspectorContentProps) {
 }
 
 function SpeedTab({ panel, item }: InspectorContentProps) {
-  return panel.onItemSpeedChange ? <SpeedControl item={item} mixed={isMixed(panel, (entry) => entry.playbackRate ?? 1)} onChange={panel.onItemSpeedChange} /> : null;
+  return panel.onItemSpeedChange ? (
+    <SpeedControl
+      item={item}
+      fps={panel.fps}
+      selectedItems={panel.selectedItems}
+      mixed={isMixed(panel, (entry) => entry.playbackRate ?? 1)}
+      onChange={panel.onItemSpeedChange}
+      onDurationChange={panel.onItemSpeedDurationChange}
+      fillToNextPlan={panel.fillToNextSpeedPlan}
+      onFillToNext={panel.onItemFillToNextClip}
+    />
+  ) : null;
 }
 
 function ClipFades({ panel, item }: Pick<InspectorContentProps, 'panel' | 'item'>) {

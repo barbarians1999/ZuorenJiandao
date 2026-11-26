@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type SetStateAction } from 'react';
 import { captionPages } from './exportCaptions';
 import { buildCaptionPages } from './captionPages';
 import { captionTrackEntries, captionsOnTrack, type TimelineState, type TrackId } from '../editor/types';
 import { collectTimelineSnapPoints, snapDraggedEdges, sortTimelineSnapPoints, type SnapDraggedEdgesOptions, type SnapPoint } from '../editor/snap';
-import type { CaptionPage, CaptionSourceSpan, CaptionsData } from './types';
+import { joinCaptionWords, type CaptionDisplayCueEdit, type CaptionPage, type CaptionSourceSpan, type CaptionsData } from './types';
+import { newManualCueIdentity } from '../transcript/identity';
 import type { TranscriptWord } from '../transcript/types';
 import { isManualCaptionEntry, resizeManualCue, rollAdjacentManualCues, type ManualCueEdge } from './manualCaptions';
-import { projectCaptionSourceSpans } from './captionSourceSpans';
+import { captionSourceSegmentBounds, projectCaptionSourceSpans } from './captionSourceSpans';
 import type { CaptionSelectionRef } from './captionSelection';
 import { captionDragMoveMode, clampTimelineSelectionDelta, displayCueMoveProblem, resolveCaptionDragSelection, type TimelineSelectionMovePreview } from './captionGroupMove';
 
@@ -29,9 +30,10 @@ export interface CaptionCueMove {
 
 export interface DisplayCueTrimTarget {
   laneId: string;
-  editId: string;
-  partId: string;
+  editId?: string;
+  partId?: string;
   key: string;
+  text?: string;
   source: TimelineState['items'][number];
   sourceSpans: readonly CaptionSourceSpan[];
 }
@@ -39,25 +41,73 @@ export interface DisplayCueTrimTarget {
 export function resizeDisplayCueSourceSpans(
   source: TimelineState['items'][number], spans: readonly CaptionSourceSpan[], fps: number,
   edge: ManualCueEdge, deltaFrames: number,
+  options?: { minSourceMs?: number; maxSourceMs?: number },
 ): CaptionSourceSpan[] | null {
   const projected = projectCaptionSourceSpans(source, spans, fps);
-  if (!projected.length || new Set(projected.map((span) => span.segmentKey)).size !== 1) return null;
-  const boundary = edge === 'start' ? projected[0]! : projected.at(-1)!;
-  const span = spans[boundary.spanIndex];
-  if (!span) return null;
-  const sourceFrames = boundary.sourceEndFrame - boundary.sourceStartFrame;
-  const timelineFrames = boundary.endFrame - boundary.startFrame;
+  if (!projected.length || projected.length !== spans.length || new Set(projected.map((span) => span.segmentKey)).size !== 1) return null;
+  const firstProj = projected[0]!;
+  const lastProj = projected.at(-1)!;
+  const firstSpan = spans[firstProj.spanIndex];
+  const lastSpan = spans[lastProj.spanIndex];
+  if (!firstSpan || !lastSpan) return null;
+  const sourceFrames = lastProj.sourceEndFrame - firstProj.sourceStartFrame;
+  const timelineFrames = lastProj.endFrame - firstProj.startFrame;
   if (sourceFrames < 1 || timelineFrames < 1) return null;
+  const sourcePerTimeline = sourceFrames / timelineFrames;
   const minimumFrames = Math.max(6, Math.round(fps * 0.5));
-  const minimumMs = Math.max(1, Math.ceil(sourceFrames / timelineFrames * minimumFrames)) * 1000 / fps;
-  if (span.endMs - span.startMs < minimumMs) return null;
-  const deltaMs = Math.round(deltaFrames * sourceFrames / timelineFrames) * 1000 / fps;
-  const next = edge === 'start'
-    ? Math.min(span.endMs - minimumMs, Math.max(span.startMs, span.startMs + deltaMs))
-    : Math.max(span.startMs + minimumMs, Math.min(span.endMs, span.endMs + deltaMs));
-  if (next === (edge === 'start' ? span.startMs : span.endMs)) return null;
-  return spans.map((candidate, index) => index === boundary.spanIndex
-    ? { ...candidate, [edge === 'start' ? 'startMs' : 'endMs']: next }
+  const minimumMs = Math.max(1, Math.ceil(sourcePerTimeline * minimumFrames)) * 1000 / fps;
+  const segBounds = captionSourceSegmentBounds(source, firstProj.segmentKey, fps);
+  const segMinMs = segBounds?.minSourceMs ?? 0;
+  const segMaxMs = segBounds?.maxSourceMs ?? Number.POSITIVE_INFINITY;
+  const cueStartMs = Math.max(segMinMs, firstSpan.startMs);
+  const cueEndMs = Math.min(segMaxMs, lastSpan.endMs);
+  const deltaMs = Math.round(deltaFrames * sourcePerTimeline) * 1000 / fps;
+  if (!deltaMs) return null;
+
+  if (edge === 'start') {
+    if (deltaMs > 0) {
+      if (cueEndMs - cueStartMs <= minimumMs) return null;
+      const targetStartMs = Math.min(cueEndMs - minimumMs, cueStartMs + deltaMs);
+      if (targetStartMs <= cueStartMs) return null;
+      const nextSpans: CaptionSourceSpan[] = [];
+      for (const [index, candidate] of spans.entries()) {
+        if (index < firstProj.spanIndex || index > lastProj.spanIndex) {
+          nextSpans.push(candidate);
+          continue;
+        }
+        if (candidate.endMs <= targetStartMs) continue;
+        nextSpans.push(candidate.startMs < targetStartMs ? { ...candidate, startMs: targetStartMs } : candidate);
+      }
+      return nextSpans.some((_, idx) => idx >= firstProj.spanIndex) ? nextSpans : null;
+    }
+    const lower = Math.max(segMinMs, options?.minSourceMs ?? 0);
+    const targetStartMs = Math.max(lower, cueStartMs + deltaMs);
+    if (targetStartMs >= cueStartMs) return null;
+    return spans.map((candidate, index) => index === firstProj.spanIndex
+      ? { ...candidate, startMs: targetStartMs }
+      : candidate);
+  }
+
+  if (deltaMs < 0) {
+    if (cueEndMs - cueStartMs <= minimumMs) return null;
+    const targetEndMs = Math.max(cueStartMs + minimumMs, cueEndMs + deltaMs);
+    if (targetEndMs >= cueEndMs) return null;
+    const nextSpans: CaptionSourceSpan[] = [];
+    for (const [index, candidate] of spans.entries()) {
+      if (index < firstProj.spanIndex || index > lastProj.spanIndex) {
+        nextSpans.push(candidate);
+        continue;
+      }
+      if (candidate.startMs >= targetEndMs) continue;
+      nextSpans.push(candidate.endMs > targetEndMs ? { ...candidate, endMs: targetEndMs } : candidate);
+    }
+    return nextSpans.some((_, idx) => idx >= firstProj.spanIndex) ? nextSpans : null;
+  }
+  const upper = Math.min(segMaxMs, options?.maxSourceMs ?? Number.POSITIVE_INFINITY);
+  const targetEndMs = Math.min(upper, cueEndMs + deltaMs);
+  if (targetEndMs <= cueEndMs) return null;
+  return spans.map((candidate, index) => index === lastProj.spanIndex
+    ? { ...candidate, endMs: targetEndMs }
     : candidate);
 }
 
@@ -74,15 +124,50 @@ export function displayCueTrimRange(
   };
 }
 
-function buildDisplayTrimSourceEntries(
+function applyDisplaySpanUpdate(
+  edits: readonly CaptionDisplayCueEdit[] | undefined,
+  target: DisplayCueTrimTarget,
+  spans: CaptionSourceSpan[],
+): CaptionDisplayCueEdit[] {
+  if (target.editId && target.partId) {
+    return (edits ?? []).map((edit) => edit.id !== target.editId ? edit : ({
+      ...edit,
+      parts: edit.parts.map((part) => part.id === target.partId ? { ...part, sourceSpans: spans } : part),
+    }));
+  }
+  const coveredWordRefs = [...new Set(target.sourceSpans.map((span) => span.wordRef).filter(Boolean))];
+  const text = target.text?.trim() || joinCaptionWords(target.sourceSpans.map((span) => ({ text: span.sourceText })));
+  return [...(edits ?? []), {
+    id: newManualCueIdentity(),
+    coveredWordRefs,
+    parts: [{ id: newManualCueIdentity(), text, sourceSpans: spans }],
+  }];
+}
+
+export function buildDisplayTrimSourceEntries(
   state: TimelineState, trackId: TrackId, target: DisplayCueTrimTarget, spans: CaptionSourceSpan[],
 ) {
   return (captionsOnTrack(state, trackId)?.sourceEntries ?? []).map((entry) => entry.id !== target.laneId ? entry : ({
     ...entry,
-    displayCueEdits: entry.displayCueEdits?.map((edit) => edit.id !== target.editId ? edit : ({
-      ...edit, parts: edit.parts.map((part) => part.id === target.partId ? { ...part, sourceSpans: spans } : part),
-    })),
+    displayCueEdits: applyDisplaySpanUpdate(entry.displayCueEdits, target, spans),
   }));
+}
+
+export function buildDisplayRollSourceEntries(
+  state: TimelineState,
+  trackId: TrackId,
+  left: DisplayCueTrimTarget,
+  right: DisplayCueTrimTarget,
+  leftSpans: CaptionSourceSpan[],
+  rightSpans: CaptionSourceSpan[],
+) {
+  return (captionsOnTrack(state, trackId)?.sourceEntries ?? []).map((entry) => {
+    if (entry.id !== left.laneId && entry.id !== right.laneId) return entry;
+    let edits = entry.displayCueEdits;
+    if (entry.id === left.laneId) edits = applyDisplaySpanUpdate(edits, left, leftSpans);
+    if (entry.id === right.laneId) edits = applyDisplaySpanUpdate(edits, right, rightSpans);
+    return { ...entry, displayCueEdits: edits };
+  });
 }
 
 function clampDisplayTrimDelta(
@@ -93,8 +178,11 @@ function clampDisplayTrimDelta(
   const pages = buildCaptionPages(captions, state.items, state.fps)
     .filter((identity) => identity.laneId === target.laneId)
     .sort((left, right) => left.page.start - right.page.start || left.page.end - right.page.end);
-  const index = pages.findIndex((identity) => identity.displayCueEditId === target.editId
-    && identity.displayCuePartId === target.partId);
+  const index = pages.findIndex((identity) => (
+    target.editId && target.partId
+      ? identity.displayCueEditId === target.editId && identity.displayCuePartId === target.partId
+      : identity.id === target.key
+  ));
   if (index < 0) return requested;
   const page = pages[index]!.page;
   const start = Math.round(page.start * state.fps / 1000);
@@ -102,11 +190,13 @@ function clampDisplayTrimDelta(
   const minimum = Math.max(6, Math.round(state.fps * 0.5));
   if (edge === 'start') {
     const previousEnd = index > 0 ? Math.round(pages[index - 1]!.page.end * state.fps / 1000) : 0;
-    return Math.max(previousEnd - start, Math.min(end - start - minimum, requested));
+    const maxDelta = end - start < minimum ? 0 : end - start - minimum;
+    return Math.max(previousEnd - start, Math.min(maxDelta, requested));
   }
   const nextStart = index + 1 < pages.length
     ? Math.round(pages[index + 1]!.page.start * state.fps / 1000) : Number.POSITIVE_INFINITY;
-  return Math.max(minimum - (end - start), Math.min(nextStart - end, requested));
+  const minDelta = end - start < minimum ? 0 : minimum - (end - start);
+  return Math.max(minDelta, Math.min(nextStart - end, requested));
 }
 
 export function useDisplayCueTrim(options: {
@@ -114,7 +204,14 @@ export function useDisplayCueTrim(options: {
   onUpdate: (patch: Partial<CaptionsData>) => void; onLivePreview?: (patch: Partial<CaptionsData> | null) => void; onProblem: (message: string) => void;
 }) {
   const { state, trackId, playheadFrame, px, snapping, locked, onUpdate, onLivePreview, onProblem } = options;
-  const [drag, setDrag] = useState<(CueTimingDrag & { target: DisplayCueTrimTarget; edge: ManualCueEdge }) | null>(null);
+  type DisplayTrimState = (CueTimingDrag & { target: DisplayCueTrimTarget; edge: ManualCueEdge }) | null;
+  const [drag, setDragState] = useState<DisplayTrimState>(null);
+  const dragRef = useRef<DisplayTrimState>(null);
+  const setDrag = (next: SetStateAction<DisplayTrimState>) => {
+    const resolved = typeof next === 'function' ? next(dragRef.current) : next;
+    dragRef.current = resolved;
+    setDragState(resolved);
+  };
   const commit = (target: DisplayCueTrimTarget, edge: ManualCueEdge, deltaFrames: number) => {
     const boundedDelta = clampDisplayTrimDelta(state, trackId, target, edge, deltaFrames);
     const spans = resizeDisplayCueSourceSpans(target.source, target.sourceSpans, state.fps, edge, boundedDelta);
@@ -123,8 +220,11 @@ export function useDisplayCueTrim(options: {
   };
   const start = (event: ReactPointerEvent, key: string, target: DisplayCueTrimTarget, edge: ManualCueEdge) => {
     if (locked || event.button !== 0) return;
-    const firstDelta = clampDisplayTrimDelta(state, trackId, target, edge, edge === 'start' ? 1 : -1);
-    if (!firstDelta || !displayCueTrimRange(target, state.fps, edge, firstDelta)) {
+    const canMoveDirection = (dir: number) => {
+      const clamped = clampDisplayTrimDelta(state, trackId, target, edge, dir);
+      return clamped !== 0 && Boolean(displayCueTrimRange(target, state.fps, edge, clamped));
+    };
+    if (!canMoveDirection(edge === 'start' ? 1 : -1) && !canMoveDirection(edge === 'start' ? -1 : 1)) {
       event.preventDefault();
       event.stopPropagation();
       onProblem('这句字幕跨越多个剪辑区间或没有可裁范围，未修改。');
@@ -140,12 +240,14 @@ export function useDisplayCueTrim(options: {
       deltaFrames: 0, snapPoints: captionSnapPoints(state, trackId) });
   };
   const move = (event: ReactPointerEvent, key: string) => {
+    const drag = dragRef.current;
     if (!drag || drag.key !== key) return;
     const requested = cueDeltaFrames(drag, event.clientX, drag.edge === 'start' ? 'trim-left' : 'trim-right', state, playheadFrame, px, snapping);
     const deltaFrames = clampDisplayTrimDelta(state, trackId, drag.target, drag.edge, requested);
     setDrag((current) => current?.key === key ? { ...current, deltaFrames } : current);
   };
   const finish = (event: ReactPointerEvent, key: string) => {
+    const drag = dragRef.current;
     if (!drag || drag.key !== key) return;
     const requested = cueDeltaFrames(drag, event.clientX, drag.edge === 'start' ? 'trim-left' : 'trim-right', state, playheadFrame, px, snapping);
     const deltaFrames = clampDisplayTrimDelta(state, trackId, drag.target, drag.edge, requested);
@@ -243,7 +345,13 @@ export function useCaptionTrim(options: {
   px: number; snapping: boolean; locked: boolean; onUpdate: (patch: Partial<CaptionsData>) => void; onLivePreview?: (patch: Partial<CaptionsData> | null) => void;
 }) {
   const { state, captions, trackId, playheadFrame, px, snapping, locked, onUpdate, onLivePreview } = options;
-  const [drag, setDrag] = useState<TrimDrag | null>(null);
+  const [drag, setDragState] = useState<TrimDrag | null>(null);
+  const dragRef = useRef<TrimDrag | null>(null);
+  const setDrag = (next: SetStateAction<TrimDrag | null>) => {
+    const resolved = typeof next === 'function' ? next(dragRef.current) : next;
+    dragRef.current = resolved;
+    setDragState(resolved);
+  };
   const delta = (current: TrimDrag, clientX: number) => cueDeltaFrames(
     current, clientX, current.edge === 'start' ? 'trim-left' : 'trim-right', state, playheadFrame, px, snapping,
   );
@@ -259,11 +367,13 @@ export function useCaptionTrim(options: {
     });
   };
   const move = (event: ReactPointerEvent, key: string) => {
+    const drag = dragRef.current;
     if (!drag || drag.key !== key) return;
     const deltaFrames = delta(drag, event.clientX);
     setDrag((current) => current?.key === key ? { ...current, deltaFrames } : current);
   };
   const finish = (event: ReactPointerEvent, key: string) => {
+    const drag = dragRef.current;
     if (!drag || drag.key !== key || !captions) return;
     const deltaMs = delta(drag, event.clientX) * 1000 / state.fps;
     const patch = deltaMs ? resizeManualCue(captions, drag.target.laneId, drag.target.index, drag.edge, deltaMs, state.fps) : null;
@@ -300,9 +410,60 @@ export function resolveDisplayRollSpans(
   rightRange: { start: number; end: number };
 } | null {
   if (!requestedDeltaFrames) return null;
+  const lpOrig = projectCaptionSourceSpans(left.source, left.sourceSpans, fps);
+  const rpOrig = projectCaptionSourceSpans(right.source, right.sourceSpans, fps);
+  if (!lpOrig.length || !rpOrig.length) return null;
+  const leftKeys = new Set(lpOrig.map((span) => span.segmentKey));
+  const rightKeys = new Set(rpOrig.map((span) => span.segmentKey));
+  if (leftKeys.size !== 1 || rightKeys.size !== 1) return null;
+  const leftSegKey = lpOrig[0]!.segmentKey;
+  const rightSegKey = rpOrig[0]!.segmentKey;
+  const sameSegment = left.source.id === right.source.id && leftSegKey === rightSegKey;
+  const lOrigEnd = Math.max(...lpOrig.map((span) => span.endFrame));
+  const rOrigStart = Math.min(...rpOrig.map((span) => span.startFrame));
+  const leftBounds = captionSourceSegmentBounds(left.source, leftSegKey, fps);
+  const rightBounds = captionSourceSegmentBounds(right.source, rightSegKey, fps);
+  const leftLastIdx = lpOrig.at(-1)!.spanIndex;
+  const rightFirstIdx = rpOrig[0]!.spanIndex;
+
   const tryAt = (delta: number) => {
-    const leftSpans = resizeDisplayCueSourceSpans(left.source, left.sourceSpans, fps, 'end', delta);
-    const rightSpans = resizeDisplayCueSourceSpans(right.source, right.sourceSpans, fps, 'start', delta);
+    if (!delta) return null;
+    let leftSpans: CaptionSourceSpan[] | null = null;
+    let rightSpans: CaptionSourceSpan[] | null = null;
+    if (sameSegment) {
+      if (delta > 0) {
+        rightSpans = resizeDisplayCueSourceSpans(right.source, right.sourceSpans, fps, 'start', delta);
+        if (!rightSpans) return null;
+        const rpNew = projectCaptionSourceSpans(right.source, rightSpans, fps);
+        if (!rpNew.length) return null;
+        const boundaryMs = rightSpans[rpNew[0]!.spanIndex]!.startMs;
+        const leftTail = left.sourceSpans[leftLastIdx]!;
+        if (boundaryMs > leftTail.endMs && boundaryMs <= (leftBounds?.maxSourceMs ?? Number.POSITIVE_INFINITY)) {
+          leftSpans = left.sourceSpans.map((candidate, index) => index === leftLastIdx
+            ? { ...candidate, endMs: boundaryMs }
+            : candidate);
+        } else {
+          leftSpans = resizeDisplayCueSourceSpans(left.source, left.sourceSpans, fps, 'end', delta, { maxSourceMs: boundaryMs });
+        }
+      } else {
+        leftSpans = resizeDisplayCueSourceSpans(left.source, left.sourceSpans, fps, 'end', delta);
+        if (!leftSpans) return null;
+        const lpNew = projectCaptionSourceSpans(left.source, leftSpans, fps);
+        if (!lpNew.length) return null;
+        const boundaryMs = leftSpans[lpNew.at(-1)!.spanIndex]!.endMs;
+        const rightHead = right.sourceSpans[rightFirstIdx]!;
+        if (boundaryMs < rightHead.startMs && boundaryMs >= (rightBounds?.minSourceMs ?? 0)) {
+          rightSpans = right.sourceSpans.map((candidate, index) => index === rightFirstIdx
+            ? { ...candidate, startMs: boundaryMs }
+            : candidate);
+        } else {
+          rightSpans = resizeDisplayCueSourceSpans(right.source, right.sourceSpans, fps, 'start', delta, { minSourceMs: boundaryMs });
+        }
+      }
+    } else {
+      leftSpans = resizeDisplayCueSourceSpans(left.source, left.sourceSpans, fps, 'end', delta);
+      rightSpans = resizeDisplayCueSourceSpans(right.source, right.sourceSpans, fps, 'start', delta);
+    }
     if (!leftSpans || !rightSpans) return null;
     const lp = projectCaptionSourceSpans(left.source, leftSpans, fps);
     const rp = projectCaptionSourceSpans(right.source, rightSpans, fps);
@@ -312,8 +473,10 @@ export function resolveDisplayRollSpans(
     const rStart = Math.min(...rp.map((s) => s.startFrame));
     const rEnd = Math.max(...rp.map((s) => s.endFrame));
     if (lEnd <= lStart || rEnd <= rStart || lEnd > rStart + 1) return null;
+    const actualDelta = delta > 0 ? lEnd - lOrigEnd : rStart - rOrigStart;
+    if ((delta > 0 && actualDelta <= 0) || (delta < 0 && actualDelta >= 0)) return null;
     return {
-      deltaFrames: delta,
+      deltaFrames: actualDelta,
       leftSpans,
       rightSpans,
       leftRange: { start: lStart * 1000 / fps, end: lEnd * 1000 / fps },
@@ -335,14 +498,28 @@ export function resolveDisplayRollSpans(
   return best;
 }
 
+export function canDisplayRoll(
+  left: DisplayCueTrimTarget,
+  right: DisplayCueTrimTarget,
+  fps: number,
+): boolean {
+  return Boolean(resolveDisplayRollSpans(left, right, fps, 1) || resolveDisplayRollSpans(left, right, fps, -1));
+}
+
 export function useCaptionRollTrim(options: {
   state: TimelineState; captions: CaptionsData | null; trackId: TrackId; playheadFrame: number;
   px: number; snapping: boolean; locked: boolean; onUpdate: (patch: Partial<CaptionsData>) => void; onLivePreview?: (patch: Partial<CaptionsData> | null) => void; onProblem: (message: string) => void;
 }) {
   const { state, captions, trackId, playheadFrame, px, snapping, locked, onUpdate, onLivePreview, onProblem } = options;
-  const [drag, setDrag] = useState<CaptionRollDrag | null>(null);
+  const [drag, setDragState] = useState<CaptionRollDrag | null>(null);
+  const dragRef = useRef<CaptionRollDrag | null>(null);
+  const setDrag = (next: SetStateAction<CaptionRollDrag | null>) => {
+    const resolved = typeof next === 'function' ? next(dragRef.current) : next;
+    dragRef.current = resolved;
+    setDragState(resolved);
+  };
   const delta = (current: CaptionRollDrag, clientX: number) => cueDeltaFrames(
-    current, clientX, 'trim-right', state, playheadFrame, px, snapping,
+    current, clientX, 'trim-left', state, playheadFrame, px, snapping,
   );
   const rollPatch = (pair: CaptionRollPair, deltaFrames: number): Partial<CaptionsData> | null => {
     if (!captions || !deltaFrames) return null;
@@ -352,23 +529,16 @@ export function useCaptionRollTrim(options: {
     }
     const resolved = resolveDisplayRollSpans(pair.left, pair.right, state.fps, deltaFrames);
     if (!resolved) return null;
-    const sourceEntries = (captionsOnTrack(state, trackId)?.sourceEntries ?? []).map((entry) => {
-      if (entry.id !== pair.left.laneId && entry.id !== pair.right.laneId) return entry;
-      return {
-        ...entry,
-        displayCueEdits: entry.displayCueEdits?.map((edit) => ({
-          ...edit,
-          parts: edit.parts.map((part) => (
-            part.id === pair.left.partId && edit.id === pair.left.editId
-              ? { ...part, sourceSpans: resolved.leftSpans }
-              : part.id === pair.right.partId && edit.id === pair.right.editId
-                ? { ...part, sourceSpans: resolved.rightSpans }
-                : part
-          )),
-        })),
-      };
-    });
-    return { sourceEntries };
+    return {
+      sourceEntries: buildDisplayRollSourceEntries(
+        state,
+        trackId,
+        pair.left,
+        pair.right,
+        resolved.leftSpans,
+        resolved.rightSpans,
+      ),
+    };
   };
   const commit = (pair: CaptionRollPair, deltaFrames: number) => {
     if (!captions || !deltaFrames) return;
@@ -395,11 +565,13 @@ export function useCaptionRollTrim(options: {
     });
   };
   const move = (event: ReactPointerEvent, key: string) => {
+    const drag = dragRef.current;
     if (!drag || drag.key !== key) return;
     const deltaFrames = delta(drag, event.clientX);
     setDrag((current) => current?.key === key ? { ...current, deltaFrames } : current);
   };
   const finish = (event: ReactPointerEvent, key: string) => {
+    const drag = dragRef.current;
     if (!drag || drag.key !== key) return;
     const deltaFrames = delta(drag, event.clientX);
     const activePair = drag.pair;

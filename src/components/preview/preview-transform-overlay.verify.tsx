@@ -178,7 +178,11 @@ for (const trackPatch of [{ locked: true }, { hidden: true }]) {
     /const isMosaicItem = inspector\?\.selectedItem\?\.kind === 'mosaic'/,
     '选中独立马赛克片段时，PreviewWorkspace 不得切入不支持的逐片段滤镜遮罩/马赛克编辑模式',
   );
-  assert.match(workspaceSource, /!isMosaicItem && activeTab === 'mosaic'/);
+  assert.match(workspaceSource, /!isMosaicItem && activeTab === 'effects' && hasLocalClipMosaic/);
+
+  const transformOverlaySource = readFileSync(new URL('./PreviewTransformOverlay.tsx', import.meta.url), 'utf8');
+  assert.match(transformOverlaySource, /resizeCompositionMosaic\(/, '独立马赛克边角拖拽必须走 resizeCompositionMosaic，不能按画布中心反方向缩放');
+  assert.match(transformOverlaySource, /state\.width \/ 2 \+ candidate\.transform\.x \/ 100 \* state\.width/, '缩放/旋转锚点必须跟随片段自身中心');
 }
 
 // Selected mosaic elevates its hit region above unselected caption hitboxes, while yielding when a caption is active or when an untransformed bottom-track video is selected.

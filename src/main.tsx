@@ -1,13 +1,14 @@
 import './index.css';
-import './skin-themes.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { TranscriptWindowRoot } from './media/TranscriptWindowRoot';
+import { TooltipHost } from './ui/TooltipHost';
 import { loadProjectFonts } from './fonts/googleFonts';
 import { hydratePlugins } from './plugins/store';
 import { initSkins } from './skins';
 import { ensureLocaleDict, getLocale } from './i18n/locale';
+import './skin-themes.css';
 
 // Load the Chinese catalog-name map before first render so legacy project names display in Chinese.
 const localeReady = ensureLocaleDict(getLocale());
@@ -29,6 +30,7 @@ void localeReady.then(() => {
   createRoot(root).render(
     <StrictMode>
       {isTranscriptWindow ? <TranscriptWindowRoot /> : <App />}
+      <TooltipHost />
     </StrictMode>,
   );
 });

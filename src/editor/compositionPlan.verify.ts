@@ -182,4 +182,35 @@ assert.equal(JSON.stringify(state), before, 'planning never mutates engineering/
   assert.ok(mosaicIdx < captionIdx, '特效/马赛克层必须严格排在字幕层下方，不能遮挡上方字幕');
 }
 
+// Standalone mosaics only force exact GL transitions when overlapping in time above the transition window.
+{
+  const mosaicTimeline: TimelineState = {
+    ...state,
+    compositingOrder: 'tracks',
+    trackOrder: ['M1', 'V1', 'A1'],
+    tracks: { M1: { kind: 'video', visualRole: 'effect' }, V1: { kind: 'video' }, A1: { kind: 'audio' } },
+    items: [
+      { ...clip('d1', 0, 0, 'V1'), denoisedSrc: '/clean.wav', keyframes: { volume: [{ frame: 0, value: 1 }, { frame: 30, value: 0.5 }] }, zoom: { magnification: 1.2 }, mask: { type: 'rectangle', x: 0.1, y: 0.1, width: 0.8, height: 0.8, feather: 0 } },
+      { ...clip('d2', 60, 60, 'V1'), denoisedSrc: '/clean.wav' },
+      { ...clip('t1', 200, 0, 'V1') },
+      { ...clip('t2', 260, 60, 'V1') },
+      {
+        id: 'far-mosaic', name: 'far-mosaic', kind: 'mosaic', track: 'M1', startFrame: 0, durationInFrames: 40,
+        mosaic: { shape: 'rectangle', centerX: 0.5, centerY: 0.5, width: 0.2, height: 0.2, strength: 60, feather: 0, opacity: 1 },
+      },
+    ],
+    transitions: [{
+      id: 'far-tr', outgoingItemId: 't1', incomingItemId: 't2', trackId: 'V1',
+      type: 'cross-dissolve', durationInFrames: 16,
+    }],
+  };
+  const p = compositionPlan(mosaicTimeline, { mode: 'player' });
+  assert.equal(p.glWindows.length, 0, 'non-overlapping mosaic does not force unselected transitions into dual-decoder WebGL');
+  assert.deepEqual(
+    p.sharedVisualGroups.map((group) => group.map((c) => c.id)),
+    [['d1', 'd2']],
+    'denoised/volume-keyframed/zoom/masked adjacent clips share visual decoders in Player mode',
+  );
+}
+
 console.log('compositionPlan.verify: ordering, source frames, reuse, transitions, mask, nesting and sound passed');

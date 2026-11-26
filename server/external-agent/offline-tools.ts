@@ -19,7 +19,7 @@ import { TIMELINE_IMPORT_TOOL_SCHEMAS } from '../../src/agent/tools/timeline-imp
 const OFFLINE_TOOL_DESCRIPTIONS: Record<string, string> = {
   begin_edit_session: 'Start an offline server draft. approvalMode must be auto; open the editor URL for manual approval.',
   review_edit_session: 'Atomically commit the complete offline draft and return terminal status applied, or write nothing.',
-  edit_captions: 'Edit built-in caption template, style, layout, text, source, and language data. preset_* actions require the browser editor.',
+  edit_captions: 'Edit built-in caption template, style, layout, text, manual cues (cue_add/cue_update/cue_remove), import_srt, paste_transcript, source, and language data, with optional skipAvoidance on enable/source_*. preset_* actions require the browser editor.',
 };
 
 const OFFLINE_SESSION_TOOL_NAMES = new Set([

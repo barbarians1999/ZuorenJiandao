@@ -124,6 +124,11 @@ export function MediaPoolGrid(props: MediaPoolGridProps) {
   };
   const startMarquee = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (
+      event.clientX >= rect.left + event.currentTarget.clientWidth
+      || event.clientY >= rect.top + event.currentTarget.clientHeight
+    ) return;
     const target = event.target as HTMLElement;
     // Include .cc-folder-card: folders are div[role=button] (for HTML5 drop), not <button>.
     if (target.closest('[data-cc-media-asset-id], .cc-folder-card, button, input, select, textarea')) return;
@@ -171,6 +176,7 @@ export function MediaPoolGrid(props: MediaPoolGridProps) {
       onPointerMove={moveMarquee}
       onPointerUp={finishMarquee}
       onPointerCancel={finishMarquee}
+      onLostPointerCapture={finishMarquee}
     >
       {marqueeStyle && <div className="cc-media-marquee" aria-hidden="true" style={marqueeStyle} />}
       <MediaVirtualRows {...props} {...windowState} />

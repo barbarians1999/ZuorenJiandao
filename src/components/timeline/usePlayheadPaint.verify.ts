@@ -86,4 +86,46 @@ assert.match(
   'the audio lock must release when no audible media element is available',
 );
 
-console.log('usePlayheadPaint.verify: marking-mode audio clock passed');
+assert.match(
+  paintSource,
+  /onPlaybackFrameRef\.current\?\.\(/,
+  'usePlayheadPaint must notify playback follow listeners during playback',
+);
+assert.match(
+  controllerSource,
+  /playbackPageScrollLeft\(/,
+  'timeline controller must compute playback page-turn scroll via playbackPageScrollLeft',
+);
+assert.match(
+  controllerSource,
+  /if \(el\.scrollLeft !== prevScrollLeft\) syncVisibleWindowRef\.current\(\);/,
+  'timeline controller must sync visibleWindow immediately after playback page-turn scroll',
+);
+assert.match(
+  paintSource,
+  /Math\.abs\(clamped - playerFrame\) > maxDivergence/,
+  'audio clock must yield back to player clock when diverged by >1s',
+);
+assert.match(
+  controllerSource,
+  /\|\| seekGestureRef\.current !== null/,
+  'playback auto-scroll must yield during any active seek gesture',
+);
+assert.match(
+  controllerSource,
+  /startFrame:\s*frameAtClientX\(event\.clientX\)/,
+  'blank-lane click must freeze its target frame at pointerDown',
+);
+assert.match(
+  controllerSource,
+  /commands\.splitFoldGroup\(group\.id, frame\)/,
+  'Ctrl+B split must support collapsed fold groups',
+);
+const monitorBarSource = readFileSync(new URL('../preview/PreviewMonitorBar.tsx', import.meta.url), 'utf8');
+assert.match(
+  monitorBarSource,
+  /const renderedFrame = hasItems \? currentFrameRef\.current : 0;/,
+  'PreviewMonitorBar must render from currentFrameRef so React re-renders never revert playback timecode',
+);
+
+console.log('usePlayheadPaint.verify: marking-mode audio clock & playback page-turn wiring passed');

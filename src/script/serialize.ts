@@ -5,6 +5,7 @@
 // `[gap Nf]`. Body order = playback order; apply re-derives all frames.
 import { timelineTrackIds, trackAlias, type TimelineItem, type TimelineState, type TrackId } from '../editor/types';
 import { buildScriptRows, toSegments } from '../transcript/segment';
+import { resolveTranscriptUnit } from '../transcript/trackEditCompiler';
 import { hasOperationalTranscript } from '../transcript/types';
 
 export interface SegRow {
@@ -62,42 +63,47 @@ export function buildModel(state: TimelineState, options: SerializeTimelineOptio
       if (!freshRegion && last && last.source === source) last.rows.push(row);
       else regions.push({ source, rows: [row] });
     };
+    const handledFoldGroups = new Set<string>();
     for (const it of items) {
+      const group = state.foldGroups?.find((g) => g.itemIds.includes(it.id) && g.sourceTranscript?.length);
+      if (group && handledFoldGroups.has(group.id)) {
+        cursor = Math.max(cursor, it.startFrame + it.durationInFrames);
+        continue;
+      }
       if (it.startFrame > cursor) {
         const gap: GapRow = { kind: 'gap', frames: it.startFrame - cursor };
         if (regions.length) regions[regions.length - 1].rows.push(gap);
         else regions.push({ source: it.name, rows: [gap] });
       }
-      if (hasOperationalTranscript(it)) {
-        // a transcript item is always its own region → [sN] unambiguous per region
-        const deleted = new Set(it.deletedWordIdx ?? []);
+      const unit = (hasOperationalTranscript(it) || group?.sourceTranscript?.length)
+        ? resolveTranscriptUnit(state, it.id)
+        : null;
+      if (unit && unit.canonicalWords.length > 0) {
+        if (group) handledFoldGroups.add(group.id);
+        const deleted = unit.deletedSet;
         const rows: Row[] = [];
         const silences = options.showSilence
-          ? buildScriptRows(it.transcript, deleted, {
+          ? buildScriptRows(unit.canonicalWords, deleted, {
               fps: state.fps,
-              gapCapsMs: it.gapCapsMs,
-              silenceFrames: it.silenceFrames,
-              playOrder: it.transcriptPlayOrder,
+              gapCapsMs: unit.gapCapsMs,
+              playOrder: unit.playOrder,
             }).filter((row) => row.kind === 'gap')
           : [];
-        toSegments(it.transcript).forEach((seg, i) => {
+        toSegments(unit.canonicalWords).forEach((seg, i) => {
           const kept = seg.words.filter((w) => !deleted.has(w.gi));
-          if (!kept.length) return; // Fully deleted segments are omitted.
-          // Silence markers are standalone rows in timeline.md. A sentence may
-          // contain more than one pause. `afterWordGi` identifies the first word
-          // after the pause, so emit the marker before the segment containing it.
+          if (!kept.length) return;
           const wordIds = new Set(seg.words.map((word) => word.gi));
           for (const silence of silences) {
             if (!wordIds.has(silence.afterWordGi)) continue;
             rows.push({
               kind: 'silence',
-              itemId: it.id,
+              itemId: unit.anchorItemId,
               afterWordIndex: silence.afterWordGi,
               originalMs: silence.gapMs,
               appliedMs: silence.appliedMs,
             });
           }
-          rows.push({ kind: 'seg', sn: i + 1, itemId: it.id, wordGis: seg.words.map((w) => w.gi), keptText: joinWords(kept.map((w) => w.text)) });
+          rows.push({ kind: 'seg', sn: i + 1, itemId: unit.anchorItemId, wordGis: seg.words.map((w) => w.gi), keptText: joinWords(kept.map((w) => w.text)) });
         });
         regions.push({ source: it.name, rows });
       } else {

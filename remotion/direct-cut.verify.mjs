@@ -104,7 +104,6 @@ for (const change of [
   (s) => s.items[0].effects = [{ assetId: 'fx' }],
   (s) => s.items[0].filters = { blur: 2 },
   (s) => s.items[0].keyframes = { volume: [{ frame: 0, value: 1 }] },
-  (s) => s.items[0].transcript = [{ text: 'hello' }],
   (s) => s.items[0].playbackRate = 1.25,
   (s) => s.items[0].fadeInFrames = 2,
   (s) => s.items[0].srcInFrame = -1,
@@ -119,6 +118,11 @@ for (const change of [
   (s) => s.tracks.V1.role = 'follower',
   (s) => s.tracks.V1.kind = 'audio',
 ]) { const candidate = makeState(); change(candidate); assert.equal(planDirectCutExport({ state: candidate }).eligible, false); }
+{
+  const withTranscript = makeState();
+  withTranscript.items[0].transcript = [{ text: 'hello' }];
+  assert.equal(planDirectCutExport({ state: withTranscript }).eligible, true, 'inert transcript metadata must not disqualify direct-cut under track-ssot-v1');
+}
 for (const options of [{ codec: 'prores' }, { scale: 0.5 }, { frameRange: [0, 999] }, { frameRange: [20, 10] }, { separateAudioTo: 'x.wav' }]) {
   assert.equal(planDirectCutExport({ state, ...options }).eligible, false);
 }

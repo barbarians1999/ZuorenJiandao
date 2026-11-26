@@ -5,7 +5,22 @@ import { randomUUID } from 'node:crypto';
 
 const REFERENCE_VERSION = 1;
 const MAX_MANIFEST_BYTES = 8 * 1024;
+const RESOLVED_CACHE_TTL_MS = 2_500;
+const MAX_RESOLVED_CACHE_ENTRIES = 512;
 export const MEDIA_REFERENCE_DIRECTORY = '.references';
+
+const resolvedReferenceCache = new Map<string, { canonical: string; expiresAt: number }>();
+
+const referenceCacheKey = (directory: string, name: string): string => `${directory}\u0000${name}`;
+
+function cacheResolvedReference(key: string, canonical: string): void {
+  resolvedReferenceCache.delete(key);
+  resolvedReferenceCache.set(key, { canonical, expiresAt: Date.now() + RESOLVED_CACHE_TTL_MS });
+  if (resolvedReferenceCache.size > MAX_RESOLVED_CACHE_ENTRIES) {
+    const oldest = resolvedReferenceCache.keys().next().value;
+    if (oldest !== undefined) resolvedReferenceCache.delete(oldest);
+  }
+}
 
 interface MediaReferenceRecord {
   readonly version: 1;
@@ -60,17 +75,30 @@ export async function registerMediaReference(
   await writeFile(temporary, `${JSON.stringify(record)}\n`, { mode: 0o600 });
   try {
     await rename(temporary, manifest);
+    cacheResolvedReference(referenceCacheKey(directory, name), canonicalSource);
   } finally {
     await unlink(temporary).catch(() => undefined);
   }
 }
 
 export function resolveMediaReference(directory: string, name: string): string | null {
+  const key = referenceCacheKey(directory, name);
+  const cached = resolvedReferenceCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    try {
+      if (statSync(cached.canonical).isFile()) return cached.canonical;
+    } catch {
+      // Fall through to full manifest resolution on error.
+    }
+    resolvedReferenceCache.delete(key);
+  }
   const sourcePath = readMediaReference(directory, name)?.sourcePath;
   if (!sourcePath || !existsSync(sourcePath)) return null;
   try {
     const canonical = realpathSync(sourcePath);
-    return statSync(canonical).isFile() ? canonical : null;
+    if (!statSync(canonical).isFile()) return null;
+    cacheResolvedReference(key, canonical);
+    return canonical;
   } catch {
     return null;
   }
@@ -81,6 +109,7 @@ export function hasMediaReference(directory: string, name: string): boolean {
 }
 
 export async function deleteMediaReference(directory: string, name: string): Promise<boolean> {
+  resolvedReferenceCache.delete(referenceCacheKey(directory, name));
   try {
     await unlink(mediaReferenceManifestPath(directory, name));
     return true;

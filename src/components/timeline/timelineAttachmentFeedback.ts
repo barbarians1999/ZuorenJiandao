@@ -8,9 +8,12 @@ export interface TimelineAttachmentFeedback {
   locked: boolean;
 }
 
+const EMPTY_ATTACHMENT_FEEDBACK = new Map<string, TimelineAttachmentFeedback>();
+
 /** Read-only display of explicit directional links; overlapping in time never
  * creates a link, and a disabled media kind must not look like it will follow. */
 export function timelineAttachmentFeedback(state: TimelineState): Map<string, TimelineAttachmentFeedback> {
+  if (!state.items.some((item) => item.mainClipId)) return EMPTY_ATTACHMENT_FEEDBACK;
   const main = mainTrackId(state);
   const selected = new Set(selectedIdsOf(state));
   const owners = new Map(state.items.filter((item) => item.track === main).map((item) => [item.id, item]));

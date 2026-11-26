@@ -123,6 +123,10 @@ export interface ExportWorkflowModel {
 export interface ExportDialogModel {
   tab: ExportTab;
   setTab: Dispatch<SetStateAction<ExportTab>>;
+  project: ProjectDoc;
+  timelineId?: string;
+  startFrame?: number;
+  endFrameExclusive?: number;
   video: ExportVideoSettings;
   subtitles: ExportSubtitleSettings;
   nleFormat: 'fcp_xml' | 'fcp_xml_resolve';
@@ -242,7 +246,7 @@ export function useExportDialogModel({ state, project, projectId, projectName, e
     || (tab === 'subtitles' && !subtitles.captions)
     || (tab === 'mg' && mgItems.length === 0);
   return {
-    tab, setTab, video, subtitles, nleFormat, setNleFormat, includeMg, setIncludeMg,
+    tab, setTab, project, timelineId: project.activeTimelineId, ...exportRange, video, subtitles, nleFormat, setNleFormat, includeMg, setIncludeMg,
     mgItems, base, outputName: name, videoSummary, workflow, disabled,
     qualityMode, setQualityMode,
   };

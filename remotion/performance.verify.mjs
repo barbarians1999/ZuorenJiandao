@@ -107,6 +107,15 @@ assert.deepEqual(
   h264FfmpegOverride('h264_amf')({ type: 'stitcher', args: copyArgs }),
   copyArgs,
 );
+const vp9OverlayArgs = [
+  '-ss', '0', '-c:v', 'libvpx-vp9', '-i', 'overlay.webm',
+  '-i', 'bg.mp4',
+  '-c:v', 'libx264', '-pix_fmt', 'yuv420p', 'out.mp4',
+];
+const overriddenVp9 = h264FfmpegOverride('h264_amf')({ type: 'chunk', args: vp9OverlayArgs });
+assert.equal(overriddenVp9[overriddenVp9.indexOf('-c:v') + 1], 'libvpx-vp9', 'input decoder before -i must stay untouched');
+assert.equal(overriddenVp9[overriddenVp9.lastIndexOf('-c:v') + 1], 'h264_amf', 'output encoder after last -i becomes h264_amf');
+assert.equal(overriddenVp9[overriddenVp9.lastIndexOf('-pix_fmt') + 1], 'nv12', 'output pix_fmt becomes nv12');
 
 {
   const result = await withEncoderProfileFallback({

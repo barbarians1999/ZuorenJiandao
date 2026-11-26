@@ -269,11 +269,18 @@ function registerDesktopHandlers(trustedOrigin: string): void {
       applyResponsiveWindowScale(win);
     }
   }));
+  const lastTitlebarAppearance = new WeakMap<BrowserWindow, { color: string; symbolColor: string; height: number }>();
   ipcMain.handle('openchatcut:titlebar-appearance', trustedDesktopHandler(trustedOrigin, (event, value: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || process.platform !== 'win32') return;
     const appearance = resolveTitlebarAppearance(value, win.webContents.getZoomFactor());
-    if (appearance) win.setTitleBarOverlay(appearance);
+    if (!appearance) return;
+    const prev = lastTitlebarAppearance.get(win);
+    if (prev && prev.color === appearance.color && prev.symbolColor === appearance.symbolColor && prev.height === appearance.height) {
+      return;
+    }
+    lastTitlebarAppearance.set(win, appearance);
+    win.setTitleBarOverlay(appearance);
   }));
   // Zoom accelerators (issue #85): step the saved UI scale and re-apply.
   ipcMain.handle('openchatcut:zoom-step', trustedDesktopHandler(trustedOrigin, async (event, step: unknown) => {

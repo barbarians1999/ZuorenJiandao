@@ -213,13 +213,11 @@ const multiState: TimelineState = {
   assert.deepEqual(words.map((w) => w.text), ['hi', 'yo', 'there', 'friend'], "sourceMode:'timeline' merges every transcribed item, skips untranscribed ones");
 }
 
-// video 源:窗口内"可闻即显"——video 连续播放 [srcIn,srcIn+dur),transcript 删词
-// 不隐藏字幕(否则 agent 的删词选区比 srcIn 窗口窄时,短片开头几秒有人说话没字幕;
-// 2026-07-17 长转短实测抓获)。字幕层藏词走 wordOverrides,不走 deletedWordIdx。
+// video 源:窗口内"可闻即显"——video 连续播放 [srcIn,srcIn+dur)
 {
   const vid = {
     id: 'v', track: 'V1' as const, startFrame: 0, durationInFrames: 100, name: 'talk',
-    kind: 'video' as const, src: '/talk.mp4', srcInFrame: 50, deletedWordIdx: [0],
+    kind: 'video' as const, src: '/talk.mp4', srcInFrame: 50,
     transcript: [
       { text: 'lead', start: 60, end: 80 },   // 窗口内、被删 → 仍显示(可闻)
       { text: 'kept', start: 90, end: 110 },  // 窗口内、未删

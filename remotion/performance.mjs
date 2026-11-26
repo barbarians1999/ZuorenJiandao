@@ -158,24 +158,26 @@ const VAAPI_DEVICE_PATTERN = /^\/dev\/dri\/renderD\d+$/;
 
 function overrideH264Args(args, encoder, vaapiDevice) {
   const next = [...args];
-  const codecIndex = next.findIndex((arg, index) => arg === '-c:v' && index + 1 < next.length);
+  const lastInputIndex = next.lastIndexOf('-i');
+  const codecIndex = next.findIndex((arg, index) => index > lastInputIndex && arg === '-c:v' && index + 1 < next.length);
   if (codecIndex < 0 || next[codecIndex + 1] === 'copy') return next;
   next[codecIndex + 1] = encoder;
   const pixelFormat = encoder === 'h264_vaapi'
     ? 'vaapi'
     : encoder === 'h264_qsv' || encoder === 'h264_amf' ? 'nv12' : 'yuv420p';
-  const pixelIndex = next.indexOf('-pix_fmt');
+  const pixelIndex = next.findIndex((arg, index) => index > lastInputIndex && arg === '-pix_fmt');
   if (pixelIndex >= 0 && pixelIndex + 1 < next.length) next[pixelIndex + 1] = pixelFormat;
   else next.splice(codecIndex, 0, '-pix_fmt', pixelFormat);
   if (encoder !== 'h264_vaapi') return next;
 
   const deviceIndex = next.indexOf('-i');
   next.splice(Math.max(0, deviceIndex), 0, '-vaapi_device', vaapiDevice);
-  const filterIndex = next.indexOf('-vf');
+  const adjustedLastInput = next.lastIndexOf('-i');
+  const filterIndex = next.findIndex((arg, index) => index > adjustedLastInput && arg === '-vf');
   if (filterIndex >= 0 && filterIndex + 1 < next.length) {
     next[filterIndex + 1] = `${next[filterIndex + 1]},format=nv12,hwupload`;
   } else {
-    const outputCodecIndex = next.indexOf('-c:v');
+    const outputCodecIndex = next.findIndex((arg, index) => index > adjustedLastInput && arg === '-c:v');
     next.splice(outputCodecIndex, 0, '-vf', 'format=nv12,hwupload');
   }
   return next;

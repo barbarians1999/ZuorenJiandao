@@ -28,6 +28,35 @@ export function nextFastForwardRate(currentRate: number): number {
   return 2;
 }
 
+export type PlayPausePlan =
+  | { action: 'pause' }
+  | { action: 'play'; seekToFrame: number | null };
+
+/** Resolve Play/Pause deterministically so UI clicks and Space match L's playback path. */
+export function resolvePlayPausePlan(input: {
+  isPlayerPlaying: boolean;
+  shuttleRate: number;
+  playerFrame: number | null;
+  playheadFrame: number;
+  totalFrames: number;
+}): PlayPausePlan {
+  if (input.shuttleRate !== 0 || input.isPlayerPlaying) {
+    return { action: 'pause' };
+  }
+  const maxFrame = Math.max(0, input.totalFrames - 1);
+  const desiredFrame = Math.max(0, Math.min(maxFrame, Math.round(input.playheadFrame)));
+  const liveFrame = typeof input.playerFrame === 'number' && Number.isFinite(input.playerFrame)
+    ? Math.round(input.playerFrame)
+    : desiredFrame;
+  if (input.totalFrames > 0 && desiredFrame >= maxFrame) {
+    return { action: 'play', seekToFrame: 0 };
+  }
+  if (Math.abs(liveFrame - desiredFrame) >= 1) {
+    return { action: 'play', seekToFrame: desiredFrame };
+  }
+  return { action: 'play', seekToFrame: null };
+}
+
 export const PLAYBACK_RATE_EVENT = 'openchatcut:playback-rate';
 export const SHUTTLE_STATE_EVENT = 'openchatcut:shuttle-state';
 

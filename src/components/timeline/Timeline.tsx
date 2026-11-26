@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { theme, themeAlpha } from '../../theme';
 import {
   TRANSITION_LABELS, captionsOnTrack, isEffectTrack, isTextTrack, selectedIdsOf, trackKind, type TrackId,
@@ -31,15 +31,16 @@ import { useTimelineController } from './useTimelineController';
 import { SceneDetectionDialog } from '../../scene-detection/SceneDetectionDialog';
 import { mainTrackId } from '../../editor/magneticTimeline';
 import { canItemMoveToTrack, selectableItemIdsOnTrackSide } from '../../editor/multiSelect';
-import { trackDisplayLabel, trackOrderForHeaderDrop, type TrackDropSide } from './trackHeaderReorder';
+import { planTrackStepReorder, resolveTrackHeaderDrop, trackDisplayLabel, type TrackDropSide } from './trackHeaderReorder';
+import { showAppToast } from '../../ui/appToast';
 
 export function Timeline(props: TimelineProps) {
   const {
     state, commands, playerRef, onRecordVoiceover, onReviewItem, onDropExternalFiles,
     selectedCaptions, onSelectCaption, onMarqueeCaptionSelect,
-    t, total, empty, trackIds, indexes, innerRef, scrollRef,
+    t, total, empty, trackIds, indexes, attachmentFeedback, innerRef, scrollRef,
     relinkInputRef, trackInsertInputRef,
-    hoverPreviewFrame, captionSelectionMovePreview, setCaptionSelectionMovePreview,
+    hoverGuideRef, captionSelectionMovePreview, setCaptionSelectionMovePreview,
     commitTimelineSelectionMove, zoom, zoomMin, setZoom, px, metaOf,
     playheadRef, playheadLineRef, toolbarTimecodeRef, rulerTimecodeRef,
     playing, editMode, placeMode, setPlaceMode, snapping, hoverPreviewEnabled, setHoverPreviewEnabled,
@@ -59,66 +60,127 @@ export function Timeline(props: TimelineProps) {
     markers, zoneIn, zoneOut, editing, editMarker, setEditMarker, pinnedItemIds,
   } = useTimelineController(props);
   const lastPlayheadGripX = useRef<number | null>(null);
-  const [trackReorderDrag, setTrackReorderDrag] = useState<{ sourceId: TrackId; targetId: TrackId; side: TrackDropSide } | null>(null);
+  const [trackReorderDrag, setTrackReorderDrag] = useState<{ sourceId: TrackId; targetId: TrackId | null; side: TrackDropSide | null; order: number | null } | null>(null);
   const trackReorderCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => { trackReorderCleanupRef.current?.(); }, []);
   const startTrackHeaderReorder = (event: ReactPointerEvent<HTMLDivElement>, sourceId: TrackId) => {
+    event.preventDefault();
+    event.stopPropagation();
     trackReorderCleanupRef.current?.();
+    const pointerId = event.pointerId;
+    const captureEl = event.currentTarget;
+    try {
+      captureEl.setPointerCapture(pointerId);
+    } catch {
+      // Ignore environments without pointer capture support.
+    }
     const startY = event.clientY;
     const sourceKind = trackKind(state, sourceId);
     let active = false;
-    let current = { sourceId, targetId: sourceId, side: 'after' as TrackDropSide };
+    let lastClientY = startY;
+    let scrollRaf = 0;
+    let current: { sourceId: TrackId; targetId: TrackId | null; side: TrackDropSide | null; order: number | null } = {
+      sourceId,
+      targetId: null,
+      side: null,
+      order: null,
+    };
     const resolveTarget = (clientY: number) => {
       const rows = [...(innerRef.current?.querySelectorAll<HTMLElement>('[data-timeline-track-row]') ?? [])]
-        .filter((row) => {
+        .flatMap((row) => {
           const id = row.dataset.timelineTrackRow;
-          return !!id && trackKind(state, id) === sourceKind;
+          if (!id || trackKind(state, id) !== sourceKind) return [];
+          const rect = row.getBoundingClientRect();
+          return [{ id, top: rect.top, bottom: rect.bottom }];
         });
-      if (!rows.length) return current;
-      let chosen = rows[0]!;
-      for (const row of rows) {
-        const rect = row.getBoundingClientRect();
-        chosen = row;
-        if (clientY <= rect.bottom) break;
+      const resolved = resolveTrackHeaderDrop(state, sourceId, rows, clientY);
+      return resolved
+        ? { sourceId, targetId: resolved.targetId, side: resolved.side, order: resolved.order }
+        : { sourceId, targetId: null, side: null, order: null };
+    };
+    const stopAutoScroll = () => {
+      if (scrollRaf) {
+        cancelAnimationFrame(scrollRaf);
+        scrollRaf = 0;
       }
-      const rect = chosen.getBoundingClientRect();
-      const targetId = chosen.dataset.timelineTrackRow || sourceId;
-      const side: TrackDropSide = clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-      return { sourceId, targetId, side };
+    };
+    const tickAutoScroll = () => {
+      scrollRaf = 0;
+      const scroller = scrollRef.current;
+      if (!active || !scroller) return;
+      const rect = scroller.getBoundingClientRect();
+      const edge = 36;
+      const step = lastClientY < rect.top + edge ? -8 : lastClientY > rect.bottom - edge ? 8 : 0;
+      if (!step) return;
+      const prevTop = scroller.scrollTop;
+      scroller.scrollTop += step;
+      if (scroller.scrollTop !== prevTop) {
+        current = resolveTarget(lastClientY);
+        setTrackReorderDrag(current);
+      }
+      scrollRaf = requestAnimationFrame(tickAutoScroll);
+    };
+    const ensureAutoScroll = () => {
+      if (!scrollRaf && active) {
+        scrollRaf = requestAnimationFrame(tickAutoScroll);
+      }
     };
     const cleanup = () => {
+      stopAutoScroll();
       window.removeEventListener('pointermove', onMove, true);
       window.removeEventListener('pointerup', onUp, true);
-      window.removeEventListener('pointercancel', onCancel, true);
+      window.removeEventListener('pointercancel', onPointerCancel, true);
       window.removeEventListener('blur', onCancel);
       window.removeEventListener('keydown', onKey, true);
+      try {
+        if (captureEl.hasPointerCapture(pointerId)) captureEl.releasePointerCapture(pointerId);
+      } catch {
+        // Ignore if capture was already released.
+      }
       trackReorderCleanupRef.current = null;
       setTrackReorderDrag(null);
     };
     const onMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      lastClientY = moveEvent.clientY;
       if (!active && Math.abs(moveEvent.clientY - startY) < 4) return;
       active = true;
+      moveEvent.preventDefault();
       current = resolveTarget(moveEvent.clientY);
       setTrackReorderDrag(current);
+      ensureAutoScroll();
     };
-    const onUp = () => {
+    const onUp = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
       const shouldCommit = active;
       const committed = current;
       cleanup();
-      if (!shouldCommit) return;
-      const order = trackOrderForHeaderDrop(state, committed.sourceId, committed.targetId, committed.side);
-      if (order !== null) commands.updateTrack(committed.sourceId, { order });
+      if (!shouldCommit || committed.order === null) return;
+      commands.updateTrack(committed.sourceId, { order: committed.order });
     };
     const onCancel = () => cleanup();
+    const onPointerCancel = (cancelEvent: PointerEvent) => {
+      if (cancelEvent.pointerId === pointerId) cleanup();
+    };
     const onKey = (keyEvent: KeyboardEvent) => { if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); cleanup(); } };
     trackReorderCleanupRef.current = cleanup;
     window.addEventListener('pointermove', onMove, true);
     window.addEventListener('pointerup', onUp, true);
-    window.addEventListener('pointercancel', onCancel, true);
+    window.addEventListener('pointercancel', onPointerCancel, true);
     window.addEventListener('blur', onCancel);
     window.addEventListener('keydown', onKey, true);
   };
   const lastVideoTrackId = [...trackIds].reverse().find((id) => trackKind(state, id) === 'video') ?? null;
+  const trackMetaPlans = useMemo(() => {
+    const plans = new Map<TrackId, { deletePlan: ReturnType<typeof trackDeletePlan>; reorderPlan: ReturnType<typeof planTrackStepReorder> }>();
+    for (const trackId of trackIds) {
+      plans.set(trackId, {
+        deletePlan: trackDeletePlan(state, trackId),
+        reorderPlan: planTrackStepReorder(state, trackId),
+      });
+    }
+    return plans;
+  }, [state.captions, state.interaction?.mainTrackId, state.items, state.trackOrder, state.tracks, state.transitions, trackIds]);
   const [sceneDetectionItemId, setSceneDetectionItemId] = useState<string | null>(null);
   const sceneDetectionItem = sceneDetectionItemId
     ? state.items.find((item) => item.id === sceneDetectionItemId) ?? null
@@ -135,7 +197,11 @@ export function Timeline(props: TimelineProps) {
         ? t(draggedItem?.kind === 'text' ? '松手在上方新增文字轨道' : '松手在上方新增画面轨道')
         : t('松手在下方新增视频轨道');
   const dragNotice = trackReorderDrag
-    ? `${t('拖动调整轨道顺序，松手放到')} ${trackDisplayLabel(state, trackReorderDrag.targetId, t)} ${trackReorderDrag.side === 'before' ? t('上方') : t('下方')}`
+    ? (trackReorderDrag.targetId && trackReorderDrag.side
+      ? `${t('拖动调整轨道顺序，松手放到')} ${trackDisplayLabel(state, trackReorderDrag.targetId, t)} ${trackReorderDrag.side === 'before' ? t('上方') : t('下方')}`
+      : planTrackStepReorder(state, trackReorderDrag.sourceId).sameKindCount < 2
+        ? t('当前类型只有一条轨道，添加同类型轨道后可调整上下层级')
+        : t('请在同类型轨道（画面 / 音乐 / 字幕）区域内上下拖动调整顺序'))
     : !drag ? '' : drag.planError ? t(drag.planError)
     : drag.limitMessage ? t(drag.limitMessage)
     : dragTargetLocked ? t('目标轨道已锁定，片段不会移入；请拖到其他轨道。')
@@ -205,7 +271,7 @@ export function Timeline(props: TimelineProps) {
         hoverPreviewEnabled={hoverPreviewEnabled} setHoverPreviewEnabled={setHoverPreviewEnabled}
         recorder={recorder} canRecord={!!onRecordVoiceover}
         playing={playing}
-        timecodeRef={toolbarTimecodeRef} playheadRef={playheadRef} playheadFrame={playheadRef.current} total={total}
+        timecodeRef={toolbarTimecodeRef} playheadRef={playheadRef} playheadFrame={playheadRef.current} playerRef={playerRef} total={total}
         captionsVisible={captionsVisible}
         zoom={zoom} zoomMin={zoomMin} setZoom={setZoom}
         onPreviewCut={(frame) => { clearHoverPreview(); playerRef.current?.pause(); seekFrame(frame); }}
@@ -271,7 +337,9 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
             const customName = config.name && !(isEffect && (config.name === '马赛克' || config.name === '图形'))
               ? config.name
               : undefined;
-            const deletePlan = trackDeletePlan(state, trackId);
+            const metaPlans = trackMetaPlans.get(trackId);
+            const deletePlan = metaPlans?.deletePlan ?? trackDeletePlan(state, trackId);
+            const reorderPlan = metaPlans?.reorderPlan ?? planTrackStepReorder(state, trackId);
             const reorderTargetSide = trackReorderDrag?.targetId === trackId ? trackReorderDrag.side : null;
             const isVideoBottomNewTrackTarget = !!drag && drag.mode === 'move' && drag.newTrackDrop && drag.newTrackPlacement === 'bottom' && trackId === lastVideoTrackId && draggedItem?.kind !== 'audio';
             return (
@@ -280,6 +348,15 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
                   trackId={trackId} kind={meta.kind} isText={isText} isEffect={isEffect} trackName={titleName} customName={customName} config={headConfig}
                   onStartReorder={(event) => startTrackHeaderReorder(event, trackId)}
                   isReorderSource={trackReorderDrag?.sourceId === trackId}
+                  canMoveUp={reorderPlan.canMoveUp}
+                  canMoveDown={reorderPlan.canMoveDown}
+                  onMoveUp={() => {
+                    if (reorderPlan.moveUpOrder !== null) commands.updateTrack(trackId, { order: reorderPlan.moveUpOrder });
+                  }}
+                  onMoveDown={() => {
+                    if (reorderPlan.moveDownOrder !== null) commands.updateTrack(trackId, { order: reorderPlan.moveDownOrder });
+                  }}
+                  onOpenContextMenu={(x, y) => openTrackContextMenu({ trackId, x, y, frame: playheadRef.current })}
 
 
 
@@ -318,7 +395,7 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
                   )}
                 </TrackHead>
                 {meta.kind === 'caption' ? <CaptionTrackLane state={state} captions={trackCaptions} trackId={trackId}
-                  playheadFrame={playheadRef.current} px={px} rowHeight={rowHeightOf(trackId)} locked={locked} hidden={hidden} snapping={snapping}
+                  playheadFrame={playheadRef.current} px={px} rowHeight={rowHeightOf(trackId)} locked={locked} hidden={hidden} snapping={snapping} visibleWindow={visibleWindow}
                   editMode={editMode} pickMode={pickMode} onStartMarquee={pointer.startMarquee}
                   trackFromClientY={trackFromClientY}
                   selectedCaptions={selectedCaptions} selectedItemIds={selectedIdsOf(state)}
@@ -343,7 +420,7 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
                   onCopyCue={() => { copyCaptionSelections(); }}
                   onPasteCue={pasteCaptionClipboard}
                   onDelete={(laneId, index) => trackCaptions && commands.updateCaptions(removeManualCue(trackCaptions, laneId, index), trackId)} /> : <TrackLane
-                  trackId={trackId} indexes={indexes} state={state} commands={commands} pointer={pointer}
+                  trackId={trackId} indexes={indexes} attachmentFeedback={attachmentFeedback} state={state} commands={commands} pointer={pointer}
                   editMode={editMode} pickMode={pickMode} locked={locked} hidden={hidden} muted={config.muted ?? false}
                   px={px} rowHeight={rowHeightOf(trackId)} visibleWindow={visibleWindow}
                   pinnedItemIds={pinnedItemIds}
@@ -366,13 +443,12 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
             <div className="cc-snap-guide" style={{ position: 'absolute', top: 0, left: HEADER_W + drag.snapAt * px, height: RULER_H + tracksHeight }} />
           )}
 
-          {hoverPreviewFrame !== null && (
-            <div
-              aria-hidden
-              className="cc-timeline-hover-guide"
-              style={{ left: HEADER_W + hoverPreviewFrame * px, height: RULER_H + tracksHeight }}
-            />
-          )}
+          <div
+            ref={hoverGuideRef}
+            aria-hidden
+            className="cc-timeline-hover-guide"
+            style={{ display: 'none', left: 0, height: RULER_H + tracksHeight, willChange: 'transform' }}
+          />
 
           {/* selection-mode timerange marquee (time-marked drag) */}
           {pickDrag && Math.abs(pickDrag.endFrame - pickDrag.startFrame) > 0 && (
@@ -562,6 +638,7 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
             && item.startFrame > sortedItems[index - 1]!.startFrame + sortedItems[index - 1]!.durationInFrames);
         const clearPlan = trackClearPlan(state, trackId);
         const deletePlan = trackDeletePlan(state, trackId);
+        const reorderPlan = planTrackStepReorder(state, trackId);
         const hidden = kind === 'caption' ? !captions?.enabled : !!config.hidden;
         return (
           <TrackContextMenu
@@ -578,10 +655,30 @@ The playhead line/triangle is pointerEvents:none, click it to click the ruler - 
             hasSelectableLeft={kind === 'caption' ? leftCaptionSelections.length > 0 : leftItemIds.length > 0}
             hasSelectableRight={kind === 'caption' ? rightCaptionSelections.length > 0 : rightItemIds.length > 0}
             deleteBlockedReason={deletePlan.blockedReason}
+            canMoveUp={reorderPlan.canMoveUp}
+            canMoveDown={reorderPlan.canMoveDown}
+            onMoveUp={() => {
+              if (reorderPlan.moveUpOrder !== null) commands.updateTrack(trackId, { order: reorderPlan.moveUpOrder });
+            }}
+            onMoveDown={() => {
+              if (reorderPlan.moveDownOrder !== null) commands.updateTrack(trackId, { order: reorderPlan.moveDownOrder });
+            }}
+            onMoveTop={reorderPlan.sameKindCount > 2 ? () => {
+              if (reorderPlan.moveTopOrder !== null) commands.updateTrack(trackId, { order: reorderPlan.moveTopOrder });
+            } : undefined}
+            onMoveBottom={reorderPlan.sameKindCount > 2 ? () => {
+              if (reorderPlan.moveBottomOrder !== null) commands.updateTrack(trackId, { order: reorderPlan.moveBottomOrder });
+            } : undefined}
             onInsert={() => beginTrackInsert(trackId, trackMenu.frame)}
             onTighten={() => {
               if (kind === 'caption' && captionTighten?.changed) commands.setCaptions(captionTighten.captions, trackId);
               else if (kind !== 'caption') commands.tightenTrack(trackId);
+            }}
+            onCompactTracks={() => {
+              const res = commands.compactTracks();
+              showAppToast(res.movedItemCount > 0 || res.removedTrackIds.length > 0
+                ? t('已整理轨道：合并 {moved} 个片段，清理 {removed} 条空轨道', { moved: res.movedItemCount, removed: res.removedTrackIds.length })
+                : t('轨道已紧凑，无需整理'));
             }}
             onSelectAll={() => {
               if (kind === 'caption') {

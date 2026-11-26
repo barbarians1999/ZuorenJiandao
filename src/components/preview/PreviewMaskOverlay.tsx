@@ -8,6 +8,7 @@ import { MASK_CHANNELS, MASK_HANDLES, dragPreviewMask, previewMaskDelta, preview
 export interface PreviewMaskOverlayProps {
   state: TimelineState;
   playerRef: RefObject<PlayerRef | null>;
+  playing?: boolean;
   onSetItemMask: (id: string, mask: ClipMask | null) => void;
   onSetItemKeyframe: (id: string, prop: KeyframeProp, frame: number, value: number, easing?: KeyframeEasing) => void;
   onRemoveItemKeyframe: (id: string, prop: KeyframeProp, frame: number) => void;
@@ -24,24 +25,40 @@ const labels = { nw: '蒙版左上角', n: '蒙版上边', ne: '蒙版右上角'
   se: '蒙版右下角', s: '蒙版下边', sw: '蒙版左下角', w: '蒙版左边' };
 
 export function PreviewMaskOverlay(props: PreviewMaskOverlayProps) {
-  const { state, playerRef } = props;
+  const { state, playerRef, playing = false } = props;
   const [frame, setFrame] = useState(() => Math.round(playerRef.current?.getCurrentFrame() ?? 0));
   const root = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
   const pending = useRef<ClipMask | null>(null);
   const raf = useRef(0);
   const latest = useRef(props); latest.current = props;
-  const item = previewMaskTarget(state, frame);
+  const overlaySleeping = playing && !gesture.current;
+  const item = overlaySleeping ? undefined : previewMaskTarget(state, frame);
   const geometry = item && previewMaskGeometry(state, item, frame - item.startFrame);
 
   useEffect(() => {
     const player = playerRef.current;
     if (!player) return;
-    setFrame(Math.round(player.getCurrentFrame()));
-    const onFrame = ({ detail }: { detail: { frame: number } }) => setFrame(Math.round(detail.frame));
+    const syncNow = () => setFrame(Math.round(player.getCurrentFrame()));
+    syncNow();
+    const onFrame = ({ detail }: { detail: { frame: number } }) => {
+      if (playingRef.current && !gesture.current) return;
+      setFrame(Math.round(detail.frame));
+    };
     player.addEventListener('frameupdate', onFrame);
-    return () => player.removeEventListener('frameupdate', onFrame);
+    player.addEventListener('pause', syncNow);
+    player.addEventListener('seeked', syncNow);
+    return () => {
+      player.removeEventListener('frameupdate', onFrame);
+      player.removeEventListener('pause', syncNow);
+      player.removeEventListener('seeked', syncNow);
+    };
   }, [playerRef]);
+  useEffect(() => {
+    if (!playing && playerRef.current) setFrame(Math.round(playerRef.current.getCurrentFrame()));
+  }, [playing, playerRef]);
 
   const isValid = useCallback((g: Gesture) => {
     const live = latest.current.state;
@@ -118,6 +135,7 @@ export function PreviewMaskOverlay(props: PreviewMaskOverlayProps) {
     pending.current = dragPreviewMask(g.mask, g.handle, localDelta);
     if (!raf.current) raf.current = requestAnimationFrame(commit);
   };
+  if (overlaySleeping) return null;
   return <div ref={root} className="cc-preview-mask-overlay" role="group" aria-label={t('预览画布蒙版编辑')}
     tabIndex={0} data-cc-shortcut-surface="inspector"
     onPointerDown={(event) => {

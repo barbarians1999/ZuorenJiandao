@@ -24,6 +24,7 @@ import {
   previewClientDelta,
   previewEdgeMidpoints,
   previewPointerFromClient,
+  resizeCompositionMosaic,
   rotatePreviewTransform,
   shouldSelectedItemPreemptCaptions,
   uniformScaleAxesPreviewTransform,
@@ -31,6 +32,7 @@ import {
   type ClickCycleState,
   type EffectivePreviewTransform,
   type PreviewPoint,
+  type PreviewResizeHandle,
   type PreviewScaleEdge,
   type PreviewSize,
 } from './previewTransform';
@@ -56,6 +58,7 @@ export interface PreviewTransformOverlayProps {
   onSetCompositionMosaic?: (id: string, patch: Partial<CompositionMosaic>) => void;
   /** True when a caption cue is actively selected/edited on the canvas. */
   captionActive?: boolean;
+  playing?: boolean;
 }
 
 const DOUBLE_CLICK_MS = 320;
@@ -68,6 +71,8 @@ interface GestureState {
   mode: GestureMode;
   /** When mode is crop-edge, which edge is being dragged. */
   edge?: PreviewScaleEdge;
+  /** When mode is scale, which corner is being dragged. */
+  corner?: Exclude<PreviewResizeHandle, PreviewScaleEdge>;
   /** Crop snapshot at pointer-down (edge crop keeps the opposite side fixed). */
   startCrop?: FlexCrop;
   /** Resolved mask snapshot at pointer-down for `solid` shape edge resizing. */
@@ -106,13 +111,26 @@ const clientPoint = (event: ReactPointerEvent): PreviewPoint => ({
 });
 
 const EDGE_HANDLES = new Set<string>(['crop-n', 'crop-s', 'crop-e', 'crop-w']);
+const CORNER_HANDLES: Record<string, Exclude<PreviewResizeHandle, PreviewScaleEdge>> = {
+  'scale-0': 'nw',
+  'scale-1': 'ne',
+  'scale-2': 'se',
+  'scale-3': 'sw',
+};
 
-const handleMode = (target: EventTarget | null): { mode: GestureMode; edge?: PreviewScaleEdge } | null => {
+const handleMode = (target: EventTarget | null): {
+  mode: GestureMode;
+  edge?: PreviewScaleEdge;
+  corner?: Exclude<PreviewResizeHandle, PreviewScaleEdge>;
+} | null => {
   const handle = target instanceof Element ? target.closest<HTMLElement>('[data-preview-handle]') : null;
   const value = handle?.dataset.previewHandle;
   if (value === 'rotate') return { mode: 'rotate' };
   if (value && EDGE_HANDLES.has(value)) {
     return { mode: 'crop-edge', edge: value.slice('crop-'.length) as PreviewScaleEdge };
+  }
+  if (value && value in CORNER_HANDLES) {
+    return { mode: 'scale', corner: CORNER_HANDLES[value] };
   }
   if (value?.startsWith('scale-')) return { mode: 'scale' };
   return null;
@@ -151,7 +169,10 @@ export function PreviewTransformOverlay({
   onSetItemMask,
   onSetCompositionMosaic,
   captionActive = false,
+  playing = false,
 }: PreviewTransformOverlayProps) {
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
   const rootRef = useRef<HTMLDivElement>(null);
   const [frame, setFrame] = useState(() => Math.round(playerRef.current?.getCurrentFrame() ?? 0));
   const [previewSize, setPreviewSize] = useState<PreviewSize>({ width: state.width, height: state.height });
@@ -181,7 +202,13 @@ export function PreviewTransformOverlay({
     setFrame(Math.round(player.getCurrentFrame()));
     let paintRaf = 0;
     let pendingFrame: number | null = null;
+    const syncNow = () => {
+      if (paintRaf) { cancelAnimationFrame(paintRaf); paintRaf = 0; }
+      pendingFrame = null;
+      setFrame(Math.round(player.getCurrentFrame()));
+    };
     const onFrame = (event: { detail: { frame: number } }) => {
+      if (playingRef.current && !gestureRef.current) return;
       pendingFrame = Math.round(event.detail.frame);
       if (paintRaf) return;
       paintRaf = requestAnimationFrame(() => {
@@ -191,13 +218,23 @@ export function PreviewTransformOverlay({
       });
     };
     player.addEventListener('frameupdate', onFrame);
+    player.addEventListener('pause', syncNow);
+    player.addEventListener('seeked', syncNow);
     return () => {
       if (paintRaf) cancelAnimationFrame(paintRaf);
       player.removeEventListener('frameupdate', onFrame);
+      player.removeEventListener('pause', syncNow);
+      player.removeEventListener('seeked', syncNow);
     };
   }, [playerRef]);
+  useEffect(() => {
+    if (!playing && playerRef.current) {
+      setFrame(Math.round(playerRef.current.getCurrentFrame()));
+    }
+  }, [playing, playerRef]);
 
-  const candidates = useMemo(() => visiblePreviewCandidates(state, frame), [frame, state]);
+  const overlaySleeping = playing && !gestureRef.current && !textAutoEdit;
+  const candidates = useMemo(() => (overlaySleeping ? [] : visiblePreviewCandidates(state, frame)), [overlaySleeping, frame, state]);
   const selectedCandidate = useMemo(
     () => state.width > 0 && state.height > 0
       ? candidates.find(({ item }) => item.id === state.selectedId) ?? null
@@ -309,6 +346,28 @@ export function PreviewTransformOverlay({
       setDragHud(formatTransformDragHud('move', moved, gesture.transform));
       queueValues({ item: gesture.item, localFrame: gesture.localFrame, values: moved });
     } else if (gesture.mode === 'scale') {
+      if (gesture.item.kind === 'mosaic' && gesture.corner && gesture.startMosaic && onSetCompositionMosaic) {
+        const nextMosaic = resizeCompositionMosaic(
+          state,
+          gesture.transform,
+          gesture.startMosaic,
+          current.composition,
+          gesture.corner,
+        );
+        setDragHud(`${Math.round(nextMosaic.width * 100)}% × ${Math.round(nextMosaic.height * 100)}%`);
+        queueValues({
+          item: gesture.item,
+          localFrame: gesture.localFrame,
+          values: {},
+          mosaicPatch: {
+            centerX: nextMosaic.centerX,
+            centerY: nextMosaic.centerY,
+            width: nextMosaic.width,
+            height: nextMosaic.height,
+          },
+        });
+        return;
+      }
       const scaled = uniformScaleAxesPreviewTransform(
         gesture.transform,
         gesture.center,
@@ -331,6 +390,7 @@ export function PreviewTransformOverlay({
             current.composition,
             gesture.edge,
           );
+          setDragHud(`${Math.round(nextMosaic.width * 100)}% × ${Math.round(nextMosaic.height * 100)}%`);
           queueValues({
             item: gesture.item,
             localFrame: gesture.localFrame,
@@ -410,6 +470,7 @@ export function PreviewTransformOverlay({
     let candidate = selectedCandidate;
     let mode: GestureMode = modeFromHandle?.mode ?? 'move';
     let edge = modeFromHandle?.edge;
+    let corner = modeFromHandle?.corner;
 
     if (!modeFromHandle) {
       const hitSelectedTarget = event.target instanceof Element && Boolean(event.target.closest('[data-preview-selected-hit]'));
@@ -420,6 +481,7 @@ export function PreviewTransformOverlay({
         onSelectItem(candidate.item.id);
         mode = 'move';
         edge = undefined;
+        corner = undefined;
       } else {
         const cycled = cyclePreviewCandidate(cycleRef.current, pointUi, hits, CLICK_TOLERANCE);
         if (!cycled) {
@@ -433,6 +495,7 @@ export function PreviewTransformOverlay({
         onSelectItem(candidate.item.id);
         mode = 'move';
         edge = undefined;
+        corner = undefined;
       }
     }
 
@@ -447,6 +510,7 @@ export function PreviewTransformOverlay({
       item: candidate.item,
       mode,
       edge,
+      corner,
       startCrop: candidate.item.transform?.crop,
       startMask: candidate.item.kind === 'solid' && candidate.item.mask
         ? (resolveMaskAt(candidate.item, candidate.localFrame, { width: state.width, height: state.height }) ?? candidate.item.mask)
@@ -455,7 +519,10 @@ export function PreviewTransformOverlay({
         ? (parseCompositionMosaic(candidate.item.mosaic) ?? undefined)
         : undefined,
       startClient: pointClient,
-      center: { x: state.width / 2, y: state.height / 2 },
+      center: {
+        x: state.width / 2 + candidate.transform.x / 100 * state.width,
+        y: state.height / 2 + candidate.transform.y / 100 * state.height,
+      },
       transform: candidate.transform,
       localFrame: candidate.localFrame,
       moved: false,
@@ -533,6 +600,8 @@ export function PreviewTransformOverlay({
     { edge: 'e', label: t('裁切右边（拖入则遮住右侧）'), className: 'cc-preview-transform-crop-e' },
     { edge: 'w', label: t('裁切左边（拖入则遮住左侧）'), className: 'cc-preview-transform-crop-w' },
   ];
+
+  if (overlaySleeping) return null;
 
   return (
     <div

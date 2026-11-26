@@ -103,6 +103,11 @@ export type Action =
   | { type: 'selectAll' }
   /** Re-plan a rolling boundary against the current timeline at reducer time. */
   | { type: 'roll'; leftId: string; rightId: string; deltaF: number }
+  | { type: 'toggleFoldGroup'; groupId: string }
+  | { type: 'dissolveFoldGroup'; groupId: string }
+  | { type: 'splitFoldGroup'; groupId: string; atFrame: number; leftGroupId?: string; rightGroupId?: string; newClipId?: string }
+  | { type: 'trimFoldGroup'; groupId: string; edge: 'left' | 'right'; deltaFrames: number; ripple?: boolean }
+  | { type: 'dismissLegacyTimingReview'; itemId?: string }
   | { type: 'setFullState'; state: TimelineState };
 
 // ── Project-level actions for multiple timelines ──────────────────────────

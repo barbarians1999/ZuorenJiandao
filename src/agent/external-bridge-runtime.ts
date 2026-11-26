@@ -54,10 +54,14 @@ export class ExternalBridgeRuntime {
     this.isAutoApprove = isAutoApprove;
   }
 
-  binding(): ExternalBridgeBinding {
+  getEditorInstanceId(): string {
+    return this.editorInstanceId;
+  }
+
+  binding(knownBaseRevision?: string): ExternalBridgeBinding {
     return {
       projectId: this.projectId, editorInstanceId: this.editorInstanceId,
-      baseRevision: revisionOf(this.getContext().getDoc()),
+      baseRevision: knownBaseRevision ?? revisionOf(this.getContext().getDoc()),
     };
   }
   async hydrate(pending: StoredExternalProposal | null): Promise<void> {

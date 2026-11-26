@@ -1,5 +1,3 @@
-import { hasOperationalTranscript } from '../transcript/types';
-import { itemEditOpts, itemWindow, keptSegments } from '../transcript/edit';
 import { planInspectorBatch } from '../editor/inspectorBatch';
 import { captureTimelineItemSource, validateTimelineItemSourceBatch } from '../editor/mediaSourceRevision';
 import { sourceFrameAt } from '../editor/sourceLimit';
@@ -13,8 +11,8 @@ const PEAK_LIMIT = 10 ** (-1 / 20);
 function loudnessSnapshot(item: TimelineItem): string {
   return JSON.stringify([
     item.src, item.sourceAssetId, item.sourceRevision, item.sourceContentHash, item.srcInFrame, item.durationInFrames,
-    item.playbackRate, item.transcript, item.transcriptStale, item.deletedWordIdx,
-    item.transcriptGenerationId, item.transcriptPlayOrder, item.silenceFrames, item.gapCapsMs, item.cutPadFrames,
+    item.playbackRate, item.transcript, item.transcriptStale,
+    item.transcriptGenerationId,
     item.denoisedSrc, item.denoiseStrength, item.volume, item.keyframes?.volume,
   ]);
 }
@@ -22,15 +20,6 @@ function loudnessSnapshot(item: TimelineItem): string {
 export function loudnessSelectionForItem(item: TimelineItem, state: TimelineState): LoudnessSelection {
   if (item.denoisedSrc) throw new Error('含降噪处理的片段暂不支持统一响度；未修改任何片段。');
   if (item.keyframes?.volume?.length) throw new Error('此片段包含音量关键帧，统一响度无法保留自动化曲线；未修改任何片段。');
-  if (hasOperationalTranscript(item)) {
-    const segments = keptSegments(item.transcript!, new Set(item.deletedWordIdx ?? []), state.fps, item.startFrame, {
-      ...itemEditOpts(item), window: itemWindow(item),
-    });
-    return {
-      itemId: item.id, src: item.src!, fps: state.fps, playbackRate: 1,
-      ranges: segments.map(({ srcStartFrame, srcEndFrame }) => ({ startFrame: srcStartFrame, endFrame: srcEndFrame })),
-    };
-  }
   if (item.playbackRate !== undefined && (!Number.isFinite(item.playbackRate) || item.playbackRate < 0.01)) {
     throw new Error('片段变速无效，未修改任何片段。');
   }

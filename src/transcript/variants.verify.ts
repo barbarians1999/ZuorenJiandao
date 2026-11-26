@@ -3,7 +3,7 @@
 import assert from 'node:assert';
 import type { TranscriptWord, TranscriptVariant } from './types';
 import { resolveVariantText, createVariant, upsertVariant, findVariantByLang } from './variants';
-import { retimeWords } from './edit';
+import { projectMediaWindowWords } from './edit';
 import { makeDraft } from '../editor/store';
 import type { TimelineState } from '../editor/types';
 import { docFromTimeline } from '../persist/projectStore';
@@ -41,15 +41,15 @@ assert.ok(Object.is(out[1], source[1]), 'untouched word keeps the source referen
 const empty: TranscriptVariant = { id: 'e', lang: 'x', kind: 'corrected', label: 'x', words: [] };
 assert.ok(Object.is(resolveVariantText(source, empty), source), 'empty variant is a no-op (same array reference)');
 
-// ── 3) 套用变体后 retime 的时间轴与源词 retime 完全一致 ────────────────
-// (翻译只改文本,不得因此重排或移动任何词的帧位)
+// ── 3) 套用变体后媒体窗口投影的时间轴与源词完全一致 ────────────────
 const fps = 30;
-const timedSource = retimeWords(source, new Set(), fps, 0);
-const timedVariant = retimeWords(out, new Set(), fps, 0);
-assert.strictEqual(timedVariant.length, timedSource.length, 'retime keeps the same word count');
+const winItem = { startFrame: 0, durationInFrames: 30, srcInFrame: 0 };
+const timedSource = projectMediaWindowWords(source, fps, winItem).words;
+const timedVariant = projectMediaWindowWords(out, fps, winItem).words;
+assert.strictEqual(timedVariant.length, timedSource.length, 'variant keeps the same word count');
 for (let i = 0; i < timedSource.length; i++) {
-  assert.strictEqual(timedVariant[i].start, timedSource[i].start, `retimed start ${i} unaffected by variant text`);
-  assert.strictEqual(timedVariant[i].end, timedSource[i].end, `retimed end ${i} unaffected by variant text`);
+  assert.strictEqual(timedVariant[i].start, timedSource[i].start, `projected start ${i} unaffected by variant text`);
+  assert.strictEqual(timedVariant[i].end, timedSource[i].end, `projected end ${i} unaffected by variant text`);
 }
 // 文本确实随变体走(译文进了字幕流)
 assert.strictEqual(timedVariant[0].text, 'hello');

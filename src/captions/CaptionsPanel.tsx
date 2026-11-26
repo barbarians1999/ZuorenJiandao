@@ -14,7 +14,6 @@ import { identifyManualCues, newManualCaptions } from './manualCaptions';
 import type { CaptionsData } from './types';
 import { invokeAction } from '../shortcuts/actionRegistry';
 import { isTranscriptionCancelled } from '../transcript/transcriptionCancellation';
-import { localModelReadinessMessage } from '../transcript/localModelReadiness';
 import { fmtCueMs } from './captionCues';
 import { captionSelectionKey, type CaptionSelectOptions, type CaptionSelectionRef } from './captionSelection';
 import './caption-list.css';
@@ -43,11 +42,12 @@ interface Props {
   onSelectCaptionRange?: (selections: CaptionSelectionRef[], options: { additive: boolean; preserveWithItems: boolean }) => void;
   onSeekFrame?: (frame: number) => void;
   mode?: 'full' | 'generate-only' | 'list-only';
+  visible?: boolean;
   onCaptionsReady?: (trackId?: TrackId) => void;
 }
 
 export function CaptionsPanel(props: Props) {
-  const { playerRef, fps, items, trackOptions, captionTracks, onSetCaptions, onUpdateCaptions, onCreateCaptionTrack, selectedItem, openPasteTranscriptRequest = 0, mode = 'full', onCaptionsReady } = props;
+  const { playerRef, fps, items, trackOptions, captionTracks, onSetCaptions, onUpdateCaptions, onCreateCaptionTrack, selectedItem, openPasteTranscriptRequest = 0, mode = 'full', visible = true, onCaptionsReady } = props;
   const t = useT();
   const [captionTrack, setCaptionTrack] = useState<TrackId | null>(() =>
     captionTracks.find((track) => track.captions)?.id ?? captionTracks[0]?.id ?? null);
@@ -58,6 +58,7 @@ export function CaptionsPanel(props: Props) {
     try { return Boolean(playerRef.current?.isPlaying?.()); } catch { return false; }
   });
   const pendingTrack = useRef<TrackId | null>(null);
+  const shouldTrackPlayheadRef = useRef(true);
   const [pendingCaptionActivation, setPendingCaptionActivation] = useState<Props['captionActivationRequest']>();
   const selectedCaption = props.selectedCaptions?.at(-1);
   const selectedCaptionKey = captionSelectionKey(selectedCaption ?? null);
@@ -103,7 +104,8 @@ export function CaptionsPanel(props: Props) {
         setPlayheadMs(frame * 1000 / fps);
       };
       const onFrame = (event: { detail: { frame: number } }) => {
-        const wait = 80 - (performance.now() - lastUpdate);
+        if (!shouldTrackPlayheadRef.current) return;
+        const wait = 160 - (performance.now() - lastUpdate);
         if (wait <= 0) apply(event.detail.frame);
         else { clearTimeout(pending); pending = setTimeout(() => apply(event.detail.frame), wait); }
       };
@@ -135,6 +137,7 @@ export function CaptionsPanel(props: Props) {
       };
     };
     const ensureAttached = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       const player = playerRef.current;
       if (player === attachedPlayer) return;
       cleanup?.();
@@ -142,10 +145,15 @@ export function CaptionsPanel(props: Props) {
       attachedPlayer = null;
       if (player) attach(player);
     };
+    const onVisibilityChange = () => {
+      if (!document.hidden) ensureAttached();
+    };
     ensureAttached();
     const poll = setInterval(ensureAttached, 150);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       clearInterval(poll);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       cleanup?.();
     };
   }, [playerRef, fps]);
@@ -175,6 +183,12 @@ export function CaptionsPanel(props: Props) {
     } catch (error) { if (mounted.current) setSrtError(error instanceof Error ? error.message : t('SRT 导入失败')); }
   };
   const effectiveTab = mode === 'generate-only' ? 'generate' : mode === 'list-only' ? 'list' : tab;
+  const shouldTrackPlayhead = visible !== false && effectiveTab === 'list' && Boolean(captions);
+  shouldTrackPlayheadRef.current = shouldTrackPlayhead;
+  useEffect(() => {
+    if (!shouldTrackPlayhead || !playerRef.current) return;
+    setPlayheadMs(playerRef.current.getCurrentFrame() * 1000 / fps);
+  }, [shouldTrackPlayhead, playerRef, fps]);
   const seekToMs = (ms: number) => {
     playerRef.current?.pause();
     const targetFrame = msToFrame(ms, fps);
@@ -272,7 +286,7 @@ export function PasteTranscriptBox({ items, fps, trackOptions, selectedItem, exi
     <button type="button" className="cc-cap-btn ghost" onClick={() => setReviewCues([])}>{t('收起核对提示')}</button>
   </div>;
   if (!showComposer) return <>{warning && <div className="cc-cap-hint warn" role="status">{warning}</div>}{review}{busy && <div className="cc-cap-field" role="status">{transcript.progressNote ?? t('正在生成字幕…')}<button type="button" className="cc-cap-btn" onClick={() => { cancelled.current = true; transcript.cancel(); }}>{t('取消生成')}</button></div>}</>;
-  if (!open) return <>{warning && <div className="cc-cap-hint warn" role="status">{warning}</div>}{review}<button type="button" className="cc-cap-btn" onClick={() => { setWarning(null); setOpen(true); }}>{t('粘贴文字稿生成字幕')}</button></>;
+  if (!open) return <>{warning && <div className="cc-cap-hint warn" role="status">{warning}</div>}{review}<button type="button" className="cc-cap-btn" onClick={() => { setWarning(null); setOpen(true); }}>{t('粘贴文字稿')}</button></>;
   const run = async () => {
     if (running.current || !text.trim()) return;
     setError(null); setWarning(null);
@@ -314,31 +328,32 @@ export function PasteTranscriptBox({ items, fps, trackOptions, selectedItem, exi
       if (mounted.current) setBusy(false);
     }
   };
+  const modelWarning = needsTiming && transcript.modelReadiness && transcript.modelReadiness.state !== 'ready';
   return <div className="cc-cap-field">
-    <div className="cc-cap-label">{t('粘贴文字稿生成字幕')}</div>
-    {!speechTracks.length && <div className="cc-cap-hint">{t('口播在子草稿里时，双击时间线上的子草稿，进入后生成字幕。')}</div>}
-    {needsTiming && <div className="cc-cap-hint" role="status" style={{ fontSize: 14 }}>
-      {transcript.modelReadiness ? t(localModelReadinessMessage(transcript.modelReadiness)) : t('正在检查本机识别模型；生成前会再次确认。')}
+    <div className="cc-cap-inline-row">
+      <label htmlFor="cc-pasted-transcript-track">{t('口播轨道')}</label>
+      <select id="cc-pasted-transcript-track" className="cc-cap-select" value={speechTrack ?? ''} disabled={busy || !speechTracks.length} onChange={(event) => setSpeechTrack(event.target.value)}>
+        {!speechTracks.length && <option value="">{t('暂无口播轨道')}</option>}
+        {speechTracks.map((track) => <option key={track.id} value={track.id}>{trackTitle(track)}</option>)}
+      </select>
+    </div>
+    {modelWarning && <div className="cc-cap-hint warn cc-cap-model-warn" role="status">
+      <span>{transcript.modelReadiness?.state === 'missing' ? t('未下载识别模型') : t('识别模型不可用')}</span>
       <div className="cc-cap-row-actions">
-        <button type="button" className="cc-cap-btn ghost" disabled={busy} onClick={() => { void transcript.checkModel().catch(() => {}); }}>{t('重新检查模型')}</button>
-        {transcript.modelReadiness?.state !== 'ready' && <button type="button" className="cc-cap-btn" disabled={busy} onClick={() => invokeAction('open-settings', undefined, 'toolbar')}>{t('设置本机识别')}</button>}
+        <button type="button" className="cc-cap-btn sm" disabled={busy} onClick={() => invokeAction('open-settings', undefined, 'toolbar')}>{t('去设置')}</button>
+        <button type="button" className="cc-cap-btn sm ghost" disabled={busy} onClick={() => { void transcript.checkModel().catch(() => {}); }}>{t('重检')}</button>
       </div>
     </div>}
-    <label className="cc-cap-label" htmlFor="cc-pasted-transcript-track">{t('口播轨道')}</label>
-    <select id="cc-pasted-transcript-track" className="cc-cap-select" value={speechTrack ?? ''} disabled={busy || !speechTracks.length} onChange={(event) => setSpeechTrack(event.target.value)}>
-      {!speechTracks.length && <option value="">{t('请先把口播视频或音频拖入时间线')}</option>}
-      {speechTracks.map((track) => <option key={track.id} value={track.id}>{trackTitle(track)}</option>)}
-    </select>
-    <textarea ref={textareaRef} value={text} disabled={busy} onChange={(e) => setText(e.target.value)} rows={7} className="cc-cap-textarea" placeholder={t('在这里粘贴完整口播稿，按句或约20字自动分成一条字幕')} />
+    <textarea ref={textareaRef} value={text} disabled={busy} onChange={(e) => setText(e.target.value)} rows={5} className="cc-cap-textarea" placeholder={t('粘贴文字稿')} />
     <div className="cc-cap-row-actions">
-      <button type="button" className="cc-cap-btn primary" disabled={busy || !text.trim() || !speechTrack} onClick={() => { void run(); }}>{t(busy ? '正在识别口播时间…' : needsTiming ? '识别时间并生成字幕' : '生成字幕')}</button>
-      {busy && <button type="button" className="cc-cap-btn" onClick={() => { cancelled.current = true; transcript.cancel(); setWarning(t('已取消生成；文字稿已保留，可以修改后重试。')); }}>{t('取消生成')}</button>}
+      <button type="button" className="cc-cap-btn primary" disabled={busy || !text.trim() || !speechTrack} onClick={() => { void run(); }}>{t(busy ? '生成中…' : '生成字幕')}</button>
+      {busy && <button type="button" className="cc-cap-btn" onClick={() => { cancelled.current = true; transcript.cancel(); setWarning(t('已取消生成；文字稿已保留，可以修改后重试。')); }}>{t('取消')}</button>}
       <button type="button" className="cc-cap-btn ghost" disabled={busy} onClick={() => { setOpen(false); setError(null); }}>{t('收起')}</button>
     </div>
-    {busy && <div className="cc-cap-hint" role="status">{transcript.progressNote ?? t('正在处理，请稍候…')}</div>}
+    {busy && <div className="cc-cap-hint" role="status">{transcript.progressNote ?? t('生成中…')}</div>}
     {(error || transcript.error) && <div className="cc-cap-error" role="alert">
       {[error, transcript.error].filter((message, index, messages) => message && messages.indexOf(message) === index).join('；')}
-      <button type="button" className="cc-cap-btn" onClick={() => invokeAction('open-settings', undefined, 'toolbar')}>{t('设置本机识别')}</button>
+      <button type="button" className="cc-cap-btn sm" onClick={() => invokeAction('open-settings', undefined, 'toolbar')}>{t('去设置')}</button>
     </div>}
     {warning && <div className="cc-cap-hint warn">{warning}</div>}
     {review}

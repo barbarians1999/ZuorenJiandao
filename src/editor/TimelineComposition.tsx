@@ -4,7 +4,6 @@ import { CaptionsLayer } from '../captions/CaptionsLayer';
 import { GlTransition } from '../gl/GlTransition';
 import { ALL_FX, registerCustomFx } from '../gl/fx/effects';
 import type { SelectedPreviewStatus, SelectedPreviewStatusListener } from '../gl/previewAdapter';
-import { previewTextEditFields } from '../components/preview/previewTextEdit';
 import type { AspectFit, ProjectDoc, Timeline, TimelineItem, TimelineState } from './types';
 import { sourceFrameAt } from './sourceLimit';
 import { nestedSequenceFrom, resolveTimelineRenderPlan, SequenceGraphError, type SequenceGraphLimits } from './sequenceGraph';
@@ -15,7 +14,7 @@ import { isBackgroundFillActive } from './backgroundFill';
 import { ClipWrapper } from './TimelineClipWrapper';
 import { GlTransitionVisibility } from './GlTransitionVisibility';
 import { updateReadyGlWindows } from './glTransitionVisibilityState';
-import { AudioClip, PlayerAudioLayers, BackgroundFillLayer, ContinuousVideoAudio, MediaFill, PreviewAudioEnabled, SharedVideoVisualGroup, VisualClipSurface } from './TimelineMediaLayer';
+import { AudioClip, PlayerAudioLayers, BackgroundFillLayer, ContinuousVideoAudio, MediaFill, PlayerContinuousVideoAudioLayers, PreviewAudioEnabled, SharedVideoVisualGroup, VisualClipSurface } from './TimelineMediaLayer';
 import { compositionPlan, previewLayerWindow, previewVideoMounts, type PreviewLayerRange } from './compositionPlan';
 import { compositionBackground } from './compositionBackground';
 import { hasPrivacyMosaic } from './mosaic';
@@ -117,7 +116,7 @@ function SelectedPreviewStatusReporter({ status, listener }: {
 
 interface PlayerPictureLayersProps {
   pictureLayers: ReturnType<typeof compositionPlan>['pictureLayers'];
-  renderVisualLayer: (group: TimelineItem[], retainedFor?: number) => ReactNode;
+  renderVisualLayer: (group: TimelineItem[], retainedFor?: number, audioWindowActive?: boolean) => ReactNode;
   renderTransition: (w: ReturnType<typeof compositionPlan>['glWindows'][number]) => ReactNode;
   state: TimelineState;
   extendBefore: Map<string, number>;
@@ -177,10 +176,13 @@ function PlayerPictureLayers({
   const { mounted, retained, visitedSources } = previewVideoMounts(
     visualRanges, activeVisualIds, currentFrame, premountFrames, retentionFrames, history,
   );
-  if (!history || history.visitedSources !== visitedSources
-    || history.mounted.size !== mounted.size || [...mounted].some((key) => !history.mounted.has(key))) {
-    setLastMounts({ ranges: visualRanges, mounted, visitedSources });
-  }
+  const mountedChanged = !history || history.visitedSources !== visitedSources
+    || history.mounted.size !== mounted.size || [...mounted].some((key) => !history.mounted.has(key));
+  useEffect(() => {
+    if (mountedChanged) {
+      setLastMounts({ ranges: visualRanges, mounted, visitedSources });
+    }
+  }, [mountedChanged, visualRanges, mounted, visitedSources]);
 
   let picture: ReactNode[] = [];
   for (const layer of pictureLayers) {
@@ -203,14 +205,18 @@ function PlayerPictureLayers({
       ];
     } else if (layer.kind === 'visual') {
       const first = layer.items[0];
-      if (first && (activeVisualIds.has(first.id) || retained === first.id)) {
-        picture.push(renderVisualLayer(layer.items, retained === first.id ? retentionFrames : undefined));
+      const last = layer.items.at(-1);
+      if (first && last && (activeVisualIds.has(first.id) || retained === first.id)) {
+        const windowStart = first.startFrame - (extendBefore.get(first.id) ?? 0);
+        const windowEnd = last.startFrame + last.durationInFrames + (extendAfter.get(last.id) ?? 0);
+        const audioWindowActive = currentFrame >= windowStart - premountFrames && currentFrame < windowEnd;
+        picture.push(renderVisualLayer(layer.items, retained === first.id ? retentionFrames : undefined, audioWindowActive));
       }
     } else if (layer.kind === 'transition') {
       if (activeTransitionKeys.has(layer.window.key)) {
         picture.push(renderTransition(layer.window));
       }
-    } else if (layer.entry.captions?.enabled) {
+    } else if (state.captionsHidden !== true && layer.entry.captions?.enabled) {
       picture.push(
         <CaptionsLayer
           key={layer.entry.id}
@@ -245,13 +251,13 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
     selectedItemId, forceMuted, registeredEffects: ALL_FX,
   }), [state, environment.isPlayer, selectedItemId, forceMuted]);
   const {
-    audio, captionEntries, fit, isMuted, gainAt,
+    audio, fit, isMuted, gainAt,
     videoAudioGroups, groupedVideoIds, entranceOf, extendBefore, extendAfter,
     glWindows, glVisibilityWindows, staticPreviewStatuses, selectedEffectStaticStatus,
     pictureLayers,
   } = plan;
 
-  const renderVisualLayer = (group: TimelineItem[], retainedFor?: number) => {
+  const renderVisualLayer = (group: TimelineItem[], retainedFor?: number, audioWindowActive = true) => {
         const item = group[0]!;
         if (group.length > 1) return <SharedVideoVisualGroup
           key={`sv:${item.id}`} group={group} fit={fit} muted={isMuted(item.track)}
@@ -262,13 +268,9 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
         const eb = extendBefore.get(item.id) ?? 0;
         const ea = extendAfter.get(item.id) ?? 0;
         const entrance = entranceOf.get(item.id);
-        // Captions off hides on-screen text clips too (render-layer only).
-        const captionsOff = state.captionsHidden === true
-          || (state.captionsHidden === undefined && captionEntries.length > 0 && captionEntries.every((entry) => !entry.captions?.enabled));
-        const hiddenByCaptions = captionsOff && previewTextEditFields(item) !== null;
         const fillBackground = isBackgroundFillActive(state, item);
         const foreground = (
-          <ClipWrapper item={item} frameOffset={-eb} hiddenByCaptions={hiddenByCaptions}>
+          <ClipWrapper item={item} frameOffset={-eb}>
             {(borderRadius) => item.kind === 'sequence'
               ? <VisualClipSurface item={item} fit={fit} canvasW={state.width} canvasH={state.height} borderRadius={borderRadius}>
                   <NestedSequenceLayer item={item} project={project} parentWidth={state.width} parentHeight={state.height} fit={fit} frameOffset={-eb} browserRenderer={browserRenderer} sequenceLimits={sequenceLimits} muted={isMuted(item.track)} />
@@ -281,6 +283,7 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
               ? <SolidLayer item={item} canvasW={state.width} canvasH={state.height} borderRadius={borderRadius} />
               : <MediaFill item={item} frameOffset={-eb} fit={fillBackground ? 'contain' : fit}
                   muted={isMuted(item.track)} groupedAudio={groupedVideoIds.has(item.id)}
+                  audioWindowActive={audioWindowActive}
                   gainAt={(frame) => gainAt(item.track, frame)} canvasW={state.width} canvasH={state.height}
                   borderRadius={borderRadius} browserRenderer={browserRenderer}
                   exactEffects={!environment.isPlayer || item.id === selectedItemId || hasPrivacyMosaic(item)}
@@ -350,7 +353,7 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
         </TimelineMosaicBarrier>];
       } else if (layer.kind === 'visual') picture.push(renderVisualLayer(layer.items));
       else if (layer.kind === 'transition') picture.push(renderTransition(layer.window));
-      else if (layer.entry.captions?.enabled) picture.push(
+      else if (state.captionsHidden !== true && layer.entry.captions?.enabled) picture.push(
         <CaptionsLayer key={layer.entry.id} captions={layer.entry.captions} items={state.items} hiddenKey={hiddenCaptionKeys?.[layer.entry.id]} />,
       );
     }
@@ -396,7 +399,15 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
           browserRenderer={browserRenderer}
         />
       )))}
-      {audioEnabled && videoAudioGroups.map((group) => (
+      {audioEnabled && (environment.isPlayer ? (
+        <PlayerContinuousVideoAudioLayers
+          groups={videoAudioGroups}
+          isMuted={isMuted}
+          gainAt={gainAt}
+          premountFor={premountFrames}
+          browserRenderer={browserRenderer}
+        />
+      ) : videoAudioGroups.map((group) => (
         <ContinuousVideoAudio
           key={`audio:${group[0]!.id}`}
           items={group}
@@ -405,7 +416,7 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
           premountFor={premountFrames}
           browserRenderer={browserRenderer}
         />
-      ))}
+      )))}
       {state.watermark?.enabled && state.watermark.text
         && <WatermarkLayer watermark={state.watermark} canvasH={state.height} />}
     </AbsoluteFill>

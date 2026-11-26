@@ -8,7 +8,7 @@ const VALID_SESSION_GENERATION = /^[a-zA-Z0-9_-]{1,80}$/;
 const VALID_UPLOAD_FINALIZE_HASH = /^[a-f0-9]{64}$/;
 const STRICT_PROJECT_SCOPED_KEY = /^(?:agent-runtime|agent-session-generation|external-proposal|offline-edit-session|project-edit-ownership|review):([a-zA-Z0-9_-]{1,160})$/;
 const STRICT_PROJECT_SCOPED_PREFIX = /^(?:agent-runtime|agent-artifact|agent-session-generation|agent-session-chat|agent-session-proposal|agent-session-runtime|agent-session-artifact|external-proposal|offline-edit-session|project-edit-ownership|review|upload-finalize):/;
-const LEGACY_PROJECT_SCOPED_KEY = /^(?:project|chat|creative-mode|thumb|proposal|versions|jobs):(.+)$/;
+const LEGACY_PROJECT_SCOPED_KEY = /^(?:project|project-legacy-backup|chat|creative-mode|thumb|proposal|versions|jobs):(.+)$/;
 
 function sessionProjectId(key: string, namespace: string, trailingParts: number): string | undefined {
   if (!key.startsWith(`${namespace}:`)) return undefined;

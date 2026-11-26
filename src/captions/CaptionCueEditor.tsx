@@ -68,11 +68,48 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
   const recoveryRef = useRef(initialRecovery);
   const draftRef = useRef<Draft | null>(draft);
   draftRef.current = draft;
+  const draftStorageKeyRef = useRef(draftStorageKey);
+  draftStorageKeyRef.current = draftStorageKey;
   const onLiveUpdateRef = useRef(onLiveUpdate);
   onLiveUpdateRef.current = onLiveUpdate;
-  useEffect(() => () => { onLiveUpdateRef.current?.(null); }, []);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dirtyPersistRef = useRef(false);
+  const liveUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPendingPersist = () => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+  };
+  const flushPendingPersist = () => {
+    cancelPendingPersist();
+    if (!dirtyPersistRef.current) return;
+    dirtyPersistRef.current = false;
+    if (draftStorageKeyRef.current) {
+      writeCaptionDraftRecovery(draftStorageKeyRef.current, recoveryRef.current);
+    }
+  };
+  const cancelPendingLiveUpdate = () => {
+    if (liveUpdateTimerRef.current) {
+      clearTimeout(liveUpdateTimerRef.current);
+      liveUpdateTimerRef.current = null;
+    }
+  };
+  useEffect(() => {
+    window.addEventListener('beforeunload', flushPendingPersist);
+    window.addEventListener('pagehide', flushPendingPersist);
+    return () => {
+      window.removeEventListener('beforeunload', flushPendingPersist);
+      window.removeEventListener('pagehide', flushPendingPersist);
+      cancelPendingLiveUpdate();
+      onLiveUpdateRef.current?.(null);
+      flushPendingPersist();
+    };
+  }, []);
   const [notice, setNotice] = useState(draft ? t('已恢复上次未保存的字幕草稿，请确认后保存或取消。') : '');
   const persistRecovery = (nextDraft: Draft | null, nextPending = recoveryRef.current.pending): boolean => {
+    cancelPendingPersist();
+    dirtyPersistRef.current = false;
     if (draftStorageKey && !writeCaptionDraftRecovery(draftStorageKey, { draft: nextDraft, pending: nextPending })) {
       setDraft(nextDraft); draftRef.current = nextDraft;
       setNotice(t('无法保存恢复草稿；字幕文字仍保留在当前编辑中。'));
@@ -84,6 +121,22 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
     return true;
   };
   const updateDraft = (next: Draft | null) => { persistRecovery(next); };
+  const updateDraftTyping = (next: Draft) => {
+    recoveryRef.current = { draft: next, pending: recoveryRef.current.pending };
+    setDraft(next);
+    draftRef.current = next;
+    if (!draftStorageKey) return;
+    dirtyPersistRef.current = true;
+    cancelPendingPersist();
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      if (!dirtyPersistRef.current) return;
+      dirtyPersistRef.current = false;
+      if (draftStorageKey && !writeCaptionDraftRecovery(draftStorageKey, recoveryRef.current)) {
+        setNotice(t('无法保存恢复草稿；字幕文字仍保留在当前编辑中。'));
+      }
+    }, 300);
+  };
   const storePendingRecovery = (source: Draft, patch: Partial<CaptionsData>): boolean => {
     const target = { ...captions, ...patch };
     const entry: PendingCaptionDraftRecovery = { timelineId, trackId: captionTrackId,
@@ -140,18 +193,66 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
   const lastActivationNonce = useRef(0);
   const activationPriority = useRef<number | null>(null);
   const [pendingActivationReveal, setPendingActivationReveal] = useState<{ id: string; nonce: number } | null>(null);
+  const lastPickSeekRef = useRef<{ id: string; at: number } | null>(null);
   const visible = useMemo(() => rows.filter((row) => !query || row.text.toLocaleLowerCase().includes(query.toLocaleLowerCase())), [rows, query]);
   const replacementEdits = useMemo(() => captionReplaceEdits(rows, query, replacement), [rows, query, replacement]);
-  const selected = selectedCaptions && captions.enabled ? selectedCaptionListIds(captionTrackId, rows, selectedCaptions) : localSelection;
-  const selectedSet = new Set(selected);
-  const editRow = draft ? rows.find((row) => captionListId(row) === draft.id) : undefined;
-  const activeRow = [...rows].reverse().find((row, revIdx, reversed) => {
-    const prev = reversed[revIdx + 1];
-    if (!hasCaptionCueStartedAt(row.start, playheadMs, fps, prev?.end)) return false;
-    return row.manual ? !hasCaptionCueEndedAt(row.start, row.end, playheadMs, fps) : playheadMs < row.end + 1500;
-  });
-  const activeId = activeRow ? captionListId(activeRow) : null;
+  const rowIndexById = useMemo(() => new Map(rows.map((row, index) => [captionListId(row), index])), [rows]);
+  const selected = useMemo(
+    () => (selectedCaptions && captions.enabled ? selectedCaptionListIds(captionTrackId, rows, selectedCaptions) : localSelection),
+    [selectedCaptions, captions.enabled, captionTrackId, rows, localSelection],
+  );
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const editRow = draft ? rows[rowIndexById.get(draft.id) ?? -1] : undefined;
+  const activeId = useMemo(() => {
+    if (!rows.length) return null;
+    const upperBoundMs = playheadMs + Math.ceil(2000 / Math.max(1, fps)) + 100;
+    let lo = 0;
+    let hi = rows.length - 1;
+    let rightmost = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (rows[mid]!.start <= upperBoundMs) {
+        rightmost = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    for (let i = rightmost; i >= 0; i -= 1) {
+      const row = rows[i]!;
+      const prev = i > 0 ? rows[i - 1] : undefined;
+      if (!hasCaptionCueStartedAt(row.start, playheadMs, fps, prev?.end)) continue;
+      if (!hasCaptionCueEndedAt(row.start, row.end, playheadMs, fps)) {
+        return captionListId(row);
+      }
+    }
+    return null;
+  }, [rows, playheadMs, fps]);
   const lastSelectedId = selected.at(-1) ?? null;
+  const latestRef = useRef({ captions, items, fps, rows, rowIndexById });
+  latestRef.current = { captions, items, fps, rows, rowIndexById };
+  const scheduleLiveUpdate = (nextDraft: Draft) => {
+    if (!onLiveUpdateRef.current) return;
+    cancelPendingLiveUpdate();
+    liveUpdateTimerRef.current = setTimeout(() => {
+      liveUpdateTimerRef.current = null;
+      const handler = onLiveUpdateRef.current;
+      if (!handler) return;
+      const current = latestRef.current;
+      const rowIndex = current.rowIndexById.get(nextDraft.id);
+      if (rowIndex === undefined) return;
+      const currentRow = current.rows[rowIndex];
+      if (!currentRow) return;
+      const timing: { start?: number; end?: number } = currentRow.manual ? { start: currentRow.start, end: currentRow.end } : {};
+      const safeText = nextDraft.text || ' ';
+      const planned = planCaptionCueEdit({
+        captions: current.captions, items: current.items, fps: current.fps, rows: current.rows,
+        rowIndex, action: 'save', text: safeText,
+        manualTiming: currentRow.manual ? { startMs: currentRow.start, endMs: currentRow.end } : undefined,
+      });
+      handler(planned.patch ?? captionListPatch(current.captions, current.items, current.fps, [{ id: nextDraft.id, text: safeText, ...timing }]));
+    }, 120);
+  };
   const measuredHeightsRef = useRef<Record<string, number>>({});
   const rowNodesRef = useRef<Map<string, HTMLDivElement>>(new Map());
   const [measureTick, setMeasureTick] = useState(0);
@@ -182,6 +283,7 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
     return changed;
   };
 
+  const observerRef = useRef<ResizeObserver | null>(null);
   useEffect(() => {
     const listEl = listRef.current;
     if (!listEl || typeof ResizeObserver === 'undefined') return;
@@ -193,13 +295,15 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
     const ro = new ResizeObserver(() => {
       if (!raf) raf = requestAnimationFrame(syncHeights);
     });
+    observerRef.current = ro;
     rowNodesRef.current.forEach((node) => ro.observe(node));
     syncHeights();
     return () => {
       if (raf) cancelAnimationFrame(raf);
       ro.disconnect();
+      if (observerRef.current === ro) observerRef.current = null;
     };
-  }, [visible, scrollTop, draft?.id, draft?.text]);
+  }, [visible, draft?.id]);
 
   const reveal = (id: string, options?: { center?: boolean }) => {
     const index = visible.findIndex((row) => captionListId(row) === id);
@@ -398,6 +502,7 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
       if (selection) onSelectCaption?.(selection, { additive, toggle: additive });
       anchor.current = id;
     }
+    lastPickSeekRef.current = { id, at: performance.now() };
     onSeekMs?.(row.start);
   };
   const edit = (row: CueRow) => {
@@ -475,6 +580,7 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
       if (fromBlur) {
         commitFailed.current = false;
         suppressCenterIdRef.current = null;
+        cancelPendingLiveUpdate();
         updateDraft(null);
         onLiveUpdate?.(null);
         setNotice(t('字幕内容不能为空，已恢复原文字；如需删除请点击右侧删除图标。'));
@@ -496,6 +602,7 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
     if (!storePendingRecovery(syncedDraft, patch)) return false;
     suppressCenterIdRef.current = null;
     if (patch) {
+      cancelPendingLiveUpdate();
       onLiveUpdate?.(null);
       onUpdate(patch);
       const updatedRows = buildCues({ ...captions, ...patch }, items, fps);
@@ -510,7 +617,7 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
   };
   const onDraftKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (event.key === 'Escape') { event.preventDefault(); commitFailed.current = false; suppressCenterIdRef.current = null; onLiveUpdate?.(null); updateDraft(null); return; }
+    if (event.key === 'Escape') { event.preventDefault(); commitFailed.current = false; suppressCenterIdRef.current = null; cancelPendingLiveUpdate(); onLiveUpdate?.(null); updateDraft(null); return; }
     const intent = captionCueKeyboardIntent({
       key: event.key, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey,
       isComposing: event.nativeEvent.isComposing, keyCode: event.keyCode,
@@ -535,10 +642,12 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
       : row.entry?.words?.[row.manualIndex ?? -1]?.id === result.focus?.manualCueId) : nextRows[targetIndex];
     if (target) pendingFocus.current = { id: captionListId(target), caret: result.focus?.caret ?? (intent === 'split' ? 0 :
       intent === 'mergePrevious' ? rows[request.rowIndex - 1]!.text.trimEnd().length : draft.text.trimEnd().length) };
+    cancelPendingLiveUpdate();
     onLiveUpdate?.(null);
     onUpdate(result.patch); setNotice('');
   };
   const removeSelected = () => {
+    cancelPendingLiveUpdate();
     onLiveUpdate?.(null);
     const patch = captionListPatch(captions, items, fps, selected.map((id) => ({ id, text: null })));
     if (patch) onUpdate(patch);
@@ -548,6 +657,7 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
     const id = captionListId(row);
     const added = appendCaptionCueAfter(captions, items, fps, id, t('新字幕'));
     if (!added) return;
+    cancelPendingLiveUpdate();
     onLiveUpdate?.(null);
     if (draft) {
       confirming.current = true;
@@ -561,6 +671,7 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
   const removeRow = (row: CueRow) => {
     const id = captionListId(row);
     if (draft?.id === id) {
+      cancelPendingLiveUpdate();
       onLiveUpdate?.(null);
       confirming.current = true;
       updateDraft(null);
@@ -577,16 +688,25 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
   const replaceAll = () => {
     const edits = replacementEdits;
     const patch = captionListPatch(captions, items, fps, edits);
-    if (patch) { onLiveUpdate?.(null); onUpdate(patch); updateDraft(null); setNotice(t('已替换当前轨道的 {n} 句字幕，可撤销。', { n: edits.length })); }
+    if (patch) { cancelPendingLiveUpdate(); onLiveUpdate?.(null); onUpdate(patch); updateDraft(null); setNotice(t('已替换当前轨道的 {n} 句字幕，可撤销。', { n: edits.length })); }
   };
   const first = Math.max(0, firstIndexForOffset(offsets, scrollTop) - 2);
   const end = Math.min(visible.length, first + 16);
   const editedIndex = draft ? visible.findIndex((row) => captionListId(row) === draft.id) : -1;
-  const rendered = visible.map((row, index) => ({ row, index })).filter(({ index }) => (index >= first && index < end) || index === editedIndex);
-  const currentCaptionSignature = captionDataSignature(captions);
-  const pendingPatch = pendingRecovery.every((entry) => entry.timelineId === timelineId && entry.trackId === captionTrackId)
-    ? planPendingCaptionRecovery(captions, pendingRecovery) : null;
-  const showPendingRecovery = pendingRecovery.length > 0 && pendingRecovery.at(-1)?.targetSignature !== currentCaptionSignature;
+  const rendered: Array<{ row: CueRow; index: number }> = [];
+  if (editedIndex >= 0 && editedIndex < first) rendered.push({ row: visible[editedIndex]!, index: editedIndex });
+  for (let index = first; index < end; index += 1) rendered.push({ row: visible[index]!, index });
+  if (editedIndex >= end) rendered.push({ row: visible[editedIndex]!, index: editedIndex });
+  const { pendingPatch, showPendingRecovery } = useMemo(() => {
+    if (pendingRecovery.length === 0) return { pendingPatch: null, showPendingRecovery: false };
+    const currentCaptionSignature = captionDataSignature(captions);
+    const patch = pendingRecovery.every((entry) => entry.timelineId === timelineId && entry.trackId === captionTrackId)
+      ? planPendingCaptionRecovery(captions, pendingRecovery) : null;
+    return {
+      pendingPatch: patch,
+      showPendingRecovery: pendingRecovery.at(-1)?.targetSignature !== currentCaptionSignature,
+    };
+  }, [captions, pendingRecovery, timelineId, captionTrackId]);
 
   return <div className="cc-caption-list-workspace" data-caption-selection-owner="list">
     <div className="cc-caption-list-toolbar">
@@ -664,8 +784,16 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
               : 2;
             return <div key={id} data-cue-id={id} role="option" tabIndex={0} aria-selected={selectedSet.has(id)}
               ref={(node) => {
-                if (node) rowNodesRef.current.set(id, node);
-                else rowNodesRef.current.delete(id);
+                const prev = rowNodesRef.current.get(id);
+                if (prev === node) return;
+                if (prev) {
+                  observerRef.current?.unobserve(prev);
+                  rowNodesRef.current.delete(id);
+                }
+                if (node) {
+                  rowNodesRef.current.set(id, node);
+                  observerRef.current?.observe(node);
+                }
               }}
               className={`cc-caption-list-row${selectedSet.has(id) ? ' selected' : ''}${activeId === id ? ' current' : ''}`}
               style={{ top: rowTop }}
@@ -684,20 +812,26 @@ export function CaptionCueEditor({ projectId = '', timelineId = '', captionTrack
               <div className="cc-caption-list-row-content">
                 {draft?.id === id ? <textarea ref={editorRef} className="cc-caption-list-inline" rows={inlineRows} value={draft.text} aria-label={t('字幕文字')}
                   onClick={(event) => event.stopPropagation()}
-                  onFocus={() => { confirming.current = false; onSeekMs?.(row.start); }}
+                  onFocus={() => {
+                    confirming.current = false;
+                    const recent = lastPickSeekRef.current;
+                    if (recent && recent.id === id && performance.now() - recent.at < 250) {
+                      lastPickSeekRef.current = null;
+                      return;
+                    }
+                    onSeekMs?.(row.start);
+                  }}
                   onChange={(event) => {
                     commitFailed.current = false;
-                    const nextText = event.target.value;
-                    updateDraft({ ...draft, text: nextText });
-                    if (onLiveUpdate && editRow) {
-                      const timing: { start?: number; end?: number } = editRow.manual ? { start: editRow.start, end: editRow.end } : {};
-                      const safeText = nextText || ' ';
-                      const planned = planCaptionCueEdit({ captions, items, fps, rows, rowIndex: rows.indexOf(editRow), action: 'save',
-                        text: safeText, manualTiming: editRow.manual ? { startMs: editRow.start, endMs: editRow.end } : undefined });
-                      onLiveUpdate(planned.patch ?? captionListPatch(captions, items, fps, [{ id: draft.id, text: safeText, ...timing }]));
-                    }
+                    const nextDraft = { ...draft, text: event.target.value };
+                    updateDraftTyping(nextDraft);
+                    if (!composing.current) scheduleLiveUpdate(nextDraft);
                   }}
-                  onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
+                  onCompositionStart={() => { composing.current = true; cancelPendingLiveUpdate(); }}
+                  onCompositionEnd={() => {
+                    composing.current = false;
+                    if (draftRef.current) scheduleLiveUpdate(draftRef.current);
+                  }}
                   onBlur={() => { if (!confirming.current) commit(true); }}
                   onKeyDown={onDraftKeyDown} /> :
                   <span className="cc-caption-list-text" style={row.fontOverride?.fontFamily ? { fontFamily: row.fontOverride.fontFamily } : undefined}>{row.text}</span>}

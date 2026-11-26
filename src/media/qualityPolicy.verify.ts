@@ -28,7 +28,7 @@ assert.equal(shouldAutoRequestPreviewProxy('master', 'auto'), false);
 assert.equal(shouldAutoRequestPreviewProxy('balanced', 'auto'), true);
 assert.equal(shouldAutoRequestPreviewProxy('master', 'proxy'), true);
 assert.equal(shouldAutoRequestPreviewProxy('balanced', 'original'), false);
-assert.equal(shouldAutoRequestPreviewProxy('balanced'), false);
+assert.equal(shouldAutoRequestPreviewProxy('balanced'), true);
 assert.equal(shouldPreferMasterPreview('master', 'auto'), true);
 assert.equal(shouldPreferMasterPreview('balanced', 'auto'), false);
 assert.equal(shouldPreferMasterPreview('balanced', 'original'), true);
@@ -42,7 +42,7 @@ Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
   setItem: (key: string, value: string) => storage.set(key, value),
 } });
 const firstSession = await import(new URL('./qualityPolicy.ts?session=first', import.meta.url).href);
-assert.equal(firstSession.getPreviewSourceMode(), 'original');
+assert.equal(firstSession.getPreviewSourceMode(), 'auto');
 firstSession.setPreviewSourceMode('proxy');
 assert.equal(storage.get('cc.previewSource.v1'), 'proxy');
 const reopenedSession = await import(new URL('./qualityPolicy.ts?session=reopened', import.meta.url).href);

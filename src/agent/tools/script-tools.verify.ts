@@ -6,6 +6,7 @@ import { trackAlias, type ProjectDoc, type Timeline } from '../../editor/types';
 import { applyScript } from '../../script/apply';
 import { serializeTimeline } from '../../script/serialize';
 import { execScriptTool, SCRIPT_TOOL_SCHEMAS } from './script-tools';
+import { resolveTranscriptUnit } from '../../transcript/trackEditCompiler';
 
 const timeline: Timeline = {
   id: 'timeline_1',
@@ -76,7 +77,7 @@ assert.doesNotMatch(scopedRead.md, new RegExp(`## ${visualAlias}`));
 const draft = makeDraft(doc);
 const compressed = scopedRead.md.replace('[silence=0.7s]', '[silence=0.7s→0.2s]');
 applyScript(draft.getState, draft.commands, compressed, { trackId: 'track_v1' });
-assert.equal(draft.getState().items.find((item) => item.id === 'speech')?.gapCapsMs?.['1'], 200);
+assert.equal(resolveTranscriptUnit(draft.getState(), 'speech')?.gapCapsMs?.['1'], 200);
 assert.deepEqual(
   draft.getState().items.find((item) => item.id === 'visual'),
   timeline.items.find((item) => item.id === 'visual'),
@@ -85,7 +86,7 @@ assert.deepEqual(
 const afterCompression = serializeTimeline(draft.getState(), { trackId: 'track_v1' });
 const deleteWord = afterCompression.md.replace('[s1] Hello world.', '[s1] ~~Hello~~ world.');
 applyScript(draft.getState, draft.commands, deleteWord, { trackId: 'track_v1' });
-assert.deepEqual(draft.getState().items.find((item) => item.id === 'speech')?.deletedWordIdx, [0]);
+assert.deepEqual(resolveTranscriptUnit(draft.getState(), 'speech')?.deletedWordIdx, [0]);
 assert.equal(draft.getState().items.find((item) => item.id === 'visual')?.startFrame, 12);
 
 const ctx: AgentContext = {

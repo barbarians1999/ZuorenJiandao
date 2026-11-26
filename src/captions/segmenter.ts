@@ -211,6 +211,30 @@ function isQuestionBreak(words: SegmentWord[], idx: number, cjk: CjkIndex): bool
   return QUESTION_HEAD.test(head);
 }
 
+function lastNonSpaceCodePoint(str: string, endExclusive: number): string {
+  let i = Math.min(str.length, endExclusive) - 1;
+  while (i >= 0 && /\s/.test(str[i]!)) i -= 1;
+  if (i < 0) return '';
+  const code = str.charCodeAt(i);
+  if (code >= 0xdc00 && code <= 0xdfff && i > 0) {
+    const hi = str.charCodeAt(i - 1);
+    if (hi >= 0xd800 && hi <= 0xdbff) return str.slice(i - 1, i + 1);
+  }
+  return str[i]!;
+}
+
+function firstNonSpaceCodePoint(str: string, start: number): string {
+  let i = Math.max(0, start);
+  while (i < str.length && /\s/.test(str[i]!)) i += 1;
+  if (i >= str.length) return '';
+  const code = str.charCodeAt(i);
+  if (code >= 0xd800 && code <= 0xdbff && i + 1 < str.length) {
+    const lo = str.charCodeAt(i + 1);
+    if (lo >= 0xdc00 && lo <= 0xdfff) return str.slice(i, i + 2);
+  }
+  return str[i]!;
+}
+
 /** "The relationship between idx−1 and idx is inseparable":
  * Seamless and Intl.Segmenter determines that it falls within the same CJK word (or hits the CJK_WORD_SUFFIXES affix). The entire text is segmented only once.*/
 function makeCannotSplit(words: SegmentWord[], scripts: WordScript[]): (idx: number) => boolean {
@@ -235,16 +259,40 @@ function makeCannotSplit(words: SegmentWord[], scripts: WordScript[]): (idx: num
     }
     return segs;
   };
+  const cache = new Int8Array(words.length); // 0 = unknown, 1 = false, 2 = true
   return (idx: number): boolean => {
     if (idx <= 0 || idx >= words.length) return false;
-    if (joinerLen[idx] > 0) return false;
-    const pos = wordStart[idx];
-    const leftCh = Array.from(text.slice(0, pos).trimEnd()).at(-1) ?? '';
-    const rightCh = Array.from(text.slice(pos).trimStart()).at(0) ?? '';
-    if (charClass(leftCh) !== 0 || charClass(rightCh) !== 0) return false;
-    if (typeof Intl.Segmenter !== 'function') return false;
-    for (const s of segments()) if (s.start < pos && s.end > pos) return s.wordLike && s.cjk;
-    return (CJK_WORD_SUFFIXES as readonly string[]).includes(rightCh);
+    const cached = cache[idx];
+    if (cached !== 0) return cached === 2;
+    let result = false;
+    if (joinerLen[idx] === 0) {
+      const pos = wordStart[idx]!;
+      const leftCh = lastNonSpaceCodePoint(text, pos);
+      const rightCh = firstNonSpaceCodePoint(text, pos);
+      if (charClass(leftCh) === 0 && charClass(rightCh) === 0 && typeof Intl.Segmenter === 'function') {
+        const list = segments();
+        let lo = 0;
+        let hi = list.length - 1;
+        let match = -1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (list[mid]!.start < pos) {
+            match = mid;
+            lo = mid + 1;
+          } else {
+            hi = mid - 1;
+          }
+        }
+        if (match >= 0 && list[match]!.end > pos) {
+          const s = list[match]!;
+          result = s.wordLike && s.cjk;
+        } else {
+          result = (CJK_WORD_SUFFIXES as readonly string[]).includes(rightCh);
+        }
+      }
+    }
+    cache[idx] = result ? 2 : 1;
+    return result;
   };
 }
 
@@ -321,14 +369,26 @@ function collectBreakPoints(words: SegmentWord[], scripts: WordScript[], cannotS
 /** Select the optimal breakpoint: effective score = priority − orphan word downgraded by 30,
  * Those with the same score are taken to the back; those that cannot be separated are eliminated.*/
 function pickBreak(bps: BreakPoint[], from: number, to: number, cannotSplit: (i: number) => boolean): BreakPoint | null {
-  const cands = bps.filter((b) => b.wordIndex >= from && b.wordIndex <= to && !cannotSplit(b.wordIndex + 1));
-  if (cands.length === 0) return null;
-  const sorted = [...cands].sort((a, b) => {
-    const ea = a.priority - (a.orphanRisk ? ORPHAN_PICK_DEMOTION : 0);
-    const eb = b.priority - (b.orphanRisk ? ORPHAN_PICK_DEMOTION : 0);
-    return eb !== ea ? eb - ea : b.wordIndex - a.wordIndex;
-  });
-  return sorted[0];
+  let lo = 0;
+  let hi = bps.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (bps[mid]!.wordIndex < from) lo = mid + 1;
+    else hi = mid;
+  }
+  let best: BreakPoint | null = null;
+  let bestEff = -Infinity;
+  for (let i = lo; i < bps.length; i += 1) {
+    const candidate = bps[i]!;
+    if (candidate.wordIndex > to) break;
+    if (cannotSplit(candidate.wordIndex + 1)) continue;
+    const eff = candidate.priority - (candidate.orphanRisk ? ORPHAN_PICK_DEMOTION : 0);
+    if (!best || eff > bestEff || (eff === bestEff && candidate.wordIndex > best.wordIndex)) {
+      best = candidate;
+      bestEff = eff;
+    }
+  }
+  return best;
 }
 
 /** Character unit: CJK=2, the remaining characters are 1 each (see file header deviation description 1).*/

@@ -19,11 +19,11 @@ assert.equal(pastedRecognitionJobs([ready]).length, 0, 'existing timings reused'
 assert.equal(pastedRecognitionJobs([{ ...ready, transcriptStale: true }]).length, 1, 'stale timing is not reused');
 assert.notEqual(pastedTimingSnapshot(items, 'A1'), pastedTimingSnapshot([{ ...clip, srcInFrame: 30 }, second, bgm, ready], 'A1'), 'trim edit invalidates pending alignment');
 const timed = applyPastedRecognition(items, new Map(jobs[0].clips.map((item) => [item.id, ready.transcript])));
-const stale = { ...ready, transcriptStale: true, srcInFrame: 9, deletedWordIdx: [0], silenceFrames: 0 };
+const stale = { ...ready, transcriptStale: true, srcInFrame: 9, variants: [{ id: 'v', lang: 'en', kind: 'translation' as const, label: 'EN', words: [] }] };
 const fresh = applyPastedRecognition([stale], new Map([[stale.id, ready.transcript]]))[0];
-assert.deepEqual(fresh.deletedWordIdx, []); assert.equal(fresh.silenceFrames, undefined);
+assert.equal(fresh.variants, undefined);
 assert.equal(fresh.srcInFrame, 9, 'fresh ASR preserves the media trim actually used in preview');
-assert.deepEqual(stale.deletedWordIdx, [0], 'old project edits are never reset by pasted ASR');
+assert.equal(stale.variants?.length, 1, 'input array untouched');
 const built = buildPastedTranscriptTrack({ script: '你好。你好。你好。', items: timed, track: 'A1', fps: 30, laneId: 'new', label: '字幕' });
 assert.equal(built.captions.sourceEntries?.[0].words?.length, 3);
 assert.equal(built.captions.styleOverride?.color, '#ffffff');

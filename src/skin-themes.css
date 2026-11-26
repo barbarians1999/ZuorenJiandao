@@ -1,6 +1,61 @@
-/* Design-language structural and surface styles per skin family.
- * Every color resolves through --cc-* tokens so light/dark modes stay consistent and contrast-gated.
+/* Design-language structural and surface styles per skin family and mode.
+ * Every color resolves through --cc-* tokens (plus calibrated glass specular highlights in light mode)
+ * so light/dark modes stay consistent, crisp, and contrast-gated.
  */
+
+/* ── 0. Shared Light-Mode Elevation & Chrome Calibration ── */
+html[data-cc-skin-mode='light'] .cc-editor-shell .cc-right-panel-tabs button[aria-selected='true'],
+html[data-cc-skin-mode='light'] .cc-editor-shell .cc-insp-segmented button[aria-pressed='true'],
+html[data-cc-skin-mode='light'] .cc-editor-shell .cc-insp-segmented button.active {
+  background: var(--cc-heading-bg) !important;
+  color: var(--cc-heading-ink) !important;
+}
+
+html[data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-library-rail,
+  .cc-library-content,
+  .cc-preview-panel,
+  .cc-right-panel-shell,
+  .cc-editor-timeline-column
+) {
+  box-shadow: 0 4px 16px rgba(var(--cc-shadow-rgb), 0.08);
+}
+
+html[data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-asset-thumb-wrap,
+  .cc-add-solid-canvas-card,
+  .cc-effect-card-thumb
+) {
+  box-shadow: 0 2px 6px rgba(var(--cc-shadow-rgb), 0.08);
+}
+
+html[data-cc-skin-mode='light'] .cc-editor-shell .cc-timeline-clip.is-selected {
+  box-shadow:
+    0 0 0 1.5px var(--cc-accent),
+    0 3px 10px rgba(var(--cc-shadow-rgb), 0.16);
+}
+
+html[data-cc-skin-mode='light'] .cc-dashboard .cc-dashboard-primary-actions button {
+  box-shadow: 0 2px 8px rgba(var(--cc-shadow-rgb), 0.08);
+}
+
+html[data-cc-skin-mode='light'] .cc-dashboard .cc-dashboard-primary-actions button:hover:not(:disabled) {
+  box-shadow: 0 6px 16px rgba(var(--cc-shadow-rgb), 0.12);
+}
+
+html[data-cc-skin-mode='light'] .cc-tooltip-layer {
+  background: var(--cc-panel);
+  border-color: var(--cc-border-light);
+  box-shadow: 0 6px 20px rgba(var(--cc-shadow-rgb), 0.14);
+}
+
+html[data-cc-skin-mode='light'] .cc-app-toast {
+  box-shadow: 0 8px 24px rgba(var(--cc-shadow-rgb), 0.14) !important;
+}
+
+html[data-cc-skin-mode='light'] .cc-preview-canvas-status {
+  box-shadow: 0 3px 10px rgba(var(--cc-shadow-rgb), 0.14);
+}
 
 /* ── 1. 液态玻璃 (Apple Liquid Glass: quiet graphite/silver panels + frosted floating controls + refractive inspector) ── */
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
@@ -9,9 +64,33 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
   .cc-preview-panel,
   .cc-editor-timeline-column
 ),
-html[data-cc-skin-family='liquid-glass'] .cc-dashboard :is(.cc-dashboard-primary-actions button, .cc-project-grid) {
+html[data-cc-skin-family='liquid-glass'] .cc-dashboard :is(.cc-dashboard-primary-actions button, .cc-storage-migration-banner) {
   border-radius: 16px;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.10);
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.11),
+    0 8px 24px rgba(var(--cc-shadow-rgb), 0.22);
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-dashboard .cc-storage-migration-banner {
+  background: color-mix(in srgb, var(--cc-panel-alt) 82%, transparent) !important;
+  backdrop-filter: blur(18px) saturate(165%);
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-dashboard .cc-storage-migration-primary {
+  border-radius: 999px !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-dashboard .cc-project-list-heading {
+  border-radius: 16px 16px 0 0;
   border: 1px solid rgba(var(--cc-ink-rgb), 0.08);
+  border-bottom: 0;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-dashboard .cc-project-grid {
+  border-radius: 0 0 16px 16px;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.08);
+  border-top: 1px solid var(--cc-border);
   box-shadow: 0 4px 18px rgba(var(--cc-shadow-rgb), 0.16);
 }
 
@@ -32,47 +111,42 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-insp-header {
   border-bottom: 1px solid rgba(var(--cc-ink-rgb), 0.09);
 }
 
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell .cc-insp-header {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), transparent);
+  border-bottom: 1px solid rgba(var(--cc-ink-rgb), 0.08);
+}
+
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
   .cc-right-panel-tabs,
   .cc-insp-tabs,
-  .cc-insp-segmented
+  .cc-insp-segmented,
+  .cc-caption-workspace-tabs
 ) {
-  background: color-mix(in srgb, var(--cc-inset) 66%, transparent);
-  backdrop-filter: blur(18px) saturate(170%);
-  border: 1px solid rgba(var(--cc-ink-rgb), 0.12);
+  background: rgba(var(--cc-shadow-rgb), 0.32);
+  backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.10);
   box-shadow:
-    inset 0 1px 2px rgba(var(--cc-shadow-rgb), 0.14),
-    0 1px 0 rgba(var(--cc-ink-rgb), 0.06);
+    inset 0 1px 2px rgba(var(--cc-shadow-rgb), 0.24),
+    inset 0 -0.5px 0 rgba(var(--cc-ink-rgb), 0.06);
 }
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
   .cc-right-panel-tabs button[aria-selected='true'],
-  .cc-insp-tabs button.active,
   .cc-insp-segmented button[aria-pressed='true'],
-  .cc-insp-segmented button.active
+  .cc-insp-segmented button.active,
+  .cc-insp-tabs button.active,
+  .cc-caption-workspace-tabs button[aria-selected='true']
 ) {
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--cc-accent) 76%, var(--cc-text-strong) 24%),
-    color-mix(in srgb, var(--cc-accent) 88%, transparent)
-  );
-  color: var(--cc-on-accent);
-  border: 1px solid rgba(var(--cc-ink-rgb), 0.22);
+    rgba(var(--cc-ink-rgb), 0.19) 0%,
+    rgba(var(--cc-ink-rgb), 0.11) 100%
+  ) !important;
+  color: var(--cc-text-strong) !important;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.17) !important;
   box-shadow:
-    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.30),
-    0 2px 8px rgba(var(--cc-accent-rgb), 0.24);
-}
-
-html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-insp-tabs button.active {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--cc-panel-alt) 82%, var(--cc-ink-rgb) 8%),
-    color-mix(in srgb, var(--cc-panel) 78%, transparent)
-  );
-  color: var(--cc-accent);
-  box-shadow:
-    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.24),
-    0 2px 8px rgba(var(--cc-shadow-rgb), 0.18);
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.28),
+    0 2px 6px rgba(var(--cc-shadow-rgb), 0.28) !important;
 }
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
@@ -81,7 +155,7 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
   .cc-inspector-advanced,
   .cc-insp-scope,
   .cc-bg-fill-presets button,
-  .cc-animation-card
+  .cc-animation-sample
 ) {
   background: color-mix(in srgb, var(--cc-panel-alt) 62%, transparent);
   backdrop-filter: blur(16px) saturate(160%);
@@ -116,18 +190,137 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-topbar,
 html[data-cc-skin-family='liquid-glass'] .cc-dashboard .cc-dashboard-titlebar {
-  background: color-mix(in srgb, var(--cc-panel) 78%, transparent);
-  backdrop-filter: blur(26px) saturate(165%);
-  box-shadow: inset 0 -1px 0 rgba(var(--cc-ink-rgb), 0.08);
+  background:
+    linear-gradient(180deg, rgba(var(--cc-ink-rgb), 0.05) 0%, rgba(var(--cc-ink-rgb), 0.015) 100%),
+    color-mix(in srgb, var(--cc-bg) 74%, transparent) !important;
+  backdrop-filter: blur(28px) saturate(185%);
+  border-bottom: 1px solid rgba(var(--cc-ink-rgb), 0.09) !important;
+  box-shadow: inset 0 -1px 0 rgba(var(--cc-shadow-rgb), 0.24);
 }
 
 html[data-cc-skin-family='liquid-glass'] :is(
   .cc-topbar-icon-button,
   .cc-topbar-home,
   .cc-utilities-trigger,
-  .cc-editor-brand-mark
+  .cc-skin-picker-trigger,
+  .cc-topbar-utility-cluster
 ) {
-  border-radius: 10px;
+  border-radius: 999px !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
+  .cc-topbar-home,
+  .cc-utilities-trigger,
+  .cc-editor-settings-entry .cc-topbar-icon-button,
+  .cc-skin-picker-trigger,
+  .cc-topbar-utility-cluster
+) {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--cc-ink-rgb), 0.085) 0%,
+    rgba(var(--cc-ink-rgb), 0.03) 100%
+  ) !important;
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.13) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.20),
+    0 1px 4px rgba(var(--cc-shadow-rgb), 0.20) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-topbar-utility-cluster {
+  padding: 2px 4px;
+  gap: 2px;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-topbar-utility-cluster :is(.cc-utilities-trigger, .cc-topbar-icon-button) {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
+  .cc-topbar-home,
+  .cc-utilities-trigger,
+  .cc-topbar-icon-button,
+  .cc-skin-picker-trigger
+):hover:not(:disabled) {
+  background: rgba(var(--cc-ink-rgb), 0.13) !important;
+  border-color: rgba(var(--cc-ink-rgb), 0.20) !important;
+  box-shadow: inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.24) !important;
+  color: var(--cc-text-strong) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-editor-brand-mark {
+  border-radius: 10px !important;
+  background: rgba(var(--cc-ink-rgb), 0.08) !important;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.14);
+  box-shadow: inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.20);
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-library-tool.selected {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--cc-ink-rgb), 0.17) 0%,
+    rgba(var(--cc-ink-rgb), 0.10) 100%
+  ) !important;
+  color: var(--cc-text-strong) !important;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.16) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.26),
+    0 2px 6px rgba(var(--cc-shadow-rgb), 0.22) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-timeline-tabs > div[aria-pressed='true'] {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--cc-ink-rgb), 0.17) 0%,
+    rgba(var(--cc-ink-rgb), 0.10) 100%
+  ) !important;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.18) !important;
+  box-shadow: inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.24) !important;
+  color: var(--cc-text-strong) !important;
+  font-weight: 600;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
+  .cc-timeline-tool-button[aria-pressed='true'],
+  .cc-caption-toggle.active
+) {
+  background: color-mix(in srgb, var(--cc-accent) 88%, var(--cc-panel)) !important;
+  color: var(--cc-on-accent) !important;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.18) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.30),
+    0 1px 5px rgba(var(--cc-shadow-rgb), 0.26) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
+  .cc-timeline-play-button,
+  .cc-preview-play-button
+) {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--cc-ink-rgb), 0.16) 0%,
+    rgba(var(--cc-ink-rgb), 0.08) 100%
+  ) !important;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.18) !important;
+  color: var(--cc-text-strong) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.28),
+    0 2px 8px rgba(var(--cc-shadow-rgb), 0.26) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-timeline-clip.is-selected {
+  filter: brightness(1.16) saturate(1.06);
+  box-shadow:
+    inset 0 0 0 2px rgba(var(--cc-ink-rgb), 0.88),
+    0 4px 12px rgba(var(--cc-shadow-rgb), 0.34) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-caption-track-cue.selected {
+  filter: brightness(1.14);
+  outline: 0 !important;
+  box-shadow: inset 0 0 0 2px rgba(var(--cc-ink-rgb), 0.88) !important;
 }
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-timeline-tool-group {
@@ -137,30 +330,80 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-timeline-tool-grou
   box-shadow: inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.14), 0 4px 14px rgba(var(--cc-shadow-rgb), 0.22);
 }
 
-html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-preview-transport,
-html[data-cc-skin-family='liquid-glass'] .cc-utilities-popover,
-html[data-cc-skin-family='liquid-glass'] .cc-skin-picker-popover,
-html[data-cc-skin-family='liquid-glass'] .cc-modal,
-html[data-cc-skin-family='liquid-glass'] .cc-settings-readable,
-html[data-cc-skin-family='liquid-glass'] .cc-export-panel {
-  background: color-mix(in srgb, var(--cc-panel-alt) 82%, transparent);
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-preview-monitor-bar {
+  background: color-mix(in srgb, var(--cc-panel-alt) 68%, transparent);
+  backdrop-filter: blur(20px) saturate(165%);
+  border-top: 1px solid rgba(var(--cc-ink-rgb), 0.10);
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-preview-monitor-bar .cc-preview-transport {
+  background: transparent;
+  backdrop-filter: none;
+  border: 0;
+  box-shadow: none;
+}
+
+html[data-cc-skin-family='liquid-glass'] :is(
+  .cc-utilities-popover,
+  .cc-skin-picker-popover,
+  .cc-track-create-menu,
+  .cc-media-popover,
+  .cc-clip-context-menu,
+  .cc-caption-cue-menu,
+  .cc-caption-style-menu,
+  [popover].cc-popover-menu,
+  .cc-tooltip-layer,
+  .cc-app-toast,
+  .cc-semantic-panel,
+  .cc-music-analysis-popover,
+  .cc-modal,
+  .cc-settings-readable,
+  .cc-export-panel,
+  .cc-shortcuts-dialog,
+  .cc-window-close-dialog,
+  .cc-scene-dialog,
+  .cc-tracking-dialog,
+  .cc-font-dialog
+) {
+  background: color-mix(in srgb, var(--cc-panel-alt) 84%, transparent) !important;
   backdrop-filter: blur(28px) saturate(175%);
-  border: 1px solid rgba(var(--cc-ink-rgb), 0.16);
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.16) !important;
   box-shadow:
     inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.18),
-    0 14px 36px rgba(var(--cc-shadow-rgb), 0.28);
+    0 14px 36px rgba(var(--cc-shadow-rgb), 0.28) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-tooltip-layer {
+  border-radius: 10px;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-app-toast {
+  border-radius: 999px !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] :is(
+  .cc-shortcuts-dialog,
+  .cc-window-close-dialog,
+  .cc-scene-dialog,
+  .cc-tracking-dialog,
+  .cc-font-dialog
+) {
+  border-radius: 18px !important;
 }
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-topbar-export {
   border-radius: 999px !important;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--cc-heading-bg) 82%, var(--cc-heading-ink) 18%),
-    var(--cc-heading-bg)
-  ) !important;
+  background: color-mix(in srgb, var(--cc-heading-bg) 90%, var(--cc-panel)) !important;
   color: var(--cc-heading-ink) !important;
-  border: 1px solid rgba(var(--cc-ink-rgb), 0.20) !important;
-  box-shadow: inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.30), 0 3px 12px rgba(var(--cc-accent-rgb), 0.26);
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.22) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--cc-ink-rgb), 0.34),
+    0 2px 8px rgba(var(--cc-shadow-rgb), 0.32) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'] .cc-switch {
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.14);
+  box-shadow: inset 0 1px 2px rgba(var(--cc-shadow-rgb), 0.16);
 }
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(.cc-insp-range, .cc-timeline-zoom)::-webkit-slider-thumb {
@@ -187,19 +430,229 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(.cc-insp-range, .c
   border: 1px solid rgba(var(--cc-ink-rgb), 0.38);
 }
 
-/* ── 2. 构成主义 (Constructivism: strict 0px planar geometry, bold structural rules, 90° block sliders) ── */
+/* Liquid Glass · Light Mode specular rim & luminous frost */
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-library-rail,
+  .cc-library-content,
+  .cc-preview-panel,
+  .cc-editor-timeline-column
+),
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-dashboard :is(.cc-dashboard-primary-actions button, .cc-project-grid, .cc-storage-migration-banner) {
+  border-color: rgba(var(--cc-ink-rgb), 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    0 4px 16px rgba(var(--cc-shadow-rgb), 0.08);
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell .cc-right-panel-shell {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(255, 255, 255, 0.35) 36%),
+    color-mix(in srgb, var(--cc-panel) 84%, transparent);
+  border-color: rgba(var(--cc-ink-rgb), 0.10);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 8px 24px rgba(var(--cc-shadow-rgb), 0.09);
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell .cc-topbar,
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-dashboard .cc-dashboard-titlebar {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.66) 100%) !important;
+  border-bottom: 1px solid rgba(var(--cc-ink-rgb), 0.08) !important;
+  box-shadow: inset 0 -1px 0 rgba(var(--cc-ink-rgb), 0.06);
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-topbar-home,
+  .cc-utilities-trigger,
+  .cc-editor-settings-entry .cc-topbar-icon-button,
+  .cc-skin-picker-trigger,
+  .cc-topbar-utility-cluster
+) {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.78) 0%,
+    rgba(255, 255, 255, 0.56) 100%
+  ) !important;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.09) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 1px 4px rgba(var(--cc-shadow-rgb), 0.08) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-topbar-home,
+  .cc-utilities-trigger,
+  .cc-topbar-icon-button,
+  .cc-skin-picker-trigger
+):hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-color: rgba(var(--cc-ink-rgb), 0.14) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    0 2px 6px rgba(var(--cc-shadow-rgb), 0.10) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell .cc-topbar-export {
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 2px 8px rgba(var(--cc-accent-rgb), 0.24) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-library-tool.selected,
+  .cc-timeline-tabs > div[aria-pressed='true'],
+  .cc-timeline-play-button,
+  .cc-preview-play-button
+) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 248, 252, 0.88)) !important;
+  color: var(--cc-text-strong) !important;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.10) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    0 2px 6px rgba(var(--cc-shadow-rgb), 0.10) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-timeline-tool-button[aria-pressed='true'],
+  .cc-caption-toggle.active
+) {
+  background: var(--cc-heading-bg) !important;
+  color: var(--cc-heading-ink) !important;
+  border: 1px solid rgba(255, 255, 255, 0.32) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 1px 5px rgba(var(--cc-accent-rgb), 0.24) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell .cc-timeline-clip.is-selected {
+  filter: brightness(1.08);
+  box-shadow:
+    inset 0 0 0 2px var(--cc-heading-bg),
+    0 4px 12px rgba(var(--cc-shadow-rgb), 0.16) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell .cc-caption-track-cue.selected {
+  filter: brightness(1.08);
+  outline: 0 !important;
+  box-shadow: inset 0 0 0 2px var(--cc-heading-bg) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-right-panel-tabs,
+  .cc-insp-tabs,
+  .cc-insp-segmented,
+  .cc-caption-workspace-tabs
+) {
+  background: color-mix(in srgb, var(--cc-inset) 78%, transparent);
+  border-color: rgba(var(--cc-ink-rgb), 0.09);
+  box-shadow:
+    inset 0 1px 2px rgba(var(--cc-shadow-rgb), 0.07),
+    0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-right-panel-tabs button[aria-selected='true'],
+  .cc-insp-segmented button[aria-pressed='true'],
+  .cc-insp-segmented button.active,
+  .cc-insp-tabs button.active,
+  .cc-caption-workspace-tabs button[aria-selected='true']
+) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 248, 252, 0.90)) !important;
+  color: var(--cc-text-strong) !important;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.08) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    0 2px 6px rgba(var(--cc-shadow-rgb), 0.10) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-insp-collapsible-group,
+  .cc-auto-grade,
+  .cc-inspector-advanced,
+  .cc-insp-scope,
+  .cc-bg-fill-presets button,
+  .cc-animation-sample
+) {
+  background: color-mix(in srgb, var(--cc-panel) 78%, transparent);
+  border-color: rgba(var(--cc-ink-rgb), 0.09);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    0 2px 10px rgba(var(--cc-shadow-rgb), 0.06);
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-insp-scalar,
+  .cc-insp-number,
+  .cc-insp-btn,
+  .cc-insp-select,
+  .cc-insp-color-chip,
+  .cc-capedit-size-pill
+) {
+  background: color-mix(in srgb, var(--cc-panel) 72%, var(--cc-inset) 28%);
+  border-color: rgba(var(--cc-ink-rgb), 0.11) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell .cc-timeline-tool-group {
+  background: color-mix(in srgb, var(--cc-panel) 76%, var(--cc-inset) 24%);
+  border-color: rgba(var(--cc-ink-rgb), 0.10);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    0 3px 10px rgba(var(--cc-shadow-rgb), 0.07);
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] :is(
+  .cc-utilities-popover,
+  .cc-skin-picker-popover,
+  .cc-track-create-menu,
+  .cc-media-popover,
+  .cc-clip-context-menu,
+  .cc-caption-cue-menu,
+  .cc-caption-style-menu,
+  [popover].cc-popover-menu,
+  .cc-tooltip-layer,
+  .cc-app-toast,
+  .cc-semantic-panel,
+  .cc-music-analysis-popover,
+  .cc-modal,
+  .cc-settings-readable,
+  .cc-export-panel,
+  .cc-shortcuts-dialog,
+  .cc-window-close-dialog,
+  .cc-scene-dialog,
+  .cc-tracking-dialog,
+  .cc-font-dialog
+) {
+  background: color-mix(in srgb, var(--cc-panel) 88%, transparent) !important;
+  border-color: rgba(var(--cc-ink-rgb), 0.12) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 12px 32px rgba(var(--cc-shadow-rgb), 0.12) !important;
+}
+
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(.cc-insp-range, .cc-timeline-zoom)::-webkit-slider-thumb {
+  background: #ffffff;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.22);
+  box-shadow: 0 1px 4px rgba(var(--cc-shadow-rgb), 0.24);
+}
+
+/* ── 2. 构成主义 (Constructivism: strict 0px planar geometry, bold structural rules, zero shadows, 90° block sliders) ── */
 html[data-cc-skin-family='constructivism'] :is(
   .cc-library-rail,
   .cc-library-tool,
   .cc-library-content,
   .cc-preview-panel,
   .cc-preview-stage,
+  .cc-preview-hover-frame,
   .cc-preview-header-actions button,
   .cc-preview-transport-icon,
   .cc-preview-play-button,
   .cc-preview-quality-select,
   .cc-preview-shuttle-badge,
   .cc-preview-transform-hud,
+  .cc-preview-canvas-status,
   .cc-preview-source-pill,
   .cc-preview-source-btn,
   .cc-preview-scrub-rail,
@@ -221,7 +674,6 @@ html[data-cc-skin-family='constructivism'] :is(
   .cc-insp-color-chip input[type='color'],
   .cc-insp-collapsible-group,
   .cc-switch,
-  .cc-switch::after,
   .cc-insp-btn,
   .cc-cap-btn,
   .cc-resource-tertiary-tabs button,
@@ -231,22 +683,40 @@ html[data-cc-skin-family='constructivism'] :is(
   .cc-insp-textarea,
   .cc-capedit-size-pill,
   .cc-caption-inline-color,
-  .cc-caption-inline-color::-webkit-color-swatch,
   .cc-caption-font-scope button,
+  .cc-caption-workspace-tabs,
+  .cc-caption-workspace-tabs button,
+  .cc-caption-list-scroll,
+  .cc-caption-list-inline,
+  .cc-caption-list-draft,
+  .cc-text-workspace-tabs button,
   .cc-insp-pill,
+  .cc-region-presets button,
+  .cc-mosaic-chip,
+  .cc-mosaic-add-btn,
+  .cc-mosaic-remove-btn,
+  .cc-mosaic-style-switch button,
   .cc-auto-grade,
   .cc-bg-fill-presets button,
-  .cc-animation-card,
+  .cc-animation-groups button,
+  .cc-animation-sample,
   .cc-animation-audition button,
   .cc-media-search,
   .cc-media-search-wrap input,
   .cc-media-purpose,
+  .cc-media-entry-thumb,
   .cc-asset-thumb-wrap,
+  .cc-asset-duration,
+  .cc-asset-ratio,
+  .cc-asset-favorite,
   .cc-add-solid-canvas-card,
   .cc-asset-add-btn,
   .cc-resource-add-badge,
-  .cc-effect-card,
   .cc-effect-card-thumb,
+  .cc-sound-browser .cc-sound-chip,
+  .cc-sound-browser .cc-sound-favorite,
+  .cc-sound-feedback,
+  .cc-sound-search,
   .cc-editor-timeline-column,
   .cc-timeline,
   .cc-timeline-tool-group,
@@ -266,6 +736,7 @@ html[data-cc-skin-family='constructivism'] :is(
   .cc-timeline-clip,
   .cc-clip-surface,
   .cc-clip-duration,
+  .cc-clip-muted-indicator,
   .cc-caption-track-cue,
   .cc-topbar-icon-button,
   .cc-topbar-home,
@@ -279,11 +750,16 @@ html[data-cc-skin-family='constructivism'] :is(
   .cc-caption-cue-menu,
   .cc-caption-style-menu,
   [popover].cc-popover-menu,
+  .cc-tooltip-layer,
+  .cc-app-toast,
+  .cc-skin-picker-trigger,
   .cc-skin-picker-popover,
   .cc-skin-picker-mode-group,
   .cc-skin-picker-mode-btn,
-  .cc-skin-picker-dot,
   .cc-skin-picker-option,
+  .cc-storage-migration-banner,
+  .cc-storage-migration-primary,
+  .cc-storage-migration-dismiss,
   .cc-modal,
   .cc-settings-readable,
   .cc-settings-input,
@@ -291,6 +767,19 @@ html[data-cc-skin-family='constructivism'] :is(
   .cc-settings-close,
   .cc-settings-nav-btn,
   .cc-export-panel,
+  .cc-shortcuts-dialog,
+  .cc-window-close-dialog,
+  .cc-scene-dialog,
+  .cc-tracking-dialog,
+  .cc-font-dialog,
+  .cc-font-trigger,
+  .cc-semantic-panel,
+  .cc-music-analysis-popover,
+  .cc-music-analysis-trigger,
+  .cc-music-analysis-metric,
+  .cc-music-analysis-rhythm,
+  .cc-music-analysis-switch,
+  .cc-music-analysis-switch::after,
   .cc-dashboard-primary-actions button,
   .cc-dashboard-action,
   .cc-dashboard-toolbar-actions input,
@@ -306,6 +795,63 @@ html[data-cc-skin-family='constructivism'] :is(
   border-radius: 0 !important;
 }
 
+html[data-cc-skin-family='constructivism'] .cc-switch {
+  border-radius: 0 !important;
+  border: 1px solid var(--cc-border-light);
+}
+
+html[data-cc-skin-family='constructivism'] .cc-switch:checked {
+  border-color: var(--cc-accent);
+}
+
+html[data-cc-skin-family='constructivism'] .cc-switch::after {
+  border-radius: 0 !important;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  box-shadow: none !important;
+}
+
+html[data-cc-skin-family='constructivism'] .cc-caption-inline-color::-webkit-color-swatch,
+html[data-cc-skin-family='constructivism'] .cc-caption-inline-color::-moz-color-swatch {
+  border-radius: 0 !important;
+}
+
+html[data-cc-skin-family='constructivism'] :is(
+  .cc-settings-readable,
+  .cc-modal,
+  .cc-export-panel,
+  .cc-shortcuts-dialog,
+  .cc-window-close-dialog,
+  .cc-scene-dialog,
+  .cc-tracking-dialog,
+  .cc-font-dialog,
+  .cc-semantic-panel,
+  .cc-music-analysis-popover
+) :is(
+  div,
+  section,
+  article,
+  header,
+  footer,
+  aside,
+  label,
+  button,
+  input,
+  select,
+  textarea,
+  pre,
+  code,
+  span,
+  img,
+  a,
+  figure,
+  figcaption
+) {
+  border-radius: 0 !important;
+}
+
 html[data-cc-skin-family='constructivism'] .cc-editor-shell :is(
   .cc-library-rail,
   .cc-library-content,
@@ -317,25 +863,98 @@ html[data-cc-skin-family='constructivism'] :is(
   .cc-dashboard .cc-dashboard-primary-actions button,
   .cc-dashboard .cc-project-grid,
   .cc-dashboard .cc-project-list-heading,
+  .cc-dashboard .cc-storage-migration-banner,
   .cc-skin-picker-popover,
   .cc-utilities-popover,
+  .cc-track-create-menu,
+  .cc-media-popover,
+  .cc-clip-context-menu,
+  .cc-caption-cue-menu,
+  .cc-caption-style-menu,
+  [popover].cc-popover-menu,
+  .cc-tooltip-layer,
+  .cc-app-toast,
+  .cc-semantic-panel,
+  .cc-music-analysis-popover,
   .cc-settings-readable,
-  .cc-modal
+  .cc-modal,
+  .cc-export-panel,
+  .cc-shortcuts-dialog,
+  .cc-window-close-dialog,
+  .cc-scene-dialog,
+  .cc-tracking-dialog,
+  .cc-font-dialog
 ) {
+  border: 1.5px solid var(--cc-border) !important;
+  box-shadow: none !important;
+}
+
+html[data-cc-skin-family='constructivism'] .cc-window-close-dialog :is(.cc-window-close-x, .cc-window-close-danger) {
+  border: 1px solid var(--cc-border) !important;
+}
+
+html[data-cc-skin-family='constructivism'] .cc-window-close-dialog :is(.cc-window-close-x, .cc-window-close-danger):hover {
+  border-color: var(--cc-text-strong) !important;
+}
+
+html[data-cc-skin-family='constructivism'] .cc-window-close-dialog .cc-window-close-cancel:is(:hover, :focus-visible) {
+  border: 1px solid var(--cc-border) !important;
+  background: var(--cc-panel-alt) !important;
+}
+
+html[data-cc-skin-family='constructivism'] .cc-window-close-dialog .cc-window-close-primary {
+  border: 1.5px solid var(--cc-accent) !important;
+}
+
+html[data-cc-skin-family='constructivism'] .cc-window-close-dialog .cc-window-close-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
   border: 1.5px solid var(--cc-border);
-  box-shadow: none;
+  border-radius: 0 !important;
+  background: var(--cc-panel);
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+html[data-cc-skin-family='constructivism'] .cc-window-close-dialog .cc-window-close-checkbox:checked {
+  background: var(--cc-accent);
+  border-color: var(--cc-accent);
+}
+
+html[data-cc-skin-family='constructivism'] .cc-window-close-dialog .cc-window-close-checkbox:checked::after {
+  content: '';
+  width: 4px;
+  height: 8px;
+  border: solid var(--cc-on-accent);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-0.5px, -1px);
+}
+
+html[data-cc-skin-family='constructivism'] .cc-dashboard .cc-project-list-heading {
+  border-bottom: 0 !important;
 }
 
 html[data-cc-skin-family='constructivism'] .cc-editor-shell .cc-topbar,
 html[data-cc-skin-family='constructivism'] .cc-dashboard .cc-dashboard-titlebar {
   border-bottom: 2.5px solid var(--cc-heading-bg) !important;
-  box-shadow: none;
+  box-shadow: none !important;
 }
 
 html[data-cc-skin-family='constructivism'] .cc-editor-shell .cc-topbar-export {
   background: var(--cc-heading-bg) !important;
   color: var(--cc-heading-ink) !important;
   border: 0 !important;
+  box-shadow: none !important;
+}
+
+html[data-cc-skin-family='constructivism'] .cc-dashboard .cc-dashboard-new-project {
+  background: var(--cc-heading-bg) !important;
+  color: var(--cc-heading-ink) !important;
+  border: 1.5px solid var(--cc-heading-edge) !important;
   box-shadow: none !important;
 }
 
@@ -350,11 +969,26 @@ html[data-cc-skin-family='constructivism'] .cc-editor-shell :is(
   .cc-timeline-tool-group,
   .cc-insp-tabs,
   .cc-right-panel-tabs,
+  .cc-caption-workspace-tabs,
   .cc-insp-segmented,
   .cc-insp-collapsible-group
 ) {
   border: 1.5px solid var(--cc-border);
-  box-shadow: none;
+  box-shadow: none !important;
+}
+
+html[data-cc-skin-family='constructivism'] .cc-editor-shell :is(
+  .cc-timeline-tool-button[aria-pressed='true'],
+  .cc-playhead,
+  .cc-playhead-grip,
+  .cc-playhead-line-grip::after
+) {
+  box-shadow: none !important;
+}
+
+html[data-cc-skin-family='constructivism'] .cc-editor-shell .cc-timeline-tool-button[aria-pressed='true']:not(.cc-timeline-mode-btn) {
+  border: 1px solid var(--cc-accent);
+  background: color-mix(in srgb, var(--cc-accent) 16%, var(--cc-panel-alt)) !important;
 }
 
 html[data-cc-skin-family='constructivism'] .cc-editor-shell :is(
@@ -368,7 +1002,8 @@ html[data-cc-skin-family='constructivism'] .cc-editor-shell :is(
 
 html[data-cc-skin-family='constructivism'] .cc-editor-shell :is(
   .cc-insp-tabs button.active,
-  .cc-right-panel-tabs button[aria-selected='true']
+  .cc-right-panel-tabs button[aria-selected='true'],
+  .cc-caption-workspace-tabs button[aria-selected='true']
 ) {
   box-shadow: inset 0 0 0 1.5px var(--cc-accent);
 }
@@ -376,10 +1011,20 @@ html[data-cc-skin-family='constructivism'] .cc-editor-shell :is(
 html[data-cc-skin-family='constructivism'] .cc-editor-shell :is(
   .cc-asset-thumb-wrap,
   .cc-add-solid-canvas-card,
-  .cc-effect-card
+  .cc-effect-card-thumb
 ) {
   border: 1px solid var(--cc-border);
   box-shadow: none;
+}
+
+html[data-cc-skin-family='constructivism'] .cc-editor-shell :is(
+  .cc-asset-card:hover .cc-asset-thumb-wrap,
+  .cc-add-solid-canvas-card:hover,
+  .cc-effect-card:is(:hover, :focus-visible) .cc-effect-card-thumb
+) {
+  border-color: var(--cc-accent);
+  box-shadow: none;
+  transform: none;
 }
 
 html[data-cc-skin-family='constructivism'] .cc-editor-shell .cc-insp-range::-webkit-slider-runnable-track,
@@ -426,7 +1071,7 @@ html[data-cc-skin-family='constructivism'] .cc-editor-shell :is(.cc-insp-range, 
   transform: none;
 }
 
-/* ── 3. Material (Material 3 Expressive: tonal steps, zero harsh outlines, squircle FAB, bar slider) ── */
+/* ── 3. Material (Material 3 Expressive: tonal steps, zero harsh outlines, expressive switch, squircle FAB, bar slider) ── */
 html[data-cc-skin-family='material'] .cc-editor-shell :is(
   .cc-library-rail,
   .cc-library-content,
@@ -434,16 +1079,34 @@ html[data-cc-skin-family='material'] .cc-editor-shell :is(
   .cc-right-panel-shell,
   .cc-editor-timeline-column
 ),
-html[data-cc-skin-family='material'] .cc-dashboard :is(.cc-dashboard-primary-actions button, .cc-project-grid) {
+html[data-cc-skin-family='material'] .cc-dashboard :is(.cc-dashboard-primary-actions button, .cc-project-grid, .cc-storage-migration-banner) {
   border-radius: 22px;
   border-color: transparent;
   box-shadow: 0 2px 10px rgba(var(--cc-shadow-rgb), 0.14);
 }
 
+html[data-cc-skin-family='material'] .cc-dashboard .cc-storage-migration-primary {
+  border-radius: 999px !important;
+}
+
+html[data-cc-skin-family='material'] .cc-dashboard .cc-project-list-heading {
+  border-radius: 20px 20px 0 0;
+  border-color: transparent;
+}
+
+html[data-cc-skin-family='material'] .cc-dashboard .cc-project-grid {
+  border-radius: 0 0 22px 22px;
+}
+
 html[data-cc-skin-family='material'] :is(
   .cc-settings-readable,
   .cc-modal,
-  .cc-export-panel
+  .cc-export-panel,
+  .cc-shortcuts-dialog,
+  .cc-window-close-dialog,
+  .cc-scene-dialog,
+  .cc-tracking-dialog,
+  .cc-font-dialog
 ) {
   border-radius: 24px !important;
   border-color: transparent !important;
@@ -455,16 +1118,31 @@ html[data-cc-skin-family='material'] :is(
   [popover].cc-popover-menu,
   .cc-clip-context-menu,
   .cc-track-create-menu,
-  .cc-media-popover
+  .cc-media-popover,
+  .cc-caption-cue-menu,
+  .cc-caption-style-menu,
+  .cc-semantic-panel,
+  .cc-music-analysis-popover
 ) {
   border-radius: 20px !important;
+  border-color: transparent !important;
+}
+
+html[data-cc-skin-family='material'] .cc-tooltip-layer {
+  border-radius: 10px;
+  border-color: transparent;
+}
+
+html[data-cc-skin-family='material'] .cc-app-toast {
+  border-radius: 16px !important;
   border-color: transparent !important;
 }
 
 html[data-cc-skin-family='material'] :is(
   .cc-topbar-icon-button,
   .cc-topbar-home,
-  .cc-utilities-trigger
+  .cc-utilities-trigger,
+  .cc-skin-picker-trigger
 ) {
   border-radius: 999px !important;
   border-color: transparent !important;
@@ -483,12 +1161,75 @@ html[data-cc-skin-family='material'] .cc-editor-shell .cc-topbar-export {
 }
 
 html[data-cc-skin-family='material'] .cc-dashboard .cc-dashboard-new-project {
-  border-radius: 20px !important;
+  border-radius: 22px !important;
   border-color: transparent;
+  background: var(--cc-heading-bg);
+  color: var(--cc-heading-ink);
+  box-shadow: 0 2px 10px rgba(var(--cc-shadow-rgb), 0.18);
 }
 
 html[data-cc-skin-family='material'] .cc-editor-shell .cc-library-tool.selected {
   border-radius: 999px;
+}
+
+html[data-cc-skin-family='material'] .cc-editor-shell .cc-timeline-tool-group {
+  border-radius: 16px;
+}
+
+html[data-cc-skin-family='material'] .cc-editor-shell :is(
+  .cc-right-panel-tabs,
+  .cc-insp-tabs,
+  .cc-insp-segmented,
+  .cc-caption-workspace-tabs,
+  .cc-timeline-tool-group
+) {
+  background: var(--cc-panel-alt);
+  border-color: transparent;
+}
+
+html[data-cc-skin-family='material'] .cc-editor-shell :is(
+  .cc-asset-thumb-wrap,
+  .cc-add-solid-canvas-card,
+  .cc-effect-card-thumb,
+  .cc-media-entry-thumb
+) {
+  border-radius: 16px;
+}
+
+html[data-cc-skin-family='material'] .cc-editor-shell .cc-timeline-clip:not([data-compact-clip='true'], [data-narrow-clip='true']) {
+  border-radius: 12px;
+}
+
+html[data-cc-skin-family='material'] .cc-editor-shell .cc-timeline-clip:not([data-compact-clip='true'], [data-narrow-clip='true']) .cc-clip-surface {
+  border-radius: 11px;
+}
+
+html[data-cc-skin-family='material'] .cc-switch {
+  background: var(--cc-panel-alt);
+  border: 1.5px solid var(--cc-border-light);
+}
+
+html[data-cc-skin-family='material'] .cc-switch::after {
+  top: 2.5px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  background: var(--cc-text-muted);
+  box-shadow: none;
+  transition: transform 150ms ease, width 150ms ease, height 150ms ease, top 150ms ease, background-color 150ms ease;
+}
+
+html[data-cc-skin-family='material'] .cc-switch:checked {
+  background: var(--cc-accent);
+  border-color: var(--cc-accent);
+}
+
+html[data-cc-skin-family='material'] .cc-switch:checked::after {
+  top: 0.5px;
+  transform: translateX(14px);
+  width: 16px;
+  height: 16px;
+  background: var(--cc-on-accent);
 }
 
 html[data-cc-skin-family='material'] .cc-editor-shell :is(
@@ -525,6 +1266,40 @@ html[data-cc-skin-family='material'] .cc-editor-shell :is(.cc-insp-range, .cc-ti
   border: 2px solid var(--cc-panel);
 }
 
+html[data-cc-skin-family='material'][data-cc-skin-mode='light'] .cc-editor-shell :is(
+  .cc-library-rail,
+  .cc-library-content,
+  .cc-preview-panel,
+  .cc-right-panel-shell,
+  .cc-editor-timeline-column
+),
+html[data-cc-skin-family='material'][data-cc-skin-mode='light'] .cc-dashboard :is(.cc-dashboard-primary-actions button, .cc-project-grid) {
+  box-shadow: 0 2px 12px rgba(var(--cc-shadow-rgb), 0.08);
+}
+
+html[data-cc-skin-family='material'][data-cc-skin-mode='light'] :is(
+  .cc-skin-picker-popover,
+  .cc-utilities-popover,
+  [popover].cc-popover-menu,
+  .cc-clip-context-menu,
+  .cc-track-create-menu,
+  .cc-media-popover,
+  .cc-caption-cue-menu,
+  .cc-caption-style-menu,
+  .cc-semantic-panel,
+  .cc-music-analysis-popover,
+  .cc-settings-readable,
+  .cc-modal,
+  .cc-export-panel,
+  .cc-shortcuts-dialog,
+  .cc-window-close-dialog,
+  .cc-scene-dialog,
+  .cc-tracking-dialog,
+  .cc-font-dialog
+) {
+  box-shadow: 0 8px 26px rgba(var(--cc-shadow-rgb), 0.13) !important;
+}
+
 /* ── 4. 极简主义 (Swiss / Braun Minimalism: hairline 1px seams, shadow-free planes, square video clips, orange dot) ── */
 html[data-cc-skin-family='minimalism'] .cc-editor-shell :is(
   .cc-library-rail,
@@ -533,24 +1308,47 @@ html[data-cc-skin-family='minimalism'] .cc-editor-shell :is(
   .cc-right-panel-shell,
   .cc-editor-timeline-column
 ),
-html[data-cc-skin-family='minimalism'] .cc-dashboard :is(.cc-dashboard-primary-actions button, .cc-project-grid, .cc-project-list-heading) {
+html[data-cc-skin-family='minimalism'] .cc-dashboard :is(.cc-dashboard-primary-actions button, .cc-project-grid, .cc-project-list-heading, .cc-storage-migration-banner) {
   border-radius: 4px;
   border: 1px solid var(--cc-border);
   box-shadow: none !important;
 }
 
-html[data-cc-skin-family='minimalism'] .cc-editor-shell .cc-timeline-clip[data-video-track='true'],
-html[data-cc-skin-family='minimalism'] .cc-editor-shell .cc-timeline-clip[data-video-track='true'] .cc-clip-surface {
+html[data-cc-skin-family='minimalism'] .cc-dashboard .cc-project-list-heading {
+  border-radius: 4px 4px 0 0;
+  border-bottom: 0;
+}
+
+html[data-cc-skin-family='minimalism'] .cc-dashboard .cc-project-grid {
+  border-radius: 0 0 4px 4px;
+}
+
+html[data-cc-skin-family='minimalism'] .cc-dashboard :is(.cc-storage-migration-primary, .cc-storage-migration-dismiss) {
+  border-radius: 4px !important;
+}
+
+html[data-cc-skin-family='minimalism'] .cc-editor-shell :is(
+  .cc-timeline-clip,
+  .cc-clip-surface,
+  .cc-caption-track-cue,
+  .cc-clip-duration,
+  .cc-clip-badge,
+  .cc-clip-muted-indicator
+),
+html[data-cc-skin-family='minimalism'] .cc-editor-shell .cc-timeline-clip::after,
+html[data-cc-skin-family='minimalism'] .cc-editor-shell .cc-caption-track-trim::after {
   border-radius: 0 !important;
 }
 
 html[data-cc-skin-family='minimalism'] :is(
   .cc-insp-tabs,
   .cc-right-panel-tabs,
+  .cc-caption-workspace-tabs,
   .cc-insp-segmented,
   .cc-timeline-tool-group,
   .cc-utilities-popover,
   .cc-utilities-trigger,
+  .cc-skin-picker-trigger,
   .cc-skin-picker-popover,
   .cc-skin-picker-mode-group,
   .cc-skin-picker-mode-btn,
@@ -559,32 +1357,86 @@ html[data-cc-skin-family='minimalism'] :is(
   .cc-media-popover,
   .cc-clip-context-menu,
   .cc-caption-cue-menu,
+  .cc-caption-style-menu,
   [popover].cc-popover-menu,
+  .cc-tooltip-layer,
+  .cc-app-toast,
   .cc-modal,
   .cc-settings-readable,
   .cc-settings-input,
   .cc-settings-btn,
   .cc-settings-close,
   .cc-settings-nav-btn,
-  .cc-export-panel
+  .cc-export-panel,
+  .cc-shortcuts-dialog,
+  .cc-window-close-dialog,
+  .cc-scene-dialog,
+  .cc-tracking-dialog,
+  .cc-font-dialog,
+  .cc-font-trigger,
+  .cc-semantic-panel,
+  .cc-music-analysis-popover,
+  .cc-music-analysis-trigger
 ) {
   border-radius: 4px !important;
-  box-shadow: none;
-  border: 1px solid var(--cc-border);
+  box-shadow: none !important;
+  border: 1px solid var(--cc-border) !important;
+}
+
+html[data-cc-skin-family='minimalism'] :is(
+  .cc-settings-readable,
+  .cc-modal,
+  .cc-export-panel,
+  .cc-shortcuts-dialog,
+  .cc-window-close-dialog,
+  .cc-scene-dialog,
+  .cc-tracking-dialog,
+  .cc-font-dialog,
+  .cc-semantic-panel,
+  .cc-music-analysis-popover
+) :is(
+  div,
+  section,
+  article,
+  label,
+  button,
+  input:not(.cc-switch),
+  select,
+  textarea,
+  pre,
+  code,
+  span:not([style*='50%']),
+  img,
+  a,
+  figure,
+  figcaption
+)[style*='border-radius'] {
+  border-radius: 4px !important;
 }
 
 html[data-cc-skin-family='minimalism'] .cc-editor-shell :is(
   .cc-library-tool,
   .cc-preview-stage,
+  .cc-preview-hover-frame,
   .cc-preview-header-actions button,
   .cc-preview-transport-icon,
   .cc-preview-play-button,
   .cc-preview-quality-select,
   .cc-preview-shuttle-badge,
   .cc-preview-transform-hud,
+  .cc-preview-canvas-status,
   .cc-preview-source-pill,
+  .cc-preview-source-btn,
+  .cc-preview-scrub-rail,
+  .cc-preview-scrub-fill,
+  .cc-preview-zone-range,
+  .cc-preview-scrub-thumb,
   .cc-right-panel-tabs button,
   .cc-insp-tabs button,
+  .cc-caption-workspace-tabs button,
+  .cc-caption-list-scroll,
+  .cc-caption-list-inline,
+  .cc-caption-list-draft,
   .cc-insp-segmented button,
   .cc-insp-scalar,
   .cc-insp-number,
@@ -602,14 +1454,16 @@ html[data-cc-skin-family='minimalism'] .cc-editor-shell :is(
   .cc-insp-pill,
   .cc-auto-grade,
   .cc-bg-fill-presets button,
-  .cc-animation-card,
+  .cc-animation-groups button,
+  .cc-animation-sample,
   .cc-media-search,
   .cc-media-search-wrap input,
   .cc-media-purpose,
+  .cc-media-entry-thumb,
   .cc-asset-thumb-wrap,
   .cc-add-solid-canvas-card,
-  .cc-effect-card,
   .cc-effect-card-thumb,
+  .cc-sound-browser .cc-sound-chip,
   .cc-timeline-tool-button,
   .cc-timeline-play-button,
   .cc-timeline-timecode,
@@ -635,6 +1489,46 @@ html[data-cc-skin-family='minimalism'] .cc-dashboard :is(
 }
 
 html[data-cc-skin-family='minimalism'] .cc-editor-shell :is(
+  .cc-timeline-tool-button[aria-pressed='true'],
+  .cc-playhead,
+  .cc-playhead-grip,
+  .cc-playhead-line-grip::after
+) {
+  box-shadow: none !important;
+}
+
+html[data-cc-skin-family='minimalism'] .cc-editor-shell .cc-timeline-tool-button[aria-pressed='true']:not(.cc-timeline-mode-btn) {
+  border: 1px solid color-mix(in srgb, var(--cc-accent) 65%, var(--cc-border));
+}
+
+html[data-cc-skin-family='minimalism'] .cc-editor-shell :is(
+  .cc-asset-thumb-wrap,
+  .cc-add-solid-canvas-card,
+  .cc-effect-card-thumb
+) {
+  border: 1px solid var(--cc-border);
+}
+
+html[data-cc-skin-family='minimalism'] .cc-editor-shell :is(
+  .cc-asset-card:hover .cc-asset-thumb-wrap,
+  .cc-add-solid-canvas-card:hover,
+  .cc-effect-card:is(:hover, :focus-visible) .cc-effect-card-thumb
+) {
+  border-color: var(--cc-border-light);
+  transform: none;
+}
+
+html[data-cc-skin-family='minimalism'] .cc-editor-shell :is(
+  .cc-insp-tabs button.active,
+  .cc-right-panel-tabs button[aria-selected='true'],
+  .cc-caption-workspace-tabs button[aria-selected='true']
+) {
+  background: var(--cc-hover) !important;
+  color: var(--cc-text-strong) !important;
+  border: 1px solid var(--cc-border-light);
+}
+
+html[data-cc-skin-family='minimalism'] .cc-editor-shell :is(
   .cc-timeline-play-button,
   .cc-preview-play-button
 ) {
@@ -652,12 +1546,12 @@ html[data-cc-skin-family='minimalism'] .cc-editor-shell :is(
 }
 
 html[data-cc-skin-family='minimalism'] .cc-switch {
-  border-radius: 3px;
+  border-radius: 3px !important;
   border: 1px solid var(--cc-border-light);
 }
 
 html[data-cc-skin-family='minimalism'] .cc-switch::after {
-  border-radius: 2px;
+  border-radius: 2px !important;
   top: 2px;
   left: 2px;
   width: 14px;
@@ -665,7 +1559,8 @@ html[data-cc-skin-family='minimalism'] .cc-switch::after {
   box-shadow: none;
 }
 
-html[data-cc-skin-family='minimalism'] .cc-editor-shell .cc-topbar-export {
+html[data-cc-skin-family='minimalism'] .cc-editor-shell .cc-topbar-export,
+html[data-cc-skin-family='minimalism'] .cc-dashboard .cc-dashboard-new-project {
   border-radius: 4px !important;
   background: var(--cc-heading-bg) !important;
   color: var(--cc-heading-ink) !important;
@@ -677,7 +1572,8 @@ html[data-cc-skin-family='minimalism'] .cc-editor-shell .cc-topbar-export {
   gap: 6px;
 }
 
-html[data-cc-skin-family='minimalism'] .cc-editor-shell .cc-topbar-export::before {
+html[data-cc-skin-family='minimalism'] .cc-editor-shell .cc-topbar-export::before,
+html[data-cc-skin-family='minimalism'] .cc-dashboard .cc-dashboard-new-project::before {
   content: '';
   width: 6px;
   height: 6px;

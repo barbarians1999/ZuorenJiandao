@@ -36,7 +36,7 @@ export async function listUploadFiles(): Promise<UploadFileInfo[]> {
 export async function collectAllUploadRefs(excludeId?: string): Promise<Set<string>> {
   const refs = new Set<string>();
   for (const [key, value] of Object.entries(await kvEntriesForCleanup())) {
-    if (excludeId && (key === `project:${excludeId}` || key === `local:project:${excludeId}`)) continue;
+    if (excludeId && (key === `project:${excludeId}` || key === `project-legacy-backup:${excludeId}` || key === `local:project:${excludeId}`)) continue;
     const remaining: unknown[] = [value];
     const visited = new WeakSet<object>();
     while (remaining.length) {

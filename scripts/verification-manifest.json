@@ -232,7 +232,8 @@
     ],
     "verify:direct-cut-render": [
       "scripts/direct-cut-render.verify.mjs",
-      "scripts/overlay-hybrid-render.verify.mjs"
+      "scripts/overlay-hybrid-render.verify.mjs",
+      "scripts/shared-rules-v050.verify.mts"
     ],
     "verify:direct-cut-server": [
       "scripts/direct-cut-server.verify.mjs",
@@ -450,7 +451,8 @@
     "verify:toolbar-tooltips": [
       "src/media/media-toolbar-tooltips.verify.tsx",
       "src/components/generation-activity.verify.tsx",
-      "src/components/topbar-tooltips.verify.tsx"
+      "src/components/topbar-tooltips.verify.tsx",
+      "src/ui/tooltipLayer.verify.ts"
     ],
     "verify:export-adaptive": [
       "src/export/exportDestination.verify.ts",
@@ -530,6 +532,7 @@
       "server/plugins/export-qa.verify.ts",
       "src/agent/tools/export-qa-tools.verify.ts",
       "src/persist/migrations/migrations.verify.ts",
+      "src/persist/legacyTranscriptMigration.verify.ts",
       "server/keystore.verify.ts",
       "src/components/timeline/transition-context-menu.verify.ts",
       "shared/model-capabilities.verify.ts",
@@ -551,6 +554,7 @@
       "src/agent/tools/undo-tools.verify.ts",
       "src/editor/clipFit.verify.ts",
       "src/editor/sourceLimit.verify.ts",
+      "src/editor/speedDuration.verify.ts",
       "src/editor/rippleChain.verify.ts",
       "src/editor/snap.verify.ts",
       "src/transcript/cutPad.verify.ts",
@@ -830,6 +834,8 @@
       "src/editor/ripple-fade.verify.ts",
       "src/editor/ripple.verify.ts",
       "src/editor/split.verify.ts",
+      "src/editor/trackSsotArchitecture.verify.ts",
+      "src/editor/foldGroups.verify.ts",
       "src/editor/transitionPreview.verify.ts",
       "src/editor/captionReferences.verify.ts",
       "src/editor/zoom.verify.ts",
@@ -891,6 +897,7 @@
       "src/agent/tools/audio-assets.verify.ts",
       "src/agent/tools/auto-grade-tools.verify.ts",
       "src/agent/tools/captions-lanes.verify.ts",
+      "src/agent/tools/captions-manual-import.verify.ts",
       "src/agent/tools/captions-tools.verify.ts",
       "src/agent/tools/design-tools.verify.ts",
       "src/agent/tools/edit-asset-tools.verify.ts",
@@ -952,6 +959,7 @@
       "src/components/preview/motionPath.verify.ts",
       "src/components/preview/previewTextEdit.verify.ts",
       "src/components/preview/previewMonitorBar.verify.ts",
+      "src/components/preview/previewRenderProject.verify.ts",
       "src/components/preview/sourceAssetPreview.verify.ts",
       "src/components/preview/timeline-hover-preview.verify.ts",
       "src/export/exportPreflight.verify.ts",
@@ -1473,6 +1481,13 @@
       "id": "scripts/mask-blur-render.verify.mjs",
       "file": "scripts/mask-blur-render.verify.mjs",
       "command": "node --import tsx scripts/mask-blur-render.verify.mjs",
+      "group": "short-render",
+      "timeoutMs": 600000
+    },
+    {
+      "id": "scripts/shared-rules-v050.verify.mts",
+      "file": "scripts/shared-rules-v050.verify.mts",
+      "command": "node --import tsx scripts/shared-rules-v050.verify.mts",
       "group": "short-render",
       "timeoutMs": 600000
     },
@@ -2964,6 +2979,13 @@
       "timeoutMs": 120000
     },
     {
+      "id": "src/agent/tools/captions-manual-import.verify.ts",
+      "file": "src/agent/tools/captions-manual-import.verify.ts",
+      "command": "tsx src/agent/tools/captions-manual-import.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
       "id": "src/agent/tools/captions-track-order.verify.ts",
       "file": "src/agent/tools/captions-track-order.verify.ts",
       "command": "tsx src/agent/tools/captions-track-order.verify.ts",
@@ -3650,6 +3672,13 @@
       "timeoutMs": 120000
     },
     {
+      "id": "src/captions/captionPerformance.verify.ts",
+      "file": "src/captions/captionPerformance.verify.ts",
+      "command": "tsx --tsconfig tsconfig.app.json src/captions/captionPerformance.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
       "id": "src/captions/captionPreviewBoxGeometry.verify.ts",
       "file": "src/captions/captionPreviewBoxGeometry.verify.ts",
       "command": "tsx src/captions/captionPreviewBoxGeometry.verify.ts",
@@ -3965,6 +3994,13 @@
       "timeoutMs": 120000
     },
     {
+      "id": "src/components/preview/playbackSmoothness.verify.tsx",
+      "file": "src/components/preview/playbackSmoothness.verify.tsx",
+      "command": "tsx --tsconfig tsconfig.app.json src/components/preview/playbackSmoothness.verify.tsx",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
       "id": "src/components/preview/preview-transform-overlay.verify.tsx",
       "file": "src/components/preview/preview-transform-overlay.verify.tsx",
       "command": "tsx --tsconfig tsconfig.app.json src/components/preview/preview-transform-overlay.verify.tsx",
@@ -3989,6 +4025,13 @@
       "id": "src/components/preview/PreviewSourceControls.verify.tsx",
       "file": "src/components/preview/PreviewSourceControls.verify.tsx",
       "command": "tsx --tsconfig tsconfig.app.json src/components/preview/PreviewSourceControls.verify.tsx",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "src/components/preview/previewRenderProject.verify.ts",
+      "file": "src/components/preview/previewRenderProject.verify.ts",
+      "command": "tsx --tsconfig tsconfig.app.json src/components/preview/previewRenderProject.verify.ts",
       "group": "logic",
       "timeoutMs": 120000
     },
@@ -4686,6 +4729,13 @@
       "timeoutMs": 120000
     },
     {
+      "id": "src/editor/speedDuration.verify.ts",
+      "file": "src/editor/speedDuration.verify.ts",
+      "command": "tsx src/editor/speedDuration.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
       "id": "src/editor/split.verify.ts",
       "file": "src/editor/split.verify.ts",
       "command": "tsx src/editor/split.verify.ts",
@@ -4696,6 +4746,20 @@
       "id": "src/editor/splitEligibility.verify.ts",
       "file": "src/editor/splitEligibility.verify.ts",
       "command": "tsx src/editor/splitEligibility.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "src/editor/trackSsotArchitecture.verify.ts",
+      "file": "src/editor/trackSsotArchitecture.verify.ts",
+      "command": "tsx src/editor/trackSsotArchitecture.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "src/editor/foldGroups.verify.ts",
+      "file": "src/editor/foldGroups.verify.ts",
+      "command": "tsx src/editor/foldGroups.verify.ts",
       "group": "logic",
       "timeoutMs": 120000
     },
@@ -4731,6 +4795,13 @@
       "id": "src/editor/timecode.verify.ts",
       "file": "src/editor/timecode.verify.ts",
       "command": "tsx src/editor/timecode.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "src/editor/timelinePlaybackStability.verify.ts",
+      "file": "src/editor/timelinePlaybackStability.verify.ts",
+      "command": "tsx --tsconfig tsconfig.app.json src/editor/timelinePlaybackStability.verify.ts",
       "group": "logic",
       "timeoutMs": 120000
     },
@@ -5582,6 +5653,13 @@
       "timeoutMs": 120000
     },
     {
+      "id": "src/persist/legacyTranscriptMigration.verify.ts",
+      "file": "src/persist/legacyTranscriptMigration.verify.ts",
+      "command": "tsx src/persist/legacyTranscriptMigration.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
       "id": "src/persist/multicamPreservation.verify.ts",
       "file": "src/persist/multicamPreservation.verify.ts",
       "command": "tsx src/persist/multicamPreservation.verify.ts",
@@ -5921,6 +5999,13 @@
       "id": "src/transcript/variants.verify.ts",
       "file": "src/transcript/variants.verify.ts",
       "command": "tsx src/transcript/variants.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "src/ui/tooltipLayer.verify.ts",
+      "file": "src/ui/tooltipLayer.verify.ts",
+      "command": "tsx src/ui/tooltipLayer.verify.ts",
       "group": "logic",
       "timeoutMs": 120000
     },

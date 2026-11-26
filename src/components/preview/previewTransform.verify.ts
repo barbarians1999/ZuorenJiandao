@@ -12,6 +12,7 @@ import {
   hitPreviewCandidates,
   movePreviewTransform,
   previewCandidateGeometry,
+  resizeCompositionMosaic,
   rotatePreviewTransform,
   scalePreviewTransform,
   shouldSelectedItemPreemptCaptions,
@@ -449,6 +450,33 @@ assert.match(
   );
   assert.ok(Math.abs((resizedMosaic.centerX - resizedMosaic.width / 2) - 0.3) < 1e-9, '马赛克拖动右边时左边必须固定');
   assert.ok(Math.abs(resizedMosaic.width - 0.6) < 1e-9);
+
+  // Corner dragging on an off-center / transformed mosaic must keep the opposite corner fixed and never invert direction.
+  const offCenterMosaic: TimelineItem = {
+    ...mosaicItem,
+    transform: { x: -20, y: -15 },
+    mosaic: { shape: 'rectangle', centerX: 0.25, centerY: 0.25, width: 0.2, height: 0.2, strength: 70, feather: 0, opacity: 1 },
+  };
+  const offCenterState = stateOf({ width: 1000, height: 1000, items: [offCenterMosaic] });
+  const offCenterTransform = effectivePreviewTransform(offCenterMosaic, 0);
+  // Original edges: left=0.15, right=0.35, top=0.15, bottom=0.35; transform shift (-200, -150).
+  // Dragging se corner outward in composition space to (250, 300) => local (450, 450) => (0.45, 0.45).
+  const seGrown = resizeCompositionMosaic(offCenterState, offCenterTransform, offCenterMosaic.mosaic!, { x: 250, y: 300 }, 'se');
+  assert.ok(Math.abs((seGrown.centerX - seGrown.width / 2) - 0.15) < 1e-9, '拖动右下角放大时左上角 X 必须固定');
+  assert.ok(Math.abs((seGrown.centerY - seGrown.height / 2) - 0.15) < 1e-9, '拖动右下角放大时左上角 Y 必须固定');
+  assert.ok(seGrown.width > offCenterMosaic.mosaic!.width && seGrown.height > offCenterMosaic.mosaic!.height, '向外拖动右下角必须放大而非缩小');
+
+  // Dragging nw corner outward to (-150, -100) => local (50, 50) => (0.05, 0.05) keeps se (0.35, 0.35) fixed.
+  const nwGrown = resizeCompositionMosaic(offCenterState, offCenterTransform, offCenterMosaic.mosaic!, { x: -150, y: -100 }, 'nw');
+  assert.ok(Math.abs((nwGrown.centerX + nwGrown.width / 2) - 0.35) < 1e-9, '拖动左上角放大时右下角 X 必须固定');
+  assert.ok(Math.abs((nwGrown.centerY + nwGrown.height / 2) - 0.35) < 1e-9, '拖动左上角放大时右下角 Y 必须固定');
+  assert.ok(nwGrown.width > offCenterMosaic.mosaic!.width && nwGrown.height > offCenterMosaic.mosaic!.height, '向外拖动左上角必须放大而非反向缩小');
+
+  // Dragging ne corner inward keeps sw (0.15, 0.35) fixed and shrinks.
+  const neShrunk = resizeCompositionMosaic(offCenterState, offCenterTransform, offCenterMosaic.mosaic!, { x: 50, y: 100 }, 'ne');
+  assert.ok(Math.abs((neShrunk.centerX - neShrunk.width / 2) - 0.15) < 1e-9, '拖动右上角时左下角 X 必须固定');
+  assert.ok(Math.abs((neShrunk.centerY + neShrunk.height / 2) - 0.35) < 1e-9, '拖动右上角时左下角 Y 必须固定');
+  assert.ok(neShrunk.width < offCenterMosaic.mosaic!.width && neShrunk.height < offCenterMosaic.mosaic!.height, '向内拖动右上角必须缩小');
 }
 
 // Selected mosaic / overlay items must preempt unselected captions; untransformed bottom-track base video yields to captions.

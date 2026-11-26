@@ -3,6 +3,7 @@ import { CAPTION_MOTION_OPTIONS } from '../../../captions/captionMotion';
 
 const CAPTION_ACTIONS = [
   'enable', 'disable', 'hide_overlay', 'show_overlay',
+  'cue_add', 'cue_update', 'cue_remove', 'import_srt', 'paste_transcript',
   'display_text', 'template', 'style', 'animation', 'layout', 'layout_policy', 'positions',
   'preset_apply', 'preset_delete', 'preset_list', 'preset_rename', 'preset_save',
   'bilingual', 'language_mode', 'source_add', 'source_list', 'source_remove',
@@ -12,7 +13,7 @@ const CAPTION_ACTIONS = [
 export const CAPTIONS_TOOL_SCHEMAS: AgentToolSchema[] = [
   {
     name: 'read_captions',
-    description: "Read one caption track's state and resolved pages. Pass captionTrackId as C1/C2 or a stable id; omit it for C1. Use list=true to discover every caption track.",
+    description: "Read one caption track's state and resolved pages (plus `manualCues` with `{cueId, laneId, index, text, startMs, endMs}` when manual caption lanes exist). Pass captionTrackId as C1/C2 or a stable id; omit it for C1. Use list=true to discover every caption track.",
     input_schema: { type: 'object', properties: {
       captionTrackId: { type: 'string', description: 'Caption track alias (C1/C2) or stable id. Defaults to C1.' },
       list: { type: 'boolean', description: 'List caption tracks instead of reading resolved pages.' },
@@ -22,8 +23,11 @@ export const CAPTIONS_TOOL_SCHEMAS: AgentToolSchema[] = [
     name: 'edit_captions',
     description:
       "Manage the captions/subtitles overlay via a single `action`. Read text first only for display_text (use read_captions); every other action is one direct call.\n" +
-      "- enable / disable: toggle captions data (enable optionally takes a built-in `preset` name).\n" +
-      "- hide_overlay / show_overlay: global captionsHidden flag (toolbar 字幕显示) — hides on-screen caption overlay and text clips without wiping caption data; show_overlay re-enables.\n" +
+      "- enable / disable: toggle captions data (enable optionally takes a built-in `preset` name, `skipAvoidance: true` to skip auto subject-avoidance analysis on long videos, or `json:{manual:true}` to enable an empty manual caption track without ASR).\n" +
+      "- hide_overlay / show_overlay: global captionsHidden flag (toolbar 字幕显示) — hides on-screen caption track overlay without wiping caption data or affecting video-track text clips; show_overlay re-enables.\n" +
+      "- cue_add / cue_update / cue_remove: create, edit, or delete individual manual subtitle cues directly in the caption track (visible in Caption List). cue_add json: {text, startMs, endMs?, laneId?} or {cues:[{text, startMs, endMs?}], laneId?} (auto-enables a manual caption track if off). cue_update json: {cueId|index, laneId?, text?, startMs?, endMs?} or {cues:[...]}. cue_remove json: {cueId} | {cueIds:[...]} | {laneId?, index} | {laneId?, clearAll:true}.\n" +
+      "- import_srt: import UTF-8 SRT subtitle text directly into a caption track via json {srt|content, name?, mode?:\"create_track\"|\"replace\"|\"append_lane\", createTrack?}.\n" +
+      "- paste_transcript: align pasted full script text against a transcribed speech track into a caption track via json {script|text, trackId?, name?, mode?:\"create_track\"|\"replace\"|\"append_lane\", createTrack?}.\n" +
       "- template: no arg → list the 21 built-in presets; `templatePreset:\"netflix\"` → apply one (size/position preserved).\n" +
       "- style: custom look via `json` — {font|fontFamily,sizePx|fontSizeRatio|fontSize,color,weight|fontWeight,fontStyle,textAlign|align,underline,strike,letterSpacing,lineHeight,strokeColor,strokeWidth,highlightColor,highlightBackground,shadow|shadowStrength,background|backgroundColor,backgroundOpacity,borderRadius,textTransform,displayMode,wordsPerPage,pacing}. Layered over the current template; unmapped fields are reported in `ignored`. sizePx is relative to CANVAS height — on 9:16 vertical (1080×1920) social captions want sizePx ≥ 86 (≈4.5% of height); leave size unset to keep the template default. pacing: 'phrase' (default, readable pages + karaoke highlight) — only use 'word' when the user explicitly wants single-word pop.\n" +
       "- animation: deterministic burn-in motion shared by preview/export; set `motionPreset` to none, fade-up, pop, word-pop, or karaoke-pulse.\n" +
@@ -51,6 +55,10 @@ export const CAPTIONS_TOOL_SCHEMAS: AgentToolSchema[] = [
         list: { type: 'boolean', description: 'For action=track: list available source tracks instead of changing the source.' },
         captionTrackId: { type: 'string', description: 'Target caption track alias (C1/C2) or stable id. Defaults to C1.' },
         captionsItemId: { type: 'string', description: 'Legacy alias for captionTrackId.' },
+        skipAvoidance: {
+          type: 'boolean',
+          description: 'For action=enable/source_set/source_add: skip automatic whole-video face/subject avoidance geometry analysis (recommended for long videos to avoid timeouts; default false).',
+        },
       },
       required: ['action'],
     },

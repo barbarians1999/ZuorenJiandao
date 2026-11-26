@@ -7,6 +7,7 @@ import { execCaptionsTool } from './captions-tools';
 import { execTrackTool } from './track-tools';
 import { execTranscriptTool } from './transcript-tools';
 import { applyGeneric, validateGenericUpdate, validateMediaSourceUpdate } from './edit-item-generic';
+import { resolveTranscriptUnit } from '../../transcript/trackEditCompiler';
 
 const words = [
   { text: 'one', start: 0, end: 200, speaker: 'A' },
@@ -97,14 +98,14 @@ const play = await execTranscriptTool(
   ctx,
 ) as { ok?: boolean; playOrder?: number[] };
 assert.equal(play.ok, true, JSON.stringify(play));
-assert.deepEqual(draft.getState().items.find((i) => i.id === 'clip_a')?.transcriptPlayOrder, [2, 0, 1]);
+assert.deepEqual(resolveTranscriptUnit(draft.getState(), 'clip_a')?.playOrder, [2, 0, 1]);
 const cleared = await execTranscriptTool(
   'manage_transcript',
   { action: 'set_play_order', itemId: 'clip_a', clearPlayOrder: true },
   ctx,
 ) as { ok?: boolean };
 assert.equal(cleared.ok, true);
-assert.equal(draft.getState().items.find((i) => i.id === 'clip_a')?.transcriptPlayOrder, undefined);
+assert.equal(resolveTranscriptUnit(draft.getState(), 'clip_a')?.playOrder, undefined);
 
 // clear keyframes + relink media via generic commit surface
 const clearPlan = validateGenericUpdate(draft.getState(), {

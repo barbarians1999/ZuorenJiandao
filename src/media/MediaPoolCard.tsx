@@ -99,7 +99,7 @@ function VideoPoster({ src, name }: { src?: string; name: string }) {
 }
 
 function AssetPreview({ asset, fps, active, onLoadError, onLoadSuccess }: AssetPreviewProps) {
-  const preview = usePreviewMediaSource(asset.kind === 'video' ? asset.src : undefined);
+  const preview = usePreviewMediaSource(asset.kind === 'video' ? asset.src : undefined, active);
   if (asset.kind === 'image' || asset.kind === 'gif' || asset.kind === 'svg') {
     return <img src={asset.src} alt={asset.name} draggable={false} onError={() => onLoadError(asset.id)} onLoad={() => onLoadSuccess(asset.id)} />;
   }

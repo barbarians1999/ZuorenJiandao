@@ -6,18 +6,21 @@ import { localVideoPath, opaqueNativeVideo } from './native-video.mjs';
 import { normalizeH264Profile } from './render-contract.mjs';
 import { h264FfmpegOverride, renderFfmpegOverride, resolveH264VideoBitrate, withEncoderProfileFallback } from './performance.mjs';
 import { neutralPictureProps, pictureOnlyProps, pictureAnimationWindows } from '../shared/picture-animation-timing.mjs';
+import { resolveClipSourceWindow, resolveTrackRouting } from '../shared/timeline-media-schedule.mjs';
 
 const STATE_KEYS = new Set(['fps', 'width', 'height', 'fit', 'items', 'tracks', 'trackOrder', 'transitions',
-  'markers', 'linkGroups', 'multicamGroups', 'assets', 'captionsHidden', 'selectedId', 'selectedIds',
+  'markers', 'linkGroups', 'foldGroups', 'legacyTimingReview', 'multicamGroups', 'assets', 'captionsHidden', 'selectedId', 'selectedIds',
   'captions', 'watermark', 'fxDefs', 'id', 'name', 'order', 'hidden', 'interaction', 'compositingOrder']);
 const ITEM_KEYS = new Set(['id', 'track', 'startFrame', 'durationInFrames', 'name', 'kind', 'width', 'height',
   'src', 'sourceFilename', 'originalFilePath', 'sourceAssetId', 'sourceRevision', 'sourceContentHash',
   'volume', 'srcInFrame', 'playbackRate', 'fadeInFrames', 'fadeOutFrames', 'transform', 'props',
-  'effects', 'filters', 'keyframes', 'backgroundFill', 'mainClipId']);
+  'effects', 'filters', 'keyframes', 'backgroundFill', 'mainClipId',
+  'transcript', 'transcriptGenerationId', 'transcriptStale', 'variants', 'legacyTimingReview']);
 const TRACK_KEYS = new Set(['kind', 'name', 'captions', 'hidden', 'muted', 'soloed', 'locked', 'collapsed', 'role', 'audioRouting']);
 const empty = (value) => value == null || typeof value === 'object' && Object.keys(value).length === 0;
 const known = (value, keys) => value && Object.keys(value).every((key) => value[key] === undefined || keys.has(key));
 const integer = (n) => Number.isSafeInteger(n) && n >= 0;
+const finiteNonNegative = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 const refusal = (reason) => ({ eligible: false, reason });
 
 function neutralTransform(transform) {
@@ -66,9 +69,10 @@ export function planDirectCutExport({ state, codec = 'h264', scale, frameRange, 
   let end = 0;
   let videoEnd = 0;
   for (const item of items) {
+    const validSrcIn = item.kind === 'audio' ? finiteNonNegative(item.srcInFrame ?? 0) : integer(item.srcInFrame ?? 0);
     if (!known(item, ITEM_KEYS) || !['video', 'audio'].includes(item.kind) || typeof item.src !== 'string'
       || !integer(item.startFrame) || !integer(item.durationInFrames) || item.durationInFrames < 1
-      || !integer(item.srcInFrame ?? 0)) return refusal('invalid-media');
+      || !validSrcIn) return refusal('invalid-media');
     if (item.kind === 'video') {
       if (item.track !== track || item.startFrame < videoEnd
         || item.width !== state.width || item.height !== state.height) return refusal('not-plain-single-track');
@@ -79,7 +83,7 @@ export function planDirectCutExport({ state, codec = 'h264', scale, frameRange, 
       || !empty(item.filters) || !empty(item.keyframes) || item.backgroundFill === true) return refusal('clip-processing');
     if (!Number.isFinite(item.volume ?? 1) || (item.volume ?? 1) < 0 || (item.volume ?? 1) > 2) return refusal('volume');
     end = Math.max(end, item.startFrame + item.durationInFrames);
-    if (!integer(end) || !integer((item.srcInFrame ?? 0) + item.durationInFrames)) return refusal('frame-overflow');
+    if (!integer(end) || !finiteNonNegative((item.srcInFrame ?? 0) + item.durationInFrames)) return refusal('frame-overflow');
   }
   const flags = tracks[track] ?? {};
   if ((flags.kind ?? (track?.toUpperCase().startsWith('A') ? 'audio' : track?.toUpperCase().startsWith('C') ? 'caption' : 'video')) !== 'video') return refusal('non-video-track');
@@ -87,19 +91,17 @@ export function planDirectCutExport({ state, codec = 'h264', scale, frameRange, 
   const from = frameRange?.[0] ?? 0, to = frameRange ? frameRange[1] + 1 : duration;
   if (!integer(from) || !integer(to) || to <= from || to > duration
     || frameRange && (!Array.isArray(frameRange) || frameRange.length !== 2)) return refusal('range');
-  const anySolo = Object.entries(tracks).some(([id, config]) => config.soloed
-    && (config.kind === 'audio' || config.kind !== 'caption' && items.some((item) => item.track === id)));
+  const routing = resolveTrackRouting(state);
   const volumeFor = (item) => {
-    const config = tracks[item.track] ?? {};
-    if (config.hidden || config.muted || anySolo && !config.soloed) return 0;
-    const rawGain = config.audioRouting?.gainDb ?? 0;
-    return (item.volume ?? 1) * 10 ** (Math.max(-60, Math.min(12, Number.isFinite(rawGain) ? rawGain : 0)) / 20);
+    if (routing.isTrackHidden(item.track) || routing.isTrackMuted(item.track)) return 0;
+    return (item.volume ?? 1) * routing.trackLinearGain(item.track);
   };
   const audio = items.filter((item) => item.kind === 'audio').flatMap((item) => {
     const start = Math.max(from, item.startFrame), stop = Math.min(to, item.startFrame + item.durationInFrames);
     const volume = volumeFor(item);
+    const srcWin = resolveClipSourceWindow(item, state.fps);
     return stop > start && volume > 0 ? [{ src: item.src, startFrame: start - from,
-      frames: stop - start, sourceFrame: (item.srcInFrame ?? 0) + start - item.startFrame, volume }] : [];
+      frames: stop - start, sourceFrame: srcWin.srcInFrameExact + start - item.startFrame, volume }] : [];
   });
   const segments = [];
   let cursor = from;

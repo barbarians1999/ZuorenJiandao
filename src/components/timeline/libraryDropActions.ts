@@ -2,8 +2,7 @@
 // sound/template falls to the track (the track of the right type is automatically selected). Reasons for rejection must be given (notice) - before
 // Silent return false, the user only sees "No response after dragging".
 import {
-  CSS_TRANSITION_TYPES, TRANSITION_LABELS, defaultTrackId, isEffectTrack, isTextTrack, timelineTrackIds, trackKind,
-  type MediaAsset, type TimelineItem, type TimelineState, type TrackId, type TransitionType, type ZoomShape,
+  CSS_TRANSITION_TYPES, TRANSITION_LABELS, isEffectTrack, isTextTrack, type MediaAsset, type TimelineItem, type TimelineState, type TrackId, type TransitionType, type ZoomShape,
 } from '../../editor/types';
 import type { EditorCommands } from '../../editor/store';
 import { applyLibraryDropIsolation } from './libraryDropIsolation';
@@ -12,6 +11,7 @@ import { asPluginTpl, asPluginZoom } from '../../library/pluginResources';
 import { isPluginAssetId } from '../../plugins/types';
 import { customTransitionUniforms, getCustomTransition } from '../../gl/customTransitions';
 import { ALL_FX, serializableDefsFor } from '../../gl/fx/effects';
+import { addClipMosaic, isMosaicEffect } from '../../editor/mosaic';
 import { TEMPLATES } from '../../editor/initial';
 import { t } from '../../i18n/locale';
 import { isIsolateAudioFxId, strengthFromAudioFxId } from '../../audio/isolateVoice';
@@ -36,10 +36,12 @@ export function applyLibraryToClip({ state, commands, notice, getState, getAsset
     }
     if (!(payload.id in ALL_FX)) return false;
     const prev = item.effects ?? [];
-    const next = [
-      ...prev.filter((e) => e.assetId !== payload.id),
-      { id: `fx_${payload.id}`, assetId: payload.id, overrides: {} },
-    ];
+    const next = isMosaicEffect({ assetId: payload.id })
+      ? addClipMosaic(prev, `fx_mosaic_${crypto.randomUUID()}`, { assetId: payload.id })
+      : [
+          ...prev.filter((e) => e.assetId !== payload.id),
+          { id: `fx_${payload.id}`, assetId: payload.id, overrides: {} },
+        ];
     commands.setItemEffects(item.id, next, serializableDefsFor(next));
     commands.selectItem(item.id);
     return true;
@@ -130,43 +132,27 @@ export function applyLibraryToTrack(
   ripple: boolean,
   overwrite = false,
 ): boolean {
-  const trackIds = timelineTrackIds(state);
   if (payload.kind === 'sound') {
     const live = getState();
     const asset = soundAssetForId(payload.id, live.fps);
     if (!asset) { notice(t('未找到这个本地音效，未添加。')); return false; }
     return placeSound(live, commands, asset, { track: trackId, startFrame }, notice);
   }
-  const resolveVisualDropTrack = (rejectTextMessage: string): TrackId | null => {
+  if (payload.kind === 'template' || payload.kind === 'effect-tool') {
     if (isTextTrack(state, trackId)) {
-      notice(rejectTextMessage);
-      return null;
+      notice(t(payload.kind === 'template' ? '该轨道为文字轨道，不能放置动画模板；已取消放置。' : '该轨道为文字轨道，不能放置特效元素；已取消放置。'));
+      return false;
     }
-    let resolved = trackId;
-    if (trackKind(state, resolved) !== 'video') {
-      resolved = trackIds.find((id) => isEffectTrack(state, id))
-        ?? trackIds.find((id) => trackKind(state, id) === 'video' && !isTextTrack(state, id))
-        ?? defaultTrackId(state, 'video')
-        ?? trackId;
+    // Effect items belong exclusively on dedicated effect tracks; dropping onto a video/audio track
+    // lets store commands pick a free effect track or auto-create one.
+    const targetTrack = isEffectTrack(state, trackId) && !state.tracks?.[trackId]?.locked ? trackId : undefined;
+    if (payload.kind === 'template') {
+      // The plugin template is not in TEMPLATES: Tpl goes with payload.data (the sandbox keeps the secret as usual)
+      const tpl = TEMPLATES.find((item) => item.id === payload.id) ?? (payload.data ? asPluginTpl(payload.data) : null);
+      if (!tpl) return false;
+      commands.addMotionGraphic(tpl, { track: targetTrack, startFrame, ripple, overwrite });
+      return true;
     }
-    if (trackKind(state, resolved) !== 'video' || isTextTrack(state, resolved)) {
-      notice(t('未找到可用的特效或视频轨道。'));
-      return null;
-    }
-    return resolved;
-  };
-  if (payload.kind === 'template') {
-    // The plugin template is not in TEMPLATES: Tpl goes with payload.data (the sandbox keeps the secret as usual)
-    const tpl = TEMPLATES.find((item) => item.id === payload.id) ?? (payload.data ? asPluginTpl(payload.data) : null);
-    if (!tpl) return false;
-    const targetTrack = resolveVisualDropTrack(t('该轨道为文字轨道，不能放置动画模板；请拖到特效或视频轨道。'));
-    if (!targetTrack) return false;
-    commands.addMotionGraphic(tpl, { track: targetTrack, startFrame, ripple, overwrite });
-    return true;
-  }
-  if (payload.kind === 'effect-tool') {
-    const targetTrack = resolveVisualDropTrack(t('该轨道为文字轨道，不能放置特效元素；请拖到特效或视频轨道。'));
-    if (!targetTrack) return false;
     if (payload.id === 'shape-rectangle') {
       commands.addShapeItem('rectangle', { track: targetTrack, startFrame });
       return true;

@@ -222,10 +222,10 @@ export function rolledAdjacentManualCuesTiming(
   const right = words[rightIndex];
   if (!left || !right || rightIndex !== leftIndex + 1 || !Number.isFinite(deltaMs)) return null;
   const minimumMs = Math.max(MIN_CUE_MS, Math.max(6, Math.round(fps * 0.5)) * 1000 / fps);
-  const minBoundary = left.start + minimumMs;
-  const maxBoundary = right.end - minimumMs;
-  if (minBoundary > maxBoundary) return null;
   const baseBoundary = Math.round((left.end + right.start) / 2);
+  const minBoundary = Math.min(baseBoundary, left.start + minimumMs);
+  const maxBoundary = Math.max(baseBoundary, right.end - minimumMs);
+  if (minBoundary >= maxBoundary) return null;
   const boundaryMs = Math.max(minBoundary, Math.min(maxBoundary, baseBoundary + Math.round(deltaMs)));
   return {
     boundaryMs,

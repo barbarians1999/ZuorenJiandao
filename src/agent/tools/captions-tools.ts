@@ -1,8 +1,10 @@
 export { CAPTIONS_TOOL_SCHEMAS, CAPTIONS_TOOL_NAMES } from './schemas/captions-tools';
 import type { AgentContext } from '../context';
 import { captionTrackEntries, captionsOnTrack, defaultTrackId, resolveTrackId, trackAlias } from '../../editor/types';
-import type { CaptionWordOverride } from '../../captions/types';
+import type { CaptionsData, CaptionWordOverride } from '../../captions/types';
 import { CAPTION_MAX_CHARS_PER_LINE, CAPTION_MAX_VISUAL_LINES, paginate } from '../../captions/types';
+import { isManualCaptionEntry } from '../../captions/manualCaptions';
+import { orderedCaptionSourceEntries } from '../../captions/sourceOrder';
 import { resolveCaptionWords, resolveCaptionWordIndices, resolveCaptionWordRefs, applyWordOverrides } from '../../captions/resolve';
 import { captionWordOverride } from '../../captions/wordOverrides';
 import { captionStyleFor } from '../../captions/styles';
@@ -25,6 +27,65 @@ const AUTO_AVOIDANCE_ACTIONS: Record<string, true> = {
   source_add: true,
 };
 
+function collectManualCues(c: CaptionsData): Array<{
+  cueId: string | null;
+  laneId: string;
+  index: number;
+  text: string;
+  startMs: number;
+  endMs: number;
+}> {
+  if (!c.sourceEntries?.length) return [];
+  const out: Array<{
+    cueId: string | null;
+    laneId: string;
+    index: number;
+    text: string;
+    startMs: number;
+    endMs: number;
+  }> = [];
+  for (const entry of orderedCaptionSourceEntries(c.sourceEntries)) {
+    if (!isManualCaptionEntry(entry)) continue;
+    (entry.words ?? []).forEach((word, index) => {
+      out.push({
+        cueId: word.id ?? null,
+        laneId: entry.id,
+        index,
+        text: word.text,
+        startMs: word.start,
+        endMs: word.end,
+      });
+    });
+  }
+  return out;
+}
+
+function hasSkipFlag(record: Record<string, unknown>): boolean {
+  return record.skipAvoidance === true
+    || record.skipAutoAvoidance === true
+    || record.avoidance === false
+    || record.avoidance === 'off';
+}
+
+function shouldSkipAvoidance(args: Args): boolean {
+  if (hasSkipFlag(args)) return true;
+  const rawJson = args.json;
+  if (rawJson && typeof rawJson === 'object' && !Array.isArray(rawJson)) {
+    return hasSkipFlag(rawJson as Record<string, unknown>);
+  }
+  if (typeof rawJson === 'string' && rawJson.trim()) {
+    try {
+      const parsed = JSON.parse(rawJson);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return hasSkipFlag(parsed as Record<string, unknown>);
+      }
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 export async function execCaptionsTool(name: string, args: Args, ctx: AgentContext): Promise<unknown | undefined> {
   const s = ctx.getState();
   const requested = String(args.captionTrackId ?? args.captionsItemId ?? '').trim();
@@ -44,13 +105,21 @@ export async function execCaptionsTool(name: string, args: Args, ctx: AgentConte
       };
       if (requested && !target) return { error: `no caption track ${requested}` };
       if (!c || !c.enabled) return { enabled: false, note: 'captions are off; call edit_captions to turn them on first' };
+      const manualCues = collectManualCues(c);
+      const hasManualLane = Boolean(c.sourceEntries?.some(isManualCaptionEntry));
       const words = resolveCaptionWords(c, s.items, s.fps);
       if (!words.length) return {
         enabled: true,
+        captionTrackId: target,
+        captionTrackAlias: target ? trackAlias(s, target) : null,
         template: c.template,
         pacing: c.pacing,
         motionPreset: c.motionPreset ?? 'none',
-        note: 'source track has no transcript words',
+        ...(c.sourceEntries?.length ? { sources: sourceList(c, s).sources } : {}),
+        ...(hasManualLane ? { manualCues } : {}),
+        note: hasManualLane
+          ? 'manual caption track has no cues yet; use edit_captions action=cue_add'
+          : 'source track has no transcript words',
       };
       const indices = resolveCaptionWordIndices(c, s.items, s.fps);
       const wordRefs = resolveCaptionWordRefs(c, s.items, s.fps);
@@ -63,14 +132,17 @@ export async function execCaptionsTool(name: string, args: Args, ctx: AgentConte
       }
       const applied = applyWordOverrides(words, indices, visibleOverrides, wordRefs);
       const wordsPerPage = captionStyleFor(c.template).wordsPerPage;
-      const pages = paginate(
-        applied.words,
-        c.pacing,
-        wordsPerPage,
-        applied.breakBefore,
-        CAPTION_MAX_CHARS_PER_LINE,
-        CAPTION_MAX_VISUAL_LINES,
-      );
+      const allManual = hasManualLane && (c.sourceEntries?.every(isManualCaptionEntry) ?? false);
+      const pages = allManual
+        ? applied.words.map((w) => ({ words: [w], start: w.start, end: w.end }))
+        : paginate(
+            applied.words,
+            c.pacing,
+            wordsPerPage,
+            applied.breakBefore,
+            CAPTION_MAX_CHARS_PER_LINE,
+            CAPTION_MAX_VISUAL_LINES,
+          );
       let cursor = 0;
       const pagesOut = pages.map((p) => ({
         start: p.start,
@@ -94,6 +166,7 @@ export async function execCaptionsTool(name: string, args: Args, ctx: AgentConte
         motionPreset: c.motionPreset ?? 'none',
         track: item ? trackAlias(s, item.track) : null,
         ...(c.sourceEntries?.length ? { sources: sourceList(c, s).sources } : {}),
+        ...(hasManualLane ? { manualCues } : {}),
         pageCount: pagesOut.length,
         pages: pagesOut,
       };
@@ -102,6 +175,16 @@ export async function execCaptionsTool(name: string, args: Args, ctx: AgentConte
       const result = await editCaptions(args, ctx);
       const action = String(args.action ?? '');
       if (!AUTO_AVOIDANCE_ACTIONS[action] || 'error' in result) return result;
+      if (shouldSkipAvoidance(args)) {
+        return {
+          ...result,
+          automaticCaptionAvoidance: {
+            ok: true,
+            skipped: true,
+            note: 'skipped by skipAvoidance',
+          },
+        };
+      }
       const automaticCaptionAvoidance = await applyCaptionAvoidance(ctx, { maxSamples: 60 });
       return { ...result, automaticCaptionAvoidance };
     }

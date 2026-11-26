@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Player, Thumbnail, type CallbackListener, type PlayerRef } from '@remotion/player';
-import { theme, themeAlpha } from '../theme';
+import { theme } from '../theme';
 import { TimelineComposition } from '../editor/TimelineComposition';
 import type { CompositionMosaic } from '../editor/compositionMosaic';
 import type { SelectedPreviewStatus, SelectedPreviewStatusListener } from '../gl/previewAdapter';
@@ -45,6 +45,8 @@ import { PreviewMaskOverlay } from './preview/PreviewMaskOverlay';
 import { PreviewMosaicOverlay } from './preview/PreviewMosaicOverlay';
 import { fitPreviewCanvasSize, previewPaddedClientSize, previewStageContentSize, type PreviewCanvasSize } from './preview/previewCanvasGeometry';
 import { SourceAssetPreview } from './preview/SourceAssetPreview';
+import { resolvePreviewRenderProject, resolveSelectedPreviewTargetId } from './preview/previewRenderProject';
+import { PreviewPlaybackRateContext } from '../editor/PreviewPlaybackContext';
 import { PLAYBACK_RATE_EVENT, SHUTTLE_STATE_EVENT } from './timeline/shuttle';
 
 const MEDIA_LOADING_NOTICE_DELAY_MS = 160;
@@ -56,6 +58,8 @@ function previewStatusKey(status: Pick<SelectedPreviewStatus, 'kind' | 'targetId
 interface PreviewPanelProps {
   maskEditing?: boolean;
   mosaicEditing?: boolean;
+  selectedMosaicEffectId?: string | null;
+  onSelectMosaicEffect?: (effectId: string) => void;
   onSetItemMask?: (id: string, mask: ClipMask | null) => void;
   onSetCompositionMosaic?: (id: string, patch: Partial<CompositionMosaic>) => void;
   onSetItemEffects?: (id: string, effects: ClipEffect[]) => void;
@@ -98,7 +102,7 @@ interface PreviewPanelProps {
 }
 
 export const PreviewPanel = memo(function PreviewPanel({
-  maskEditing = false, mosaicEditing = false, onSetItemMask, onSetItemEffects, onSetCompositionMosaic,
+  maskEditing = false, mosaicEditing = false, selectedMosaicEffectId = null, onSelectMosaicEffect, onSetItemMask, onSetItemEffects, onSetCompositionMosaic,
   state, project, playerRef, onImport, offlineSrcs, onUpdateCaptions, onLiveCaptionsPreview, onSelectCaption, activeCaptionSelection,
   onSelectItem, onSetItemTransform, onSetItemKeyframe, onRemoveItemKeyframe, onSeek, onBeginHistoryGesture, onEndHistoryGesture,
   onItemPropChange,
@@ -109,13 +113,12 @@ export const PreviewPanel = memo(function PreviewPanel({
   zoneIn = null, zoneOut = null, projectName,
 }: PreviewPanelProps) {
   const t = useT();
-  const renderProject = useMemo<ProjectDoc>(() => ({
-    ...project,
-    timelines: project.timelines.map((timeline) => timeline.id === timelineId
-      ? { ...timeline, ...state, id: timeline.id, name: timeline.name, order: timeline.order }
-      : timeline),
-  }), [project, state, timelineId]);
-  const preview = usePreviewProjectDoc(renderProject, timelineId);
+  const [playing, setPlaying] = useState(false);
+  const renderProject = useMemo<ProjectDoc>(
+    () => resolvePreviewRenderProject(project, timelineId, state),
+    [project, state, timelineId],
+  );
+  const preview = usePreviewProjectDoc(renderProject, timelineId, { playing });
   const duration = preview.plan.durationInFrames;
   const hasItems = state.items.length > 0;
   const savedPlayhead = useMemo(
@@ -123,15 +126,19 @@ export const PreviewPanel = memo(function PreviewPanel({
     [hasItems, projectId, timelineId],
   );
   const [hiddenCaptionKeys, setHiddenCaptionKeys] = useState<Record<string, string | null>>({});
+  const selectedPreviewTargetId = useMemo(
+    () => resolveSelectedPreviewTargetId(selectedItem, preview.state.transitions),
+    [selectedItem, preview.state.transitions],
+  );
   const playerInputProps = useMemo(() => ({
     state: preview.state,
     project: preview.project,
     timelineId,
-    selectedItemId: selectedItem?.id,
+    selectedItemId: selectedPreviewTargetId,
     hiddenCaptionKeys,
     onSelectedPreviewStatus,
     previewAudioEnabled: !timelineScrubbing,
-  }), [preview.state, preview.project, timelineId, selectedItem?.id, hiddenCaptionKeys, onSelectedPreviewStatus, timelineScrubbing]);
+  }), [preview.state, preview.project, timelineId, selectedPreviewTargetId, hiddenCaptionKeys, onSelectedPreviewStatus, timelineScrubbing]);
   const thumbnailInputProps = useMemo(() => ({
     state: preview.state,
     project: preview.project,
@@ -144,7 +151,6 @@ export const PreviewPanel = memo(function PreviewPanel({
   const stageRef = useRef<HTMLDivElement>(null);
   const [stageSize, setStageSize] = useState<PreviewCanvasSize>({ width: 0, height: 0 });
   const [busy, setBusy] = useState(false);
-  const [playing, setPlaying] = useState(false);
   const [shuttleRate, setShuttleRate] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
   useEffect(() => {
@@ -170,6 +176,12 @@ export const PreviewPanel = memo(function PreviewPanel({
   // Must listen to Remotion's own fullscreenchange: it walks the webkit legacy API in Chrome,
   // The document standard event is not guaranteed to be triggered, the SDK emitter is the real source.
   const [fullscreen, setFullscreen] = useState(false);
+  const fullscreenRef = useRef(fullscreen);
+  fullscreenRef.current = fullscreen;
+  const playerStyle = useMemo(
+    () => ({ width: '100%', height: '100%', backgroundColor: fullscreen ? '#000' : undefined }),
+    [fullscreen],
+  );
   const transformApi = onSelectItem && onSetItemTransform && onSetItemKeyframe && onRemoveItemKeyframe && onSeek
     && onBeginHistoryGesture && onEndHistoryGesture
     ? {
@@ -246,21 +258,46 @@ export const PreviewPanel = memo(function PreviewPanel({
   useEffect(() => {
     const player = playerRef.current;
     if (!player) { setPlaying(false); return; }
-    const onChange: CallbackListener<'fullscreenchange'> = (e) => setFullscreen(e.detail.isFullscreen);
-    const onPlay = () => setPlaying(true);
+    const onChange: CallbackListener<'fullscreenchange'> = (e) => {
+      fullscreenRef.current = e.detail.isFullscreen;
+      setFullscreen(e.detail.isFullscreen);
+    };
+    const ensureUnmutedWhenHiddenControls = () => {
+      if (fullscreenRef.current) return;
+      try {
+        if (player.isMuted?.()) player.unmute?.();
+      } catch {
+        // Ignore detached Player errors.
+      }
+    };
+    const onPlay = () => {
+      setPlaying(true);
+      ensureUnmutedWhenHiddenControls();
+    };
     const onPause = () => { setPlaying(false); setPlaybackRate(1); };
+    const onMuteChange: CallbackListener<'mutechange'> = (e) => {
+      if (e.detail.isMuted && !fullscreenRef.current) {
+        try {
+          if (player.isPlaying?.()) player.unmute?.();
+        } catch {
+          // Ignore detached Player errors.
+        }
+      }
+    };
     player.addEventListener('fullscreenchange', onChange);
     player.addEventListener('play', onPlay);
     player.addEventListener('pause', onPause);
     player.addEventListener('ended', onPause);
+    player.addEventListener('mutechange', onMuteChange);
     try { setPlaying(!!player.isPlaying?.()); } catch { setPlaying(false); }
     return () => {
       player.removeEventListener('fullscreenchange', onChange);
       player.removeEventListener('play', onPlay);
       player.removeEventListener('pause', onPause);
       player.removeEventListener('ended', onPause);
+      player.removeEventListener('mutechange', onMuteChange);
     };
-  }, [playerRef, hasItems]);
+  }, [playerRef, hasItems, timelineId]);
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || typeof ResizeObserver === 'undefined') return undefined;
@@ -319,9 +356,11 @@ export const PreviewPanel = memo(function PreviewPanel({
     setAutoEditCaption({ trackId: payload.trackId, laneId: dropped.laneId });
     return true;
   };
+  const dropCaptionStyleRef = useRef(dropCaptionStyle);
+  dropCaptionStyleRef.current = dropCaptionStyle;
   useEffect(() => onCaptionStylePointerDrop(({ payload, clientX, clientY }) => {
-    dropCaptionStyle(payload, clientX, clientY);
-  }));
+    dropCaptionStyleRef.current(payload, clientX, clientY);
+  }), []);
   return (
     <section className="cc-preview-panel" data-cc-shortcut-surface="preview" style={{ display: 'flex', flex: 1, flexDirection: 'column', background: theme.panel, minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
       <div className="cc-preview-header" style={{ height: 30, padding: '0 12px', display: 'flex', alignItems: 'center', borderBottom: `0.5px solid ${theme.border}`, flexShrink: 0 }}>
@@ -419,38 +458,43 @@ export const PreviewPanel = memo(function PreviewPanel({
           }} onErrorCapture={(event) => {
             if (!(event.target instanceof HTMLVideoElement)) return;
             const failedUrl = event.target.currentSrc || event.target.src;
+            const failedBase = failedUrl.split('#')[0];
             const source = preview.proxies.find(({ src, proxy }) => {
               const urls = [src, proxy.status === 'ready' ? proxy.previewSrc : ''].filter(Boolean);
-              return urls.some((url) => new URL(url, window.location.href).href === failedUrl);
+              return urls.some((url) => new URL(url, window.location.href).href.split('#')[0] === failedBase);
             });
             if (source) preview.requestFallback(source.src);
           }}>
-            <Player
-              ref={playerRef}
-              component={TimelineComposition}
-              inputProps={playerInputProps}
-              durationInFrames={duration}
-              initialFrame={Math.min(savedPlayhead, duration - 1)}
-              fps={state.fps}
-              compositionWidth={state.width}
-              compositionHeight={state.height}
-              playbackRate={playbackRate}
-              numberOfSharedAudioTags={PREVIEW_SHARED_AUDIO_TAGS}
-              // Full screen black: WebKit legacy full screen div does not automatically blacken the background, and the page checkerboard will be revealed on both sides.
-              style={{ width: '100%', height: '100%', backgroundColor: fullscreen ? '#000' : undefined }}
-              controls={fullscreen}
-              // Playback runs only through the timeline transport
-              // (play/pause button + Space shortcut), not the player itself. clickToPlay
-              // off = clicking the frame doesn't toggle; spaceKeyToPlayOrPause off = the app
-              // shortcut is the single Space handler (the Player's own handler would
-              // double-toggle it to a no-op).
-              clickToPlay={fullscreen}
-              spaceKeyToPlayOrPause={false}
-              acknowledgeRemotionLicense
-              // No loop: playback stops at the final frame (editor convention).
-              // Restart by pressing play again.
-            />
-            {!fullscreen && hoverPreviewFrame !== null && (
+            <PreviewPlaybackRateContext.Provider value={playbackRate}>
+              <Player
+                ref={playerRef}
+                component={TimelineComposition}
+                inputProps={playerInputProps}
+                durationInFrames={duration}
+                initialFrame={Math.min(savedPlayhead, duration - 1)}
+                fps={state.fps}
+                compositionWidth={state.width}
+                compositionHeight={state.height}
+                playbackRate={playbackRate}
+                numberOfSharedAudioTags={PREVIEW_SHARED_AUDIO_TAGS}
+                // Full screen black: WebKit legacy full screen div does not automatically blacken the background, and the page checkerboard will be revealed on both sides.
+                style={playerStyle}
+                controls={fullscreen}
+                // Playback runs only through the timeline transport
+                // (play/pause button + Space shortcut), not the player itself. clickToPlay
+                // off = clicking the frame doesn't toggle; spaceKeyToPlayOrPause off = the app
+                // shortcut is the single Space handler (the Player's own handler would
+                // double-toggle it to a no-op).
+                clickToPlay={fullscreen}
+                spaceKeyToPlayOrPause={false}
+                _experimentalKeepAudioContextAlive
+                acknowledgeRemotionLicense
+                // No loop: playback stops at the final frame (editor convention).
+                // Restart by pressing play again.
+                moveToBeginningWhenEnded={false}
+              />
+            </PreviewPlaybackRateContext.Provider>
+            {!playing && !timelineScrubbing && !fullscreen && hoverPreviewFrame !== null && (
               <div className="cc-preview-hover-frame" aria-label={t('时间线悬停预览')}>
                 <Thumbnail
                   component={TimelineComposition}
@@ -466,21 +510,12 @@ export const PreviewPanel = memo(function PreviewPanel({
             )}
             {slipPreview && <SlipTwoUpPreview preview={slipPreview} />}
             {offlineNames.length > 0 && (
-              <div role="status" style={{
-                position: 'absolute', top: 8, left: 8, right: 8, zIndex: 12,
-                padding: '6px 10px', borderRadius: 6, background: themeAlpha.shadow(0.88),
-                border: `1px solid ${theme.accent}`, color: theme.text, fontSize: 11,
-              }}>
+              <div role="status" className="cc-preview-canvas-status is-offline">
                 {t('离线素材：{list}', { list: offlineNames.join('、') })}
               </div>
             )}
             {visibleShaderFallback && (
-              <div role="status" aria-live="polite" style={{
-                position: 'absolute', bottom: 8, right: 8, zIndex: 12,
-                maxWidth: 'calc(100% - 16px)', padding: '5px 8px', borderRadius: 4,
-                border: `0.5px solid ${theme.accent}`, background: themeAlpha.shadow(0.88),
-                color: theme.text, fontSize: 10,
-              }}>
+              <div role="status" aria-live="polite" className="cc-preview-canvas-status is-fallback">
                 {visibleShaderFallback.fallbackReason === 'media-loading'
                   ? t('正在加载效果预览；暂时显示回退画面')
                   : visibleShaderFallback.adapter === 'css-transition'
@@ -491,11 +526,7 @@ export const PreviewPanel = memo(function PreviewPanel({
             {!visibleShaderFallback && (state.items.some((item) => item.effects?.length)
               || state.items.some((item) => item.kind === 'sequence')
               || state.transitions?.some((transition) => transition.enabled !== false)) && (
-              <div role="status" data-preview-fidelity="on-demand" style={{
-                position: 'absolute', bottom: 8, right: 8, zIndex: 12,
-                maxWidth: 'calc(100% - 16px)', padding: '5px 8px', borderRadius: 4,
-                background: themeAlpha.shadow(0.88), color: theme.text, fontSize: 10,
-              }}>
+              <div role="status" data-preview-fidelity="on-demand" className="cc-preview-canvas-status is-fidelity">
                 {selectedItem?.kind === 'sequence'
                   ? t('嵌套序列轻量预览')
                   : t('轻量预览 · 选中片段看精确效果')}
@@ -505,11 +536,14 @@ export const PreviewPanel = memo(function PreviewPanel({
             {pickMode && <RegionPickOverlay state={state} playerRef={playerRef} />}
             {!pickMode && !fullscreen && transformApi && (
               maskEditing && onSetItemMask
-                ? <PreviewMaskOverlay state={state} playerRef={playerRef} onSetItemMask={onSetItemMask} {...transformApi} />
+                ? <PreviewMaskOverlay state={state} playerRef={playerRef} playing={playing} onSetItemMask={onSetItemMask} {...transformApi} />
                 : mosaicEditing && onSetItemEffects
-                  ? <PreviewMosaicOverlay state={state} playerRef={playerRef} onSetItemEffects={onSetItemEffects}
+                  ? <PreviewMosaicOverlay state={state} playerRef={playerRef} playing={playing}
+                      selectedEffectId={selectedMosaicEffectId}
+                      onSelectEffect={onSelectMosaicEffect}
+                      onSetItemEffects={onSetItemEffects}
                       onBeginHistoryGesture={transformApi.onBeginHistoryGesture} onEndHistoryGesture={transformApi.onEndHistoryGesture} />
-                : <PreviewTransformOverlay state={state} playerRef={playerRef} captionActive={Boolean(activeCaptionSelection)} {...transformApi} onSetItemMask={onSetItemMask} onSetCompositionMosaic={onSetCompositionMosaic} />
+                : <PreviewTransformOverlay state={state} playerRef={playerRef} playing={playing} captionActive={Boolean(activeCaptionSelection)} {...transformApi} onSetItemMask={onSetItemMask} onSetCompositionMosaic={onSetCompositionMosaic} />
             )}
             {!maskEditing && !mosaicEditing && !pickMode && !fullscreen && onUpdateCaptions && captionTrackEntries(state).map(({ id, captions }) => captions?.enabled ? (
               <CaptionPreviewEditor
@@ -518,6 +552,7 @@ export const PreviewPanel = memo(function PreviewPanel({
                 state={state}
                 captions={captions}
                 playerRef={playerRef}
+                playing={playing}
                 onUpdateCaptions={(patch) => onUpdateCaptions(patch, id)}
                 onLivePreview={onLiveCaptionsPreview ? (patch) => onLiveCaptionsPreview(id, patch) : undefined}
                 onActiveTargetChange={(key) => setHiddenCaptionKeys((prev) => (prev[id] ?? null) === key ? prev : { ...prev, [id]: key })}

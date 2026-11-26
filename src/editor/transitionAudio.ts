@@ -3,17 +3,18 @@ import type { TimelineItem, TransitionItem } from './types';
 import { sourceFrameAt } from './sourceLimit';
 import { volumeAtFrame } from './keyframes';
 import { clipFadeFactor } from './clipFade';
+import { hasPotentialClipAudio } from '../../shared/timeline-media-schedule.mjs';
 
 const FRAME_EPSILON = 0.01;
 
 export function sharedAudioVolume(items: TimelineItem[], muted: boolean,
   gainAt: (track: TimelineItem['track'], frame: number) => number): number | ((frame: number) => number) {
-  if (muted || items.every(item => (item.volume ?? 1) === 0 && !item.keyframes?.volume?.length)) return 0;
+  if (muted || items.every((item) => !hasPotentialClipAudio(item))) return 0;
   const first = items[0];
   return (frame) => {
     const timelineFrame = (first?.startFrame ?? 0) + frame;
     const item = items.find(candidate => timelineFrame >= candidate.startFrame && timelineFrame < candidate.startFrame + candidate.durationInFrames);
-    if (!item || muted) return 0;
+    if (!item || muted || !hasPotentialClipAudio(item)) return 0;
     const localFrame = timelineFrame - item.startFrame;
     return volumeAtFrame(item, localFrame) * gainAt(item.track, timelineFrame)
       * clipFadeFactor(localFrame, item.durationInFrames, item.fadeInFrames, item.fadeOutFrames);
@@ -38,6 +39,7 @@ function canShareAudio(
   if ((previous.denoisedSrc || next.denoisedSrc)
     && (previous.src !== next.src
       || (previous.denoiseStrength ?? 100) !== (next.denoiseStrength ?? 100))) return false;
+  if (Boolean(previous.audioDetached) !== Boolean(next.audioDetached)) return false;
   if (previous.startFrame + previous.durationInFrames !== next.startFrame) return false;
   if ((previous.playbackRate ?? 1) !== (next.playbackRate ?? 1)) return false;
   if (audioTransitionPairs.has(`${previous.id}:${next.id}`)) return false;
@@ -78,12 +80,10 @@ export function shareableVisualItem(input: {
   const { item } = input;
   return item.kind === 'video'
     && !!item.src
-    && !item.denoisedSrc
     && !input.hasGlEffect
     && !input.hasBackgroundFill
     && !input.hasExtendBefore
     && !input.hasExtendAfter
     && !input.hasEntrance
-    && !item.keyframes
-    && ((!item.transform && !item.filters) || (input.player === true && !item.zoom && !item.mask));
+    && (input.player === true || (!item.denoisedSrc && !item.keyframes && !item.transform && !item.filters));
 }

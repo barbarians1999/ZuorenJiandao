@@ -76,14 +76,44 @@ export function writeCaptionDraftRecovery(key: string, value: CaptionDraftRecove
 
 /** Stable, compact identity for a captions snapshot; JSON key order is irrelevant. */
 export function captionDataSignature(value: unknown): string {
-  const json = stableJson(value);
   let left = 0x811c9dc5;
   let right = 0x9e3779b9;
-  for (let i = 0; i < json.length; i += 1) {
-    const code = json.charCodeAt(i);
+  const feedChar = (code: number) => {
     left = Math.imul(left ^ code, 0x01000193);
     right = Math.imul(right ^ code, 0x85ebca6b);
-  }
+  };
+  const feedString = (text: string) => {
+    for (let i = 0; i < text.length; i += 1) feedChar(text.charCodeAt(i));
+  };
+  const hashValue = (current: unknown): void => {
+    if (Array.isArray(current)) {
+      feedChar(91); // '['
+      for (let i = 0; i < current.length; i += 1) {
+        if (i > 0) feedChar(44); // ','
+        const item = current[i];
+        if (item === undefined) feedString('null');
+        else hashValue(item);
+      }
+      feedChar(93); // ']'
+      return;
+    }
+    if (current && typeof current === 'object') {
+      const record = current as Record<string, unknown>;
+      const keys = Object.keys(record).filter((key) => record[key] !== undefined).sort();
+      feedChar(123); // '{'
+      for (let i = 0; i < keys.length; i += 1) {
+        if (i > 0) feedChar(44); // ','
+        const key = keys[i]!;
+        feedString(JSON.stringify(key));
+        feedChar(58); // ':'
+        hashValue(record[key]);
+      }
+      feedChar(125); // '}'
+      return;
+    }
+    feedString(JSON.stringify(current) ?? 'null');
+  };
+  hashValue(value);
   return `${(left >>> 0).toString(16).padStart(8, '0')}${(right >>> 0).toString(16).padStart(8, '0')}`;
 }
 
@@ -174,16 +204,6 @@ function readFromStorage(storage: StorageLike, key: string): CaptionDraftRecover
 function resolveStorage(storage?: StorageLike): StorageLike | null {
   if (storage) return storage;
   try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; }
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((item) => item === undefined ? 'null' : stableJson(item)).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).filter((key) => record[key] !== undefined).sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
 }
 
 function encodeUndefined(value: unknown): unknown {

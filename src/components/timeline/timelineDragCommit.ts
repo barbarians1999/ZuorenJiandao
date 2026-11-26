@@ -3,7 +3,6 @@ import { canItemMoveToTrack, groupMoveIds, moveItemsByDelta } from '../../editor
 import { rateStretchItem } from '../../editor/rateStretch';
 import { sourceFramesToTimelineFrames, sourceWindowForTimelineRange } from '../../editor/sourceLimit';
 import type { EditorCommands } from '../../editor/store';
-import { hasOperationalTranscript } from '../../transcript/types';
 import type { Drag, EditMode } from './timelineUtil';
 import { mainTrackId, planMagneticTrim } from '../../editor/magneticTimeline';
 import { rebasePictureAnimationAfterTiming } from '../../editor/clipAnimation';
@@ -13,7 +12,8 @@ import { showAppToast } from '../../ui/appToast';
 /** Used for BOTH pointer preview and release, so ripple geometry cannot bounce. */
 export function planTimelineMagneticTrim(state: TimelineState, drag: Drag, editMode: EditMode) {
   if (!state.interaction?.magnet || drag.baseTrack !== mainTrackId(state)
-    || editMode === 'rate-stretch' || (drag.mode !== 'trim-left' && drag.mode !== 'trim-right')) return undefined;
+    || editMode === 'rate-stretch' || drag.foldGroupId
+    || (drag.mode !== 'trim-left' && drag.mode !== 'trim-right')) return undefined;
   const target = state.items.find((item) => item.id === drag.id);
   if (!target) return undefined;
   const minimumDuration = Math.max(6, Math.round(state.fps * 0.5));
@@ -26,10 +26,7 @@ export function planTimelineMagneticTrim(state: TimelineState, drag: Drag, editM
   const delta = Math.min(Math.max(0, drag.baseDur - minimumDuration), drag.deltaF);
   return planMagneticTrim(state, drag.id, {
     startFrame: drag.baseStart + delta, durationInFrames: drag.baseDur - delta,
-    ...(sourceTimed ? { srcInFrame: sourceWindowForTimelineRange(
-      target.kind === 'audio' && hasOperationalTranscript(target) ? { ...target, playbackRate: 1 } : target,
-      delta, drag.baseDur - delta,
-    ).startFrame } : {}),
+    ...(sourceTimed ? { srcInFrame: sourceWindowForTimelineRange(target, delta, drag.baseDur - delta).startFrame } : {}),
   });
 }
 
@@ -75,7 +72,11 @@ function commitTrimGesture(
   drag: Drag,
   editMode: EditMode,
 ) {
-  const { id, mode, baseStart, baseDur, baseSrcIn, deltaF, baseTrack } = drag;
+  const { id, mode, baseStart, baseDur, baseSrcIn, deltaF, baseTrack, foldGroupId } = drag;
+  if (foldGroupId && editMode !== 'rate-stretch') {
+    if (deltaF !== 0) commands.trimFoldGroup(foldGroupId, mode === 'trim-left' ? 'left' : 'right', deltaF, editMode === 'trim');
+    return;
+  }
   if (editMode === 'rate-stretch') {
     const next = rateStretchItem(state, id, mode === 'trim-left' ? 'left' : 'right', deltaF);
     if (next !== state) commands.applyState(next);
@@ -85,22 +86,11 @@ function commitTrimGesture(
     const target = state.items.find((item) => item.id === id);
     if (!target) return;
     const sourceTimed = target.kind === 'video' || target.kind === 'audio' || target.kind === 'sequence';
-    const wordDriven = target.kind === 'audio' && hasOperationalTranscript(target);
-    // Pictures, MG, text, solids and word-driven audio have no source
-    // duration limit: their left edge can extend back to timeline zero.
-    // Only real file media (video/plain audio/sequence) are bounded by
-    // srcInFrame.
     let earliestDelta = -baseStart;
     if (sourceTimed) {
-      const sourceBacktrack = wordDriven
-        ? baseSrcIn
-        : sourceFramesToTimelineFrames(target, baseSrcIn);
+      const sourceBacktrack = sourceFramesToTimelineFrames(target, baseSrcIn);
       earliestDelta = Math.max(earliestDelta, -Math.floor(sourceBacktrack));
     }
-    // Left-extend must stop at the nearest preceding same-track clip's right edge.
-    // Without this clamp the retime would overlap the predecessor and the reducer's
-    // overlap guard would roll the whole gesture back — dragging past it would show
-    // a preview extension but "bounce" on release.
     if (!(state.interaction?.magnet && baseTrack === mainTrackId(state))) {
       earliestDelta = Math.max(earliestDelta, predecessorRightEdge(state, id, baseTrack, baseStart) - baseStart);
     }
@@ -111,17 +101,11 @@ function commitTrimGesture(
       startFrame: baseStart + delta,
       durationInFrames: baseDur - delta,
       ...(sourceTimed ? {
-        srcInFrame: wordDriven
-          ? sourceWindowForTimelineRange(
-              { srcInFrame: baseSrcIn, playbackRate: 1 },
-              delta,
-              baseDur - delta,
-            ).startFrame
-          : sourceWindowForTimelineRange(
-              { ...target, srcInFrame: baseSrcIn },
-              delta,
-              baseDur - delta,
-            ).startFrame,
+        srcInFrame: sourceWindowForTimelineRange(
+          { ...target, srcInFrame: baseSrcIn },
+          delta,
+          baseDur - delta,
+        ).startFrame,
       } : {}),
     };
     commands.setItemTiming(id, timing);

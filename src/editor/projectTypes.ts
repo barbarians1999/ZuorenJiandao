@@ -7,6 +7,7 @@ import type { Timeline } from './timelineTypes.js';
  * (manage_timelines). `version` makes persisted-document migrations explicit. */
 export interface ProjectDoc {
   version: typeof CURRENT_PROJECT_VERSION;
+  transcriptTimingModel?: 'track-ssot-v1';
   /** project-wide media pool, shared by every timeline */
   assets: MediaAsset[];
   mediaFolders: MediaFolder[];

@@ -16,6 +16,7 @@ import { videoReadyAtFrame } from './sourceReadiness';
 import { zoomAt } from '../editor/zoom';
 import { paintTransitionPlacement, transitionPlacementRequired } from './transitionPlacement';
 import { applyClipMaskFeatherCanvas, clipMaskCanvas, resolveMaskAt, type ResolvedClipMask } from '../editor/clipMask';
+import { withOpenEndedPreviewHash } from '../media/nativePlaybackGuard';
 
 // One GLSL transition window straddling the cut from R to R+L. A muted,
 // frame-synced media pair feeds 2D staging canvases, each clip's ordered effect
@@ -118,13 +119,24 @@ function drawMediaFrame(
 
 function MediaSource({ item, trim, fit, elRef }: { item: TimelineItem; trim: number; fit: AspectFit; elRef: React.MutableRefObject<MediaEl | null> }) {
   const { fps } = useVideoConfig();
+  const isRendering = getRemotionEnvironment().isRendering;
   const style: React.CSSProperties = { width: '100%', height: '100%', objectFit: fit };
   if (item.kind === 'image') {
     // impeccable-disable-next-line broken-image -- Remotion Img component, src comes from item runtime injection
     return <Img ref={elRef as React.MutableRefObject<HTMLImageElement | null>} src={item.src!} style={style} />;
   }
   // Muted: the original clip sequences own audio; this element only feeds GL textures.
-  return <Video ref={elRef as React.MutableRefObject<HTMLVideoElement | null>} src={item.src!} trimBefore={trim} playbackRate={item.playbackRate ?? 1} acceptableTimeShiftInSeconds={0.5 / fps} muted style={style} />;
+  return (
+    <Video
+      ref={elRef as React.MutableRefObject<HTMLVideoElement | null>}
+      src={isRendering ? item.src! : withOpenEndedPreviewHash(item.src!)}
+      trimBefore={trim}
+      playbackRate={item.playbackRate ?? 1}
+      acceptableTimeShiftInSeconds={isRendering ? 0.5 / fps : 1.5}
+      muted
+      style={style}
+    />
+  );
 }
 
 /** Move the already-masked picture, not its source time or its audio. */

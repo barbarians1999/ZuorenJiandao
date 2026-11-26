@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { makeDraft } from '../../editor/store';
 import type { TimelineItem } from '../../editor/types';
 import { docFromTimeline } from '../../persist/projectStore';
+import { resolveTranscriptUnit } from '../../transcript/trackEditCompiler';
 import type { AgentContext } from '../context';
 import { execTranscriptTool } from './transcript-tools';
 
@@ -20,10 +21,6 @@ const clip: TimelineItem = {
   name: 'voice',
   src: '/media/uploads/voice.wav',
   transcript: words,
-  deletedWordIdx: [1],
-  silenceFrames: 6,
-  gapCapsMs: { '2': 100 },
-  transcriptPlayOrder: [0, 2, 1],
 };
 
 const draft = makeDraft(docFromTimeline({
@@ -46,9 +43,13 @@ const ctx: AgentContext = {
   audio: [],
 };
 
-const before = draft.getState().items[0]!;
-assert.equal((before.deletedWordIdx ?? []).length, 1);
-assert.equal(before.silenceFrames, 6);
+// Perform real track-level edits first (delete word 1 + cap pause + reorder), then clear_edits.
+draft.commands.deleteWords('clip_voice', [1]);
+draft.commands.setGapCap('clip_voice', 2, 100);
+draft.commands.setTranscriptPlayOrder('clip_voice', [2, 0]);
+const beforeUnit = resolveTranscriptUnit(draft.getState(), 'clip_voice')!;
+assert.equal(beforeUnit.deletedWordIdx.length, 1);
+assert.equal(beforeUnit.playOrder?.length, 2);
 
 const result = await execTranscriptTool(
   'manage_transcript',
@@ -66,19 +67,15 @@ assert.equal(result.ok, true, JSON.stringify(result));
 assert.equal(result.action, 'clear_edits');
 assert.equal(result.itemId, 'clip_voice');
 assert.equal(result.restored?.deletedWords, 1);
-assert.equal(result.restored?.gapOverrides, 1);
-assert.equal(result.restored?.silenceCap, true);
 assert.equal(result.restored?.playOrder, true);
 
-const after = draft.getState().items[0]!;
-assert.deepEqual(after.deletedWordIdx, []);
-assert.equal(after.silenceFrames, undefined);
-assert.equal(after.gapCapsMs, undefined);
-assert.equal(after.transcriptPlayOrder, undefined);
-assert.equal(after.transcript?.length, 3);
+const afterUnit = resolveTranscriptUnit(draft.getState(), 'clip_voice')!;
+assert.deepEqual(afterUnit.deletedWordIdx, []);
+assert.equal(afterUnit.playOrder, undefined);
+assert.equal(draft.getState().foldGroups, undefined, 'clear_edits dissolves temporary foldGroup');
+assert.equal(afterUnit.canonicalWords.length, 3);
 assert.ok(typeof result.durationInFrames === 'number' && result.durationInFrames > 0);
 
-// Idempotent second clear.
 const again = await execTranscriptTool(
   'manage_transcript',
   { action: 'clear_edits', track: 'A1' },

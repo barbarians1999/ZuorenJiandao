@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
@@ -56,8 +57,24 @@ try {
     '形状与马赛克应排在特效子分页第一位',
   );
   assert.match(defaultHtml, /aria-selected="true"[^>]*>形状与马赛克</, '特效面板默认选中形状与马赛克');
+  assert.doesNotMatch(defaultHtml, /cc-effect-card-hint/, '卡片内不应再渲染底部小字说明');
+  assert.doesNotMatch(defaultHtml, /cc-effect-card-wide/, '高斯模糊卡片应与形状卡片保持统一栅格样式');
+  for (const label of ['矩形', '椭圆', '纯色背景', '高斯模糊（马赛克）']) {
+    assert.ok(
+      defaultHtml.includes(`</div><span class="cc-effect-card-label">${label}</span>`),
+      `卡片文字“${label}”应位于缩略图方框外部下方`,
+    );
+  }
 
-  console.log('EffectsBrowser.verify: ok (5 compact sub-tabs)');
+  const [polishCss, skinCss] = await Promise.all([
+    readFile(new URL('../editor/editor-ui-polish.css', import.meta.url), 'utf8'),
+    readFile(new URL('../../src/skin-themes.css', import.meta.url), 'utf8'),
+  ]);
+  assert.match(polishCss, /\.cc-editor-shell\s+\.cc-effect-card\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;/s, '外层卡片按钮应透明无边框，仅缩略图框保留底色');
+  assert.doesNotMatch(skinCss, /constructivism[\s\S]*?\.cc-effect-card\s*\)/, '构成主义皮肤边框应仅作用于缩略图框而非整张卡片');
+  assert.match(skinCss, /\.cc-effect-card-thumb\s*\)\s*\{\s*border:\s*1px solid var\(--cc-border\)/s, '构成主义皮肤应对缩略图框描边');
+
+  console.log('EffectsBrowser.verify: ok (5 compact sub-tabs, external card labels)');
 } finally {
   await vite.close();
 }

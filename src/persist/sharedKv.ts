@@ -280,6 +280,29 @@ export async function kvGet<T>(key: string): Promise<T | undefined> {
   return localGet<T>(key);
 }
 
+/** Force a fresh read directly from the shared server store, bypassing
+ *  short-lived in-memory caches, and adopt the authoritative server copy. */
+export async function kvSyncRemoteEntry<T>(key: string): Promise<T | undefined> {
+  await ready();
+  freshCache.delete(key);
+  remoteVerifiedAt.delete(key);
+  if (!injectedBackend && projectStoreRemoteAvailable()) {
+    const entry = await requestEntry(key);
+    if (locallyPendingKeys.has(key)) {
+      await clearPendingKey(key);
+    }
+    cacheEntry(key, entry);
+    remoteVerifiedAt.set(key, Date.now());
+    if (entry.found) {
+      await localSet(key, entry.value);
+      return entry.value as T;
+    }
+    await localDel(key);
+    return undefined;
+  }
+  return localGet<T>(key);
+}
+
 async function setProjectDocument(key: string, value: unknown): Promise<void> {
   if (injectedBackend || !canSync()) {
     await localSet(key, value);

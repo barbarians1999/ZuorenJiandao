@@ -45,12 +45,21 @@ export function normalizeKey(key: string): string {
   return k;
 }
 
+function codeToShortcutKey(code: string): string | undefined {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  return CODE_KEY_FALLBACK[code];
+}
+
 function eventShortcutKey(e: Pick<KeyboardEvent, 'key' | 'code' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>): string {
   const normalized = normalizeKey(e.key);
+  const hasModifier = e.altKey || e.ctrlKey || e.metaKey;
   if (normalized === 'process' || normalized === 'unidentified') {
-    if (!e.altKey && !e.ctrlKey && !e.metaKey) {
-      return CODE_KEY_FALLBACK[e.code] ?? normalized;
-    }
+    if (!hasModifier) return CODE_KEY_FALLBACK[e.code] ?? normalized;
+    return codeToShortcutKey(e.code) ?? normalized;
+  }
+  if (hasModifier && !/^[a-z0-9`\-=[\]\\;',./]$/.test(normalized) && !normalized.startsWith('arrow')) {
+    return codeToShortcutKey(e.code) ?? normalized;
   }
   return normalized;
 }
@@ -133,7 +142,12 @@ export function isShortcutImeComposing(event: Pick<KeyboardEvent, 'isComposing' 
 }
 
 export function shouldIgnoreShortcutRepeat(actionId: string, event: Pick<KeyboardEvent, 'repeat'>): boolean {
-  return event.repeat && (actionId === 'toggle-picture' || actionId === 'marker-add' || actionId === 'marker-shortcut-add-and-open');
+  return event.repeat && (
+    actionId === 'play-pause'
+    || actionId === 'toggle-picture'
+    || actionId === 'marker-add'
+    || actionId === 'marker-shortcut-add-and-open'
+  );
 }
 
 /**

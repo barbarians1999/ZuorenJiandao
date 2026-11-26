@@ -40,6 +40,7 @@ export const CAPTION_AVOIDANCE_TOOL_NAMES: ReadonlySet<string> = new Set(CAPTION
 export interface CaptionAvoidanceResult {
   ok: boolean;
   adjusted?: number;
+  skipped?: boolean;
   error?: string;
   sources?: Array<{ source: string; adjusted: number; details: string[] }>;
   note?: string;

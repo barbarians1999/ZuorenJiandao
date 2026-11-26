@@ -5,6 +5,7 @@ import { historyReduce, type AtomicAction, type History } from '../../editor/red
 import type { EditorCommands } from '../../editor/store.ts';
 import { activeEditorState, activeTimeline, type ProjectDoc } from '../../editor/types.ts';
 import { buildSilenceGapCaps, parseCleanOnly, parseSilenceRule } from '../../transcript/clean.ts';
+import { resolveTranscriptUnit } from '../../transcript/trackEditCompiler.ts';
 import { execTranscriptTool, TRANSCRIPT_TOOL_SCHEMAS } from './transcript-tools.ts';
 
 const words = [
@@ -74,9 +75,10 @@ const result = await execTranscriptTool('clean_script', {
 }, ctx) as Record<string, unknown>;
 assert.equal(result.ok, true);
 assert.equal(history.past.length, 1, 'whole-track cleanup must be one undo step');
-for (const clip of activeTimeline(history.present).items) {
-  assert.deepEqual(clip.gapCapsMs, { '2': 500 });
-  assert.deepEqual(clip.deletedWordIdx, []);
+for (const anchorId of ['clip_one', 'clip_two']) {
+  const unit = resolveTranscriptUnit(activeTimeline(history.present), anchorId)!;
+  assert.deepEqual(unit.gapCapsMs, { '2': 500 });
+  assert.deepEqual(unit.deletedWordIdx, []);
 }
 
 history = historyReduce(history, { type: 'undo' });
@@ -84,7 +86,8 @@ assert.deepEqual(history.present, initial, 'one undo restores every cleaned clip
 
 const legacy = await execTranscriptTool('clean_script', { track: 'A1' }, ctx) as Record<string, unknown>;
 assert.equal(legacy.ok, true);
-assert.deepEqual(activeTimeline(history.present).items[0]?.deletedWordIdx, [0], 'legacy default still removes fillers');
-assert.equal(activeTimeline(history.present).items[0]?.silenceFrames, undefined, 'legacy default still leaves pauses uncapped');
+const afterFillerClean = resolveTranscriptUnit(activeTimeline(history.present), 'clip_one')!;
+assert.deepEqual(afterFillerClean.deletedWordIdx, [0], 'legacy default still removes fillers on track');
+assert.deepEqual(afterFillerClean.gapCapsMs, {}, 'legacy default leaves pauses uncapped');
 
 console.log('clean-script rule checks passed');

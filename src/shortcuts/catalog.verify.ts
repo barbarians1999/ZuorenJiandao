@@ -36,6 +36,7 @@ const fakeTarget = { tagName: 'DIV', isContentEditable: false, closest: () => nu
 function keyN(init: Partial<KeyboardEvent> & { key: string }): KeyboardEvent {
   return {
     key: init.key,
+    code: init.code ?? '',
     shiftKey: !!init.shiftKey,
     altKey: !!init.altKey,
     metaKey: !!init.metaKey,
@@ -83,6 +84,7 @@ assert.strictEqual(shouldIgnoreShortcutRepeat('toggle-picture', { repeat: true }
 assert.strictEqual(matchShortcut(keyN({ key: 'm' }), catalog, { held: new Set(), isMac: false }), 'marker-add');
 assert.strictEqual(matchShortcut({ ...keyN({ key: 'm' }), target: typingTarget }, catalog, { held: new Set(), isMac: false }), null);
 assert.strictEqual(shouldIgnoreShortcutRepeat('marker-add', { repeat: true }), true);
+assert.strictEqual(shouldIgnoreShortcutRepeat('play-pause', { repeat: true }), true);
 assert.strictEqual(shouldIgnoreShortcutRepeat('shuttle-fwd', { repeat: true }), false, 'J/K/L repeats remain available');
 assert.strictEqual(
   matchShortcut(keyN({ key: ' ' }), catalog, { held: new Set(), isMac: true }),
@@ -135,6 +137,19 @@ assert.strictEqual(
 assert.strictEqual(
   matchShortcut(keyN({ key: 'j' }), catalog, { held: new Set(['k']), isMac: true }),
   'shuttle-jog-back',
+);
+// Windows IME key/code fallback for Ctrl+B
+assert.strictEqual(
+  matchShortcut(keyN({ key: 'Process', code: 'KeyB', ctrlKey: true }), catalog, { held: new Set(), isMac: false }),
+  'split',
+);
+assert.strictEqual(
+  matchShortcut(keyN({ key: 'Unidentified', code: 'KeyB', ctrlKey: true }), catalog, { held: new Set(), isMac: false }),
+  'split',
+);
+assert.strictEqual(
+  matchShortcut(keyN({ key: 'β', code: 'KeyB', ctrlKey: true }), catalog, { held: new Set(), isMac: false }),
+  'split',
 );
 
 console.log('shortcuts catalog.verify: ok');

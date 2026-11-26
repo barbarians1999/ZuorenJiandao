@@ -59,4 +59,14 @@ const scalarSource = readFileSync(new URL('./ScalarControl.tsx', import.meta.url
 assert.match(scalarSource, /useInspectorWheel\(buttonRef/, '右侧数值框应保留滚轮调节');
 assert.match(scalarSource, /useInspectorWheel\(inputRef/, '右侧数字输入框应保留滚轮调节');
 
+const inspectorPanelSource = readFileSync(new URL('../InspectorPanel.tsx', import.meta.url), 'utf8');
+assert.doesNotMatch(inspectorPanelSource, /cc-insp-chevron|收起属性/, '属性栏标题栏不应再带无效的折叠小三角或收起按钮');
+
+const inspectorContentSource = readFileSync(new URL('./InspectorContent.tsx', import.meta.url), 'utf8');
+assert.doesNotMatch(inspectorContentSource, /画面 \/ 文字/, '属性页标签不得再使用合并的 画面 / 文字');
+
+const uiPolishCss = readFileSync(new URL('../../editor/editor-ui-polish.css', import.meta.url), 'utf8');
+assert.match(uiPolishCss, /\.cc-editor-shell \.cc-insp-tabs\s*\{[^}]*flex-wrap:\s*nowrap;/s, '属性页标签栏应强制单行不换行');
+assert.match(uiPolishCss, /\.cc-editor-shell \.cc-insp-tabs button\s*\{[^}]*padding:\s*0 4px;[^}]*white-space:\s*nowrap;/s, '属性页标签按钮应使用紧凑内边距且文字不换行');
+
 console.log('inspector-controls.verify: ok');

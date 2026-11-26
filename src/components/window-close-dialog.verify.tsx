@@ -32,9 +32,28 @@ assert.match(openHtml, /彻底关闭/);
 assert.match(openHtml, /隐藏后台/);
 assert.match(openHtml, /取消/);
 assert.match(openHtml, /checked=""/);
+assert.match(openHtml, /cc-window-close-backdrop/);
+assert.match(openHtml, /cc-window-close-dialog/);
+assert.match(openHtml, /cc-window-close-x/);
+assert.match(openHtml, /cc-window-close-checkbox/);
+assert.match(openHtml, /cc-window-close-cancel/);
+assert.match(openHtml, /cc-window-close-danger/);
+assert.match(openHtml, /cc-window-close-primary/);
 
 const componentSource = readFileSync(new URL('./WindowCloseConfirmDialog.tsx', import.meta.url), 'utf8');
 assert.doesNotMatch(componentSource, /#[0-9a-fA-F]{3,8}\b/, 'close dialog must use theme tokens instead of hex literals');
+
+const skinCss = readFileSync(new URL('../skin-themes.css', import.meta.url), 'utf8');
+assert.match(
+  skinCss,
+  /html\[data-cc-skin-family='constructivism'\][\s\S]*?\.cc-window-close-dialog[\s\S]*?border-radius:\s*0\s*!important/,
+  'constructivism theme must enforce 0px square radius on WindowCloseConfirmDialog',
+);
+assert.match(
+  skinCss,
+  /html\[data-cc-skin-family='constructivism'\]\s*\.cc-window-close-dialog\s+\.cc-window-close-checkbox[\s\S]*?border-radius:\s*0\s*!important/,
+  'constructivism theme must style the close dialog checkbox as a square',
+);
 
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 assert.match(appSource, /<WindowCloseConfirmDialog\s*\/>/, 'App mounts WindowCloseConfirmDialog on all routes');

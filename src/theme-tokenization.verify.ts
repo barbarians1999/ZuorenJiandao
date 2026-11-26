@@ -8,6 +8,7 @@ const CONTENT_COLOR_SELECTORS = new Set([
   '.cc-export-qa-card img',
   '.cc-audio-waveform path',
   '.cc-clip-wave path',
+  '.cc-clip-surface',
   '.cc-clip-label',
   '.cc-clip-label.audio',
   '.cc-clip-badge',
@@ -128,5 +129,16 @@ for (const selector of ['.cc-mic-group', '.cc-timeline-timecode', '.cc-ruler-hea
   assert.ok(body.includes('var(--cc-'), `${selector}: missing a skin token`);
   assert.deepEqual(rawColors(body), [], `${selector}: fixed color found`);
 }
+
+const previewPanelSource = readFileSync('src/components/PreviewPanel.tsx', 'utf8');
+assert.ok(
+  !previewPanelSource.includes('themeAlpha.shadow('),
+  'PreviewPanel status overlays must use surface tokens (--cc-panel/--cc-text), not themeAlpha.shadow()',
+);
+const previewStatusRule = css.match(/\.cc-preview-canvas-status\s*\{([^}]*)\}/)?.[1] ?? '';
+assert.ok(
+  previewStatusRule.includes('var(--cc-panel)') && previewStatusRule.includes('var(--cc-text)'),
+  '.cc-preview-canvas-status must pair var(--cc-panel) background with var(--cc-text) foreground',
+);
 
 process.stdout.write('theme-tokenization.verify: ok\n');

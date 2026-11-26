@@ -200,6 +200,7 @@ const autoOnly: CaptionsData = {
 const autoTarget = findCaptionPreviewTarget(autoOnly, [autoItem], 30, 500);
 assert.equal(autoTarget?.kind, 'single', 'auto multi-lane falls back to a clickable single cue target');
 assert.match(autoTarget?.cue.text ?? '', /海风/);
+assert.equal(findCaptionPreviewTarget(autoOnly, [autoItem], 30, 2_000), null, 'ended auto caption does not keep a ghost preview target');
 
 const seamCaptions = {
   ...captions,

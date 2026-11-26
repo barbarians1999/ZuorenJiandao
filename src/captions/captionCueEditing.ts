@@ -1,9 +1,9 @@
 import { newManualCueIdentity } from '../transcript/identity';
 import type { TranscriptWord } from '../transcript/types';
-import { captionWordOverride } from './wordOverrides';
+import { buildStableOverrideMap, lookupCaptionWordOverride } from './wordOverrides';
 import { normalizeCaptionSourceEntries } from './sourceOrder';
 import { joinCaptionWords, type CaptionDisplayCueEdit, type CaptionDisplayCuePart, type CaptionSourceSpan, type CaptionsData } from './types';
-import { resolveEntryProjection } from './resolve';
+import { resolveEntryProjection, wordRefIndexMap } from './resolve';
 import { projectCaptionSourceSpans } from './captionSourceSpans';
 import { captionFontKey } from '../fonts/captionFontScope';
 import type { CueRow } from './captionCues';
@@ -63,13 +63,15 @@ function sourceSpansForRefs(
   const transcript = item?.transcript;
   if (!item || !transcript?.length) return [];
   const projection = resolveEntryProjection(entry, items, fps);
+  const positionByRef = wordRefIndexMap(projection);
+  const stableOverrides = buildStableOverrideMap(captions.wordOverrides);
   return refs.flatMap((wordRef) => {
-    const position = projection.wordRefs.indexOf(wordRef);
-    if (position < 0) return [];
+    const position = positionByRef.get(wordRef);
+    if (position === undefined) return [];
     const sourceIndex = projection.indices[position]!;
     const source = transcript[sourceIndex];
     if (!source) return [];
-    const override = captionWordOverride(captions.wordOverrides, sourceIndex, wordRef);
+    const override = lookupCaptionWordOverride(captions.wordOverrides, stableOverrides, sourceIndex, wordRef);
     return [{ wordRef, startMs: source.start, endMs: source.end,
       sourceText: projection.words[position]?.text ?? source.text,
       ...(override?.timingOffsetMs !== undefined ? { timingOffsetMs: override.timingOffsetMs } : {}) }];
@@ -89,12 +91,13 @@ function sourceDisplayForRow(
   // Older cueTextPatch stored one sentence on its first word and hid the rest.
   if (refs.length === 1) {
     const projection = resolveEntryProjection(entry, items, fps);
-    const first = projection.wordRefs.indexOf(refs[0]!);
-    const override = first >= 0 ? captionWordOverride(captions.wordOverrides, projection.indices[first]!, refs[0]!) : undefined;
-    if (first >= 0 && override?.text && override.forceBreak) {
+    const first = wordRefIndexMap(projection).get(refs[0]!);
+    const stableOverrides = buildStableOverrideMap(captions.wordOverrides);
+    const override = first !== undefined ? lookupCaptionWordOverride(captions.wordOverrides, stableOverrides, projection.indices[first]!, refs[0]!) : undefined;
+    if (first !== undefined && override?.text && override.forceBreak) {
       for (let index = first + 1; index < projection.wordRefs.length; index += 1) {
         const ref = projection.wordRefs[index]!;
-        const next = captionWordOverride(captions.wordOverrides, projection.indices[index]!, ref);
+        const next = lookupCaptionWordOverride(captions.wordOverrides, stableOverrides, projection.indices[index]!, ref);
         if (next?.forceBreak || !next?.hidden) break;
         refs.push(ref);
       }

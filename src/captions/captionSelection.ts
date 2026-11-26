@@ -12,7 +12,7 @@ import {
   type TimelineState,
   type TrackId,
 } from '../editor/types';
-import type { CaptionsData } from './types';
+import type { CaptionsData, CaptionSourceEntry } from './types';
 
 export type CaptionSelectionRef =
   | { trackId: TrackId; kind: 'single'; pageId: string }
@@ -36,17 +36,63 @@ export interface ResolvedCaptionSelection extends SelectedCaptionInspector {
   selection: CaptionSelectionRef;
 }
 
-/**
- * Build only generated cues when structured manual lanes coexist with linked
- * sources. Cue source indexes are mapped back into the caption track's full
- * wordOverrides index space.
- */
+const autoCueIndexMemo = new WeakMap<readonly CueRow[], { rows: CueRow[]; byPageId: Map<string, number> }>();
+const manualEntryByIdMemo = new WeakMap<CaptionsData, Map<string, CaptionSourceEntry>>();
+const manualWordIndexMemo = new WeakMap<CaptionSourceEntry, Map<string, number>>();
+
+function selectableAutomaticCuesIndex(
+  captions: CaptionsData,
+  items: TimelineItem[],
+  fps: number,
+): { rows: CueRow[]; byPageId: Map<string, number> } {
+  const all = buildCues(captions, items, fps);
+  let cached = autoCueIndexMemo.get(all);
+  if (!cached) {
+    const rows = all.filter((cue) => !cue.manual);
+    const byPageId = new Map<string, number>();
+    for (let i = 0; i < rows.length; i += 1) {
+      const id = rows[i]!.id;
+      if (!byPageId.has(id)) byPageId.set(id, i);
+    }
+    cached = { rows, byPageId };
+    autoCueIndexMemo.set(all, cached);
+  }
+  return cached;
+}
+
+function findSourceEntryById(captions: CaptionsData, laneId: string): CaptionSourceEntry | undefined {
+  if (!captions.sourceEntries?.length) return undefined;
+  let byId = manualEntryByIdMemo.get(captions);
+  if (!byId) {
+    byId = new Map();
+    for (const entry of captions.sourceEntries) {
+      if (!byId.has(entry.id)) byId.set(entry.id, entry);
+    }
+    manualEntryByIdMemo.set(captions, byId);
+  }
+  return byId.get(laneId);
+}
+
+function manualWordIndexById(entry: CaptionSourceEntry): Map<string, number> | null {
+  if (!entry.words) return null;
+  let byId = manualWordIndexMemo.get(entry);
+  if (!byId) {
+    byId = new Map();
+    for (let i = 0; i < entry.words.length; i += 1) {
+      const id = entry.words[i]?.id;
+      if (id && !byId.has(id)) byId.set(id, i);
+    }
+    manualWordIndexMemo.set(entry, byId);
+  }
+  return byId;
+}
+
 function selectableAutomaticCues(
   captions: CaptionsData,
   items: TimelineItem[],
   fps: number,
 ): CueRow[] {
-  return buildCues(captions, items, fps).filter((cue) => !cue.manual);
+  return selectableAutomaticCuesIndex(captions, items, fps).rows;
 }
 
 export function captionSelectionRef(trackId: TrackId, target: CaptionPreviewTarget): CaptionSelectionRef {
@@ -202,9 +248,9 @@ export function resolveCaptionSelection(
   const preset = effectivePreset(captions);
 
   if (selection.kind === 'single') {
-    const rows = selectableAutomaticCues(captions, state.items, state.fps);
-    const cueIndex = rows.findIndex((candidate) => candidate.id === selection.pageId);
-    const cue = rows[cueIndex];
+    const { rows, byPageId } = selectableAutomaticCuesIndex(captions, state.items, state.fps);
+    const cueIndex = byPageId.get(selection.pageId) ?? -1;
+    const cue = cueIndex >= 0 ? rows[cueIndex] : undefined;
     return cue ? {
       trackId: selection.trackId,
       captions,
@@ -221,8 +267,8 @@ export function resolveCaptionSelection(
     } : null;
   }
 
-  const entry = captions.sourceEntries?.find((candidate) => candidate.id === selection.laneId);
-  const cueIndex = entry?.words?.findIndex((candidate) => candidate.id === selection.cueId) ?? -1;
+  const entry = findSourceEntryById(captions, selection.laneId);
+  const cueIndex = entry ? (manualWordIndexById(entry)?.get(selection.cueId) ?? -1) : -1;
   const cue = cueIndex >= 0 ? entry?.words?.[cueIndex] : undefined;
   if (!entry || !cue) return null;
   return {

@@ -60,12 +60,20 @@ export function attachEditorBenchmark({ stateRef, docRef, commands, playerRef, p
       const label = mode === 'original' ? '\u539f\u7247' : '\u6d41\u7545';
       const deadline = performance.now() + 15000;
       let button: HTMLButtonElement | undefined;
+      let select: HTMLSelectElement | null = null;
       do {
+        select = document.querySelector<HTMLSelectElement>('select.cc-preview-quality-select');
+        if (select) break;
         button = [...document.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')]
           .find((entry) => entry.textContent?.trim() === label);
         if (button) break;
         await new Promise((done) => setTimeout(done, 50));
       } while (performance.now() < deadline);
+      if (select) {
+        select.value = mode;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        return;
+      }
       if (!button) throw new Error(`Editor preview source control missing: ${document.body.innerText.slice(0, 1200)}`);
       button.click();
     },

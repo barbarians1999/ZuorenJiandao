@@ -11,6 +11,8 @@ import { createFrameCoalescer, type FrameCoalescer } from './frameCoalescer';
 export interface AudibleAudioItem {
   /** Timeline start frame of the audio item. */
   startFrame: number;
+  /** Timeline clip duration in frames (used to disambiguate shared audio slots). */
+  durationInFrames?: number;
   /** Item playback rate (timeline frames per source frame). */
   playbackRate: number;
   /** Source in-point in source-media frames (srcInFrame ?? 0). */
@@ -37,6 +39,7 @@ interface PlayheadDeps {
    * marker creation), which Remotion only re-syncs beyond ~0.1–0.45s of drift.
    */
   getAudibleItem?: (playheadFrame: number) => AudibleAudioItem | null;
+  onPlaybackFrame?: (frame: number, info: { started: boolean; jumpedBack: boolean }) => void;
 }
 
 /** Playback may throttle labels; a paused seek has no later tick to repaint it. */
@@ -75,9 +78,68 @@ function audioOutputLatencySeconds(): number {
   return measuredAudioLatency;
 }
 
+function safeDecodeUriComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+export function mediaUrlMatchesItemSrc(elementUrl: string, itemSrc: string): boolean {
+  if (!elementUrl || !itemSrc || elementUrl.startsWith('data:')) return false;
+  try {
+    const elParsed = new URL(elementUrl.split('#')[0] ?? elementUrl, 'http://localhost');
+    const itemParsed = new URL(itemSrc.split('#')[0] ?? itemSrc, 'http://localhost');
+    const elPath = safeDecodeUriComponent(elParsed.pathname);
+    const itemPath = safeDecodeUriComponent(itemParsed.pathname);
+    if (elPath === itemPath) {
+      if (!itemParsed.search) return true;
+      return safeDecodeUriComponent(elParsed.search) === safeDecodeUriComponent(itemParsed.search);
+    }
+    if (elPath === '/api/preview-proxy-file') {
+      const proxiedSrc = safeDecodeUriComponent(elParsed.searchParams.get('src') ?? '');
+      if (proxiedSrc && proxiedSrc === itemPath) return true;
+    }
+    return false;
+  } catch {
+    return safeDecodeUriComponent(elementUrl).includes(safeDecodeUriComponent(itemSrc));
+  }
+}
+
+export interface AudibleAudioElementCandidate {
+  tagName?: string;
+  paused: boolean;
+  muted: boolean;
+  seeking?: boolean;
+  readyState: number;
+  currentTime: number;
+  currentSrc?: string;
+  src: string;
+}
+
+export function isMatchingAudibleAudioElement(
+  el: AudibleAudioElementCandidate,
+  item: AudibleAudioItem,
+  fps: number,
+): boolean {
+  if ((el.tagName ?? '').toUpperCase() !== 'AUDIO') return false;
+  if (el.paused || el.muted || el.seeking || el.readyState < 2) return false;
+  if (!mediaUrlMatchesItemSrc(el.currentSrc || el.src || '', item.src)) return false;
+  const mappedFrame = audioMediaTimeToTimelineFrame(el.currentTime, item, fps);
+  if (!Number.isFinite(mappedFrame)) return false;
+  const minFrame = item.startFrame - fps;
+  const maxFrame = Number.isFinite(item.durationInFrames)
+    ? item.startFrame + (item.durationInFrames as number) + fps
+    : Number.POSITIVE_INFINITY;
+  return mappedFrame >= minFrame && mappedFrame <= maxFrame;
+}
+
 interface MediaMetadataSyncPlayer {
   getContainerNode(): EventTarget | null;
   seekTo(frame: number): void;
+  isPlaying?(): boolean;
+  getCurrentFrame?(): number;
 }
 
 function attachMediaMetadataSync(
@@ -90,7 +152,11 @@ function attachMediaMetadataSync(
   const options = { capture: true };
   const frames = metadataFrames ?? createFrameCoalescer<void>(requestAnimationFrame, cancelAnimationFrame);
   const onLoadedMetadata = () => frames.schedule(undefined, () => {
-    withAnimationPreviewInternalSeek(player, () => player.seekTo(getDesiredFrame()));
+    const desired = getDesiredFrame();
+    if (player.isPlaying?.() && typeof player.getCurrentFrame === 'function' && player.getCurrentFrame() === desired) {
+      return;
+    }
+    withAnimationPreviewInternalSeek(player, () => player.seekTo(desired));
   });
   target.addEventListener('loadedmetadata', onLoadedMetadata, options);
   return () => {
@@ -118,7 +184,7 @@ export function attachPlayheadMediaSync(
   };
 }
 
-export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total, px, scrubSeek, getAudibleItem }: PlayheadDeps) {
+export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total, px, scrubSeek, getAudibleItem, onPlaybackFrame }: PlayheadDeps) {
   const projectIdRef = useRef(projectId);
   projectIdRef.current = projectId;
   const timelineIdRef = useRef(timelineId);
@@ -129,6 +195,9 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
   fpsRef.current = fps;
   const getAudibleItemRef = useRef(getAudibleItem);
   getAudibleItemRef.current = getAudibleItem;
+  const onPlaybackFrameRef = useRef(onPlaybackFrame);
+  onPlaybackFrameRef.current = onPlaybackFrame;
+  const lastPlaybackFollowFrameRef = useRef<number | null>(null);
   // Restore once per project + timeline pair. A missing record deliberately seeks
   // to frame 0 instead of inheriting the Player's stale frame from another tab.
   const restoredForRef = useRef<string | null>(null);
@@ -144,7 +213,7 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
   // own clock. Non-null while the audio clock owns the playhead; the Player's
   // frameupdate then only feeds the fallback/resume reference.
   const lastAudioFrameRef = useRef<number | null>(null);
-  const lastAudioHeadSaveRef = useRef(0);
+  const cachedMediaElRef = useRef<{ src: string; el: HTMLMediaElement } | null>(null);
 
   // coalesce frameupdate → one paint per animation frame (smoother playhead)
   const pendingFrameRef = useRef<number | null>(null);
@@ -156,6 +225,9 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
     const x = HEADER_W + current * pxRef.current;
     if (playheadLineRef.current) {
       playheadLineRef.current.style.transform = `translate3d(${x}px,0,0)`;
+    }
+    if (forceTc || !playerRef.current?.isPlaying()) {
+      pendingFrameRef.current = null;
     }
     // Refresh ~12fps while playing. Pause+seek restoration can happen inside
     // that interval and must paint immediately: paused players have no tick.
@@ -175,6 +247,17 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
   };
   const paintPlayheadRef = useRef(paintPlayhead);
   paintPlayheadRef.current = paintPlayhead;
+  const syncPlayheadSeek = useCallback((frame: number) => {
+    timecodePreviewFrameRef.current = null;
+    lastAudioFrameRef.current = null;
+    pendingFrameRef.current = null;
+    if (paintRafRef.current) {
+      cancelAnimationFrame(paintRafRef.current);
+      paintRafRef.current = 0;
+    }
+    lastPlaybackFollowFrameRef.current = Math.max(0, frame);
+    paintPlayheadRef.current(frame, true);
+  }, []);
   const restorePlayerRef = useRef((_player: NonNullable<typeof playerRef.current>): boolean => false);
   restorePlayerRef.current = (player) => {
     const pid = projectIdRef.current;
@@ -211,6 +294,7 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
       const key = projectId && timelineId ? `${projectId}\u0000${timelineId}` : null;
       if (key !== restoredForRef.current) {
         lastAudioFrameRef.current = null;
+        lastPlaybackFollowFrameRef.current = null;
         // Switching drafts stops playback before restoring the destination.
         // Pause before registering onPause, which would otherwise save the old
         // player's frame under the destination draft.
@@ -226,6 +310,15 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
         pendingFrameRef.current = null;
         if (pending !== null && !scrubSeek.pending && (player.isPlaying() || pending === player.getCurrentFrame())) {
           paintPlayheadRef.current(pending);
+          if (player.isPlaying()) {
+            const prev = lastPlaybackFollowFrameRef.current;
+            const jumpThreshold = Math.max(5, Math.round(fpsRef.current * 0.25));
+            lastPlaybackFollowFrameRef.current = pending;
+            onPlaybackFrameRef.current?.(pending, {
+              started: prev === null,
+              jumpedBack: prev !== null && prev - pending >= jumpThreshold,
+            });
+          }
         }
       };
       // Hard refresh does not run React uninstall and clean, detach flush is unreliable - play/drag frameupdate
@@ -241,28 +334,38 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
         pendingFrameRef.current = event.detail.frame;
         if (!paintRafRef.current) paintRafRef.current = requestAnimationFrame(flush);
         const now = performance.now();
-        if (event.detail.frame > 0 && now - lastHeadSave > 800) {
+        if (!player.isPlaying?.() && event.detail.frame > 0 && now - lastHeadSave > 800) {
           lastHeadSave = now;
           persistHead(event.detail.frame);
         }
       };
       const detachPlayheadSync = attachPlayheadMediaSync(
         player,
-        () => scrubSeek.pending ? player.getCurrentFrame() : playheadRef.current,
+        () => (scrubSeek.pending || player.isPlaying?.()) ? player.getCurrentFrame() : playheadRef.current,
         onFrame,
       );
-      const onPlay = () => { if (isCurrentTimeline()) setPlaying(true); };
+      const onPlay = () => {
+        if (!isCurrentTimeline()) return;
+        setPlaying(true);
+        const current = lastAudioFrameRef.current ?? player.getCurrentFrame();
+        lastPlaybackFollowFrameRef.current = current;
+        onPlaybackFrameRef.current?.(current, { started: true, jumpedBack: false });
+      };
       const onPause = () => {
         if (!isCurrentTimeline()) return;
+        lastPlaybackFollowFrameRef.current = null;
         setPlaying(false);
         // Prefer the last audio-clock frame when marking mode was active, so
         // pausing does not snap the playhead forward to the wall-clock frame.
         const f = lastAudioFrameRef.current ?? player.getCurrentFrame();
+        lastAudioFrameRef.current = null;
         paintPlayheadRef.current(f, true);
         persistHead(f);
       };
       const onEnded = () => {
         if (!isCurrentTimeline()) return;
+        lastPlaybackFollowFrameRef.current = null;
+        lastAudioFrameRef.current = null;
         setPlaying(false);
         persistHead(player.getCurrentFrame());
       };
@@ -274,7 +377,9 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
         paintPlayheadRef.current(player.getCurrentFrame(), true);
       }
       return () => {
+        lastPlaybackFollowFrameRef.current = null;
         detachPlayheadSync();
+        cachedMediaElRef.current = null;
         // Preserve the last observed outgoing frame, not getCurrentFrame():
         // the shared Player may already have been clamped for the next draft.
         persistHead(playheadRef.current, player);
@@ -294,12 +399,16 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
     // Check identity at low frequency while paused; frameupdate already drives
     // painting during playback, so a permanent 60fps watchdog only wastes CPU.
     const tick = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       const player = playerRef.current;
       if (player !== attached) {
         detach?.();
         attached = player;
         detach = player ? attachTo(player) : null;
       }
+    };
+    const onVisibilityChange = () => {
+      if (!document.hidden) tick();
     };
     if (!playerRef.current && projectId && timelineId) {
       restoredForRef.current = `${projectId}\u0000${timelineId}`;
@@ -310,8 +419,15 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
     }
     tick();
     const watchdog = setInterval(tick, 100);
+    const saveOnLeave = () => persistHead(playheadRef.current);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', saveOnLeave);
+    window.addEventListener('beforeunload', saveOnLeave);
     return () => {
       clearInterval(watchdog);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', saveOnLeave);
+      window.removeEventListener('beforeunload', saveOnLeave);
       if (detach) detach();
       else persistHead(playheadRef.current);
     };
@@ -329,18 +445,23 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
     let raf = 0;
     const latency = audioOutputLatencySeconds();
     const findAudibleMediaElement = (item: AudibleAudioItem | null): HTMLMediaElement | null => {
+      if (!item) return null;
+      const cached = cachedMediaElRef.current;
+      if (cached && cached.src === item.src && cached.el.isConnected
+        && isMatchingAudibleAudioElement(cached.el, item, fpsRef.current)) {
+        return cached.el;
+      }
       const player = playerRef.current;
       const container = (player as unknown as { getContainerNode?: () => EventTarget | null })?.getContainerNode?.();
       if (!container || !(container instanceof HTMLElement)) return null;
-      const media = Array.from(container.querySelectorAll<HTMLMediaElement>('audio,video'));
-      if (!media.length) return null;
-      // Prefer the element matching the audible item's src; fall back to the
-      // first element that is actually playing.
-      if (item) {
-        const match = media.find((el) => (el.currentSrc || el.src).includes(item.src));
-        if (match) return match;
+      const audios = Array.from(container.querySelectorAll<HTMLAudioElement>('audio'));
+      if (!audios.length) return null;
+      const match = audios.find((el) => isMatchingAudibleAudioElement(el, item, fpsRef.current));
+      if (match) {
+        cachedMediaElRef.current = { src: item.src, el: match };
+        return match;
       }
-      return media.find((el) => !el.paused && el.readyState >= 2) ?? null;
+      return null;
     };
     const loop = () => {
       if (projectIdRef.current !== projectId || timelineIdRef.current !== timelineId) return;
@@ -350,17 +471,20 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
         const mediaSec = Math.max(0, el.currentTime - latency);
         const raw = audioMediaTimeToTimelineFrame(mediaSec, item, fpsRef.current);
         const clamped = Math.max(0, Math.min(Math.max(0, totalRef.current - 1), Math.round(raw)));
-        lastAudioFrameRef.current = clamped;
-        paintPlayheadRef.current(clamped);
-        const now = performance.now();
-        if (clamped > 0 && now - lastAudioHeadSaveRef.current > 800) {
-          lastAudioHeadSaveRef.current = now;
-          // persistHead is scoped to attachTo; keep resume position roughly in
-          // sync by persisting through the same channel used by frameupdate.
-          const pid = projectIdRef.current;
-          const tid = timelineIdRef.current;
-          if (pid && tid) saveTimelineView(pid, tid, {
-            playhead: animationPreviewSavedFrame(playerRef.current, pid, tid, clamped),
+        let playerFrame: number | undefined;
+        try { playerFrame = playerRef.current?.getCurrentFrame?.(); } catch { playerFrame = undefined; }
+        const maxDivergence = Math.max(15, Math.round(fpsRef.current));
+        if (typeof playerFrame === 'number' && Number.isFinite(playerFrame) && Math.abs(clamped - playerFrame) > maxDivergence) {
+          lastAudioFrameRef.current = null;
+        } else {
+          lastAudioFrameRef.current = clamped;
+          paintPlayheadRef.current(clamped);
+          const prev = lastPlaybackFollowFrameRef.current;
+          const jumpThreshold = Math.max(5, Math.round(fpsRef.current * 0.25));
+          lastPlaybackFollowFrameRef.current = clamped;
+          onPlaybackFrameRef.current?.(clamped, {
+            started: prev === null,
+            jumpedBack: prev !== null && prev - clamped >= jumpThreshold,
           });
         }
       } else {
@@ -381,6 +505,7 @@ export function usePlayheadPaint({ playerRef, projectId, timelineId, fps, total,
     toolbarTimecodeRef,
     rulerTimecodeRef,
     paintPlayhead,
+    syncPlayheadSeek,
     persistHead,
     setTimecodePreviewFrame,
     playing,

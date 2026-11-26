@@ -17,6 +17,7 @@ import { v1ToV2 } from './v1-to-v2.js';
 import { v2ToV3 } from './v2-to-v3.js';
 import { normalizeDevelopmentBackgroundFillPresets } from './v6-to-v7.js';
 import { backfillProjectCaptionIdentity } from './captionIdentity.js';
+import { migrateLegacyTranscriptTiming } from './legacyTranscriptTiming.js';
 
 const migrations: readonly ProjectMigrationStep[] = [v1ToV2, v2ToV3];
 const migrationByVersion = new Map(migrations.map((migration) => [migration.fromVersion, migration]));
@@ -58,9 +59,11 @@ function finalize(value: unknown): ProjectDoc | null {
     )),
   }));
   const { designStyle: _designStyle, ...preserved } = value;
-  const doc = {
+  const rawTimingModel = (value as unknown as { transcriptTimingModel?: unknown }).transcriptTimingModel;
+  const baseDoc = {
     ...preserved,
     version: CURRENT_PROJECT_VERSION,
+    ...(rawTimingModel === 'track-ssot-v1' ? { transcriptTimingModel: 'track-ssot-v1' as const } : {}),
     assets,
     mediaFolders,
     timelines,
@@ -69,7 +72,10 @@ function finalize(value: unknown): ProjectDoc | null {
       : timelines[0].id,
     ...(isDesignStyle(value.designStyle) ? { designStyle: value.designStyle } : {}),
   } as ProjectDoc;
-  const enriched = backfillProjectCaptionIdentity(doc);
+  const ssotDoc = baseDoc.transcriptTimingModel === 'track-ssot-v1'
+    ? baseDoc
+    : migrateLegacyTranscriptTiming(baseDoc);
+  const enriched = backfillProjectCaptionIdentity(ssotDoc);
   return sequenceGraphError(enriched) ? null : enriched;
 }
 

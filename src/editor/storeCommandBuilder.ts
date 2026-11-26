@@ -21,6 +21,7 @@ import {
   activeEditorState,
   activeTimeline,
   defaultTrackId,
+  isDedicatedEffectItemKind,
   isEffectItemKind,
   isEffectTrack,
   isTextTrack,
@@ -80,17 +81,19 @@ export function buildCommands(
   ): TrackId => {
     const state = activeTimeline(getDoc());
     const main = mainTrackId(state);
+    const effectiveRole: TrackVisualRole | undefined =
+      visualRole ?? (itemKind != null && isDedicatedEffectItemKind(itemKind) ? 'effect' : undefined);
     const matchesRole = (track: TrackId): boolean => {
       if (kind !== 'video') return true;
-      if (visualRole === 'text') return isTextTrack(state, track, main);
-      if (visualRole === 'effect') return isEffectTrack(state, track, main);
+      if (effectiveRole === 'text') return isTextTrack(state, track, main);
+      if (effectiveRole === 'effect') return isEffectTrack(state, track, main);
       return !isTextTrack(state, track, main)
         && (!isEffectTrack(state, track, main) || (itemKind != null && isEffectItemKind(itemKind)));
     };
     const resolved = resolveTrackId(state, ref, kind);
     const existing = resolved && matchesRole(resolved)
       ? resolved
-      : visualRole === 'text' || visualRole === 'effect'
+      : effectiveRole === 'text' || effectiveRole === 'effect'
         ? timelineTrackIds(state).find((track) => trackKind(state, track) === 'video' && track !== main && matchesRole(track))
         : (() => { const d = defaultTrackId(state, kind); return d && matchesRole(d) ? d : undefined; })();
     if (existing) return existing;
@@ -98,7 +101,7 @@ export function buildCommands(
     // Staged, not dispatched: the enclosing command commits it with its own
     // action. Any command that does not use dispatchWithTracks/placeItem still
     // gets it flushed as part of its next batch.
-    pendingTrackCreates.push({ type: 'track.create', track: { id, kind, ...(visualRole ? { visualRole } : {}) } });
+    pendingTrackCreates.push({ type: 'track.create', track: { id, kind, ...(effectiveRole ? { visualRole: effectiveRole } : {}) } });
     return id;
   };
   const createVideoTrackAtTop = (name: string | undefined, visualRole?: TrackVisualRole): TrackId => {
@@ -120,8 +123,7 @@ export function buildCommands(
     explicitTrack?: TrackId,
   ): TrackId => {
     const main = mainTrackId(state);
-    if (explicitTrack && trackKind(state, explicitTrack) === 'video'
-      && !isTextTrack(state, explicitTrack, main) && !state.tracks?.[explicitTrack]?.locked) {
+    if (explicitTrack && isEffectTrack(state, explicitTrack, main) && !state.tracks?.[explicitTrack]?.locked) {
       return explicitTrack;
     }
     const endFrame = startFrame + durationInFrames;
@@ -198,9 +200,7 @@ export function buildCommands(
         const state = activeTimeline(getDoc());
         const startFrame = Math.max(0, Math.round(at?.startFrame ?? 0));
         const durationInFrames = Math.max(1, Math.round(at?.durationInFrames ?? Math.round(5 * state.fps)));
-        const track = at?.mask
-          ? pickEffectOverlayTrack(state, undefined, startFrame, durationInFrames, at?.track)
-          : pickTrack(at?.track, 'video', undefined, 'solid');
+        const track = pickEffectOverlayTrack(state, undefined, startFrame, durationInFrames, at?.track);
         const id = uid('item');
         dispatchWithTracks({
           type: 'add',
@@ -252,9 +252,12 @@ export function buildCommands(
       setDesignStyle: (style) => dispatch({ type: 'design.set', style }),
       patchDesignStyle: (patch) => dispatch({ type: 'design.patch', patch }),
       addMotionGraphic: (tpl, at) => {
+        const state = activeTimeline(getDoc());
+        const startFrame = Math.max(0, Math.round(at?.startFrame ?? 0));
+        const track = pickEffectOverlayTrack(state, undefined, startFrame, tpl.durationInFrames, at?.track);
         const item = {
           id: uid('item'),
-          track: pickTrack(at?.track, 'video', undefined, 'motion-graphic'),
+          track,
           durationInFrames: tpl.durationInFrames,
           kind: 'motion-graphic' as const,
           templateId: tpl.id,
@@ -547,6 +550,11 @@ export function buildCommands(
       setGapCap: (id, afterWordIndex, maxMs) => dispatch({ type: 'setGapCap', id, afterWordIndex, maxMs }),
       setTranscriptPlayOrder: (id, playOrder) => dispatch({ type: 'setTranscriptPlayOrder', id, playOrder }),
       reorderTrackItems: (track, orderedIds, starts) => dispatch({ type: 'reorderTrackItems', track, orderedIds, starts }),
+      toggleFoldGroup: (groupId) => dispatch({ type: 'toggleFoldGroup', groupId }),
+      dissolveFoldGroup: (groupId) => dispatch({ type: 'dissolveFoldGroup', groupId }),
+      splitFoldGroup: (groupId, atFrame) => dispatch({ type: 'splitFoldGroup', groupId, atFrame, newClipId: uid('clip') }),
+      trimFoldGroup: (groupId, edge, deltaFrames, ripple) => dispatch({ type: 'trimFoldGroup', groupId, edge, deltaFrames, ripple }),
+      dismissLegacyTimingReview: (itemId) => dispatch({ type: 'dismissLegacyTimingReview', itemId }),
       clearEdits: (id) => dispatch({ type: 'clearEdits', id }),
       fixTranscriptWord: (id, wordIndex, text) => dispatch({ type: 'fixTranscriptWord', id, wordIndex, text }),
       renameSpeaker: (id, from, to) => dispatch({ type: 'renameSpeaker', id, from, to }),

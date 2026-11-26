@@ -221,11 +221,6 @@ assert.equal(
         playbackRate: 2,
         sourceRevision: oldAudioRevision,
         transcript: oldWords,
-        deletedWordIdx: [1],
-        silenceFrames: 8,
-        gapCapsMs: { 2: 0 },
-        transcriptPlayOrder: [2, 0],
-        cutPadFrames: 6,
         variants: [{ id: 'old-variant', lang: 'en', kind: 'corrected', label: 'Old', words: [{ i: 0, text: 'obsolete' }] }],
       }],
     }],
@@ -283,18 +278,13 @@ assert.equal(
   const freshItem = freshTimeline.items[0]!;
   assert.equal(hasOperationalTranscript(freshItem), true);
   assert.equal(freshItem.transcript?.[0]?.text, 'fresh-a');
-  assert.equal(freshItem.srcInFrame, 0);
-  assert.deepEqual(freshItem.deletedWordIdx, []);
-  assert.equal(freshItem.silenceFrames, undefined);
-  assert.equal(freshItem.gapCapsMs, undefined);
-  assert.equal(freshItem.transcriptPlayOrder, undefined);
-  assert.equal(freshItem.cutPadFrames, undefined);
+  assert.equal(freshItem.srcInFrame, 10, 'fresh transcript preserves clip srcInFrame (track geometry is SSOT)');
   assert.equal(freshItem.variants, undefined);
-  const freshSlip = planSlip({ ...freshTimeline, assets: refreshed.assets }, freshItem.id, 20);
+  const freshSlip = planSlip({ ...freshTimeline, assets: refreshed.assets }, freshItem.id, 5);
   assert.equal(freshSlip.ok, true);
   if (freshSlip.ok) {
-    assert.equal(freshSlip.sourceDomain, 'edited-stream');
-    assert.equal(freshSlip.srcInFrame, 20, 'fresh current-source transcript starts in, and slips through, the new edited stream');
+    assert.equal(freshSlip.sourceDomain, 'media');
+    assert.equal(freshSlip.srcInFrame, 20, '2x fresh-transcript audio slips smoothly in continuous media domain');
   }
   assert.ok(resolveCaptionWords(
     { enabled: true, template: 'plain', pacing: 'phrase', sourceItemId: freshItem.id },

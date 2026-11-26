@@ -25,6 +25,88 @@ export function trackOrderForHeaderDrop(
   return kind === 'video' ? reordered.length - 1 - visualIndex : visualIndex;
 }
 
+export interface TrackRowBounds {
+  id: TrackId;
+  top: number;
+  bottom: number;
+}
+
+export interface ResolvedTrackHeaderDrop {
+  targetId: TrackId;
+  side: TrackDropSide;
+  order: number;
+}
+
+export interface TrackStepReorderPlan {
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  moveUpOrder: number | null;
+  moveDownOrder: number | null;
+  moveTopOrder: number | null;
+  moveBottomOrder: number | null;
+  sameKindCount: number;
+  visualIndex: number;
+}
+
+/** Plan single-step and edge vertical track moves within the track's own kind group. */
+export function planTrackStepReorder(
+  state: TimelineState,
+  trackId: TrackId,
+): TrackStepReorderPlan {
+  const kind = trackKind(state, trackId);
+  const sameKind = timelineTrackIds(state).filter((id) => trackKind(state, id) === kind);
+  const visualIndex = sameKind.indexOf(trackId);
+  if (visualIndex < 0 || sameKind.length < 2) {
+    return {
+      canMoveUp: false,
+      canMoveDown: false,
+      moveUpOrder: null,
+      moveDownOrder: null,
+      moveTopOrder: null,
+      moveBottomOrder: null,
+      sameKindCount: sameKind.length,
+      visualIndex,
+    };
+  }
+  const moveUpOrder = visualIndex > 0 ? trackOrderForHeaderDrop(state, trackId, sameKind[visualIndex - 1]!, 'before') : null;
+  const moveDownOrder = visualIndex < sameKind.length - 1 ? trackOrderForHeaderDrop(state, trackId, sameKind[visualIndex + 1]!, 'after') : null;
+  const moveTopOrder = visualIndex > 0 ? trackOrderForHeaderDrop(state, trackId, sameKind[0]!, 'before') : null;
+  const moveBottomOrder = visualIndex < sameKind.length - 1 ? trackOrderForHeaderDrop(state, trackId, sameKind[sameKind.length - 1]!, 'after') : null;
+  return {
+    canMoveUp: moveUpOrder !== null,
+    canMoveDown: moveDownOrder !== null,
+    moveUpOrder,
+    moveDownOrder,
+    moveTopOrder,
+    moveBottomOrder,
+    sameKindCount: sameKind.length,
+    visualIndex,
+  };
+}
+
+/** Resolve pointer Y against same-kind track rows, flipping no-op adjacent
+ *  halves so dragging onto an immediate neighbor always targets a real swap. */
+export function resolveTrackHeaderDrop(
+  state: TimelineState,
+  sourceId: TrackId,
+  rows: readonly TrackRowBounds[],
+  clientY: number,
+): ResolvedTrackHeaderDrop | null {
+  if (rows.length < 2) return null;
+  let chosen = rows[0]!;
+  for (const row of rows) {
+    chosen = row;
+    if (clientY <= row.bottom) break;
+  }
+  if (chosen.id === sourceId) return null;
+  const side: TrackDropSide = clientY < (chosen.top + chosen.bottom) / 2 ? 'before' : 'after';
+  const order = trackOrderForHeaderDrop(state, sourceId, chosen.id, side);
+  if (order !== null) return { targetId: chosen.id, side, order };
+  const flipped: TrackDropSide = side === 'before' ? 'after' : 'before';
+  const flippedOrder = trackOrderForHeaderDrop(state, sourceId, chosen.id, flipped);
+  return flippedOrder !== null ? { targetId: chosen.id, side: flipped, order: flippedOrder } : null;
+}
+
 /** Human-readable lane name distinguishing main, dedicated text, video, audio, and caption tracks. */
 export function trackDisplayLabel(
   state: TimelineState,

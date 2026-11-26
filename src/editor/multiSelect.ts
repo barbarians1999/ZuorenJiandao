@@ -4,14 +4,20 @@ import {
   canTrackAcceptItemKind, selectedIdsOf, timelineTrackIds, trackKind,
   type TimelineItem, type TimelineState, type TrackId,
 } from './types';
-import { moveLockedItemIds, removeItemsWithGroups } from './linkGroups';
+import { moveLockedItemIds, groupedItemIds, removeItemsWithGroups } from './linkGroups';
+import { foldMoveItemIds } from './foldGroups';
 import { clampMoveDeltaToTrackGaps } from './trackCollision';
+
+/** Expand any collapsed foldGroup members plus ordinary group/link locks for selection & move. */
+export function expandSelectionItemIds(state: TimelineState, seeds: readonly string[]): string[] {
+  return groupedItemIds(state, foldMoveItemIds(state, seeds));
+}
 
 /** Ids that should move together when dragging `primaryId` (the grab handle). */
 export function groupMoveIds(state: TimelineState, primaryId: string): string[] {
   const ids = selectedIdsOf(state);
   const seeds = ids.includes(primaryId) && ids.length > 1 ? ids : [primaryId];
-  return moveLockedItemIds(state, seeds);
+  return moveLockedItemIds(state, foldMoveItemIds(state, seeds));
 }
 
 export function selectableItemIdsAtPlayheadSide(
@@ -91,7 +97,7 @@ function prepareItemMove(
   ids: readonly string[],
   trackShift: { from: TrackId; to: TrackId } | null,
 ): PreparedItemMove | null {
-  const expanded = new Set(moveLockedItemIds(state, ids));
+  const expanded = new Set(moveLockedItemIds(state, foldMoveItemIds(state, ids)));
   const sourceItems = state.items.filter((item) => expanded.has(item.id));
   if (!sourceItems.length || sourceItems.some((item) => state.tracks?.[item.track]?.locked)) return null;
   const delta = trackDelta(state, trackShift);

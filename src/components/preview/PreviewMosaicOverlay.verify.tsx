@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { PlayerRef } from '@remotion/player';
-import { GAUSSIAN_MOSAIC_ID } from '../../editor/mosaic';
+import { GAUSSIAN_MOSAIC_ID, LOCAL_MOSAIC_ID } from '../../editor/mosaic';
 import type { TimelineItem, TimelineState } from '../../editor/types';
 import { PreviewMosaicOverlay } from './PreviewMosaicOverlay';
 
@@ -26,4 +26,24 @@ const full = { ...item, effects: [{ id: 'full', assetId: GAUSSIAN_MOSAIC_ID, ove
   center_x: .5, center_y: .5, width_ratio: 1, height_ratio: 1,
 } }] };
 assert(!renderToStaticMarkup(<PreviewMosaicOverlay {...props} state={{ ...state, items: [full] }} />).includes('data-mosaic-handle='));
-console.log('PreviewMosaicOverlay.verify: local target, handles, and ineligible states passed');
+
+// Pixel local mosaic & multi-mosaic selection switching
+const multiItem: TimelineItem = {
+  ...item,
+  effects: [
+    ...item.effects!,
+    { id: 'pixel-2', assetId: LOCAL_MOSAIC_ID, overrides: { center_x: .25, center_y: .75, width_ratio: .2, height_ratio: .2, block_size: 20, feather: 4 } },
+  ],
+};
+const multiState: TimelineState = { ...state, items: [multiItem] };
+const firstSelected = renderToStaticMarkup(<PreviewMosaicOverlay {...props} state={multiState} selectedEffectId="mosaic" />);
+assert.equal((firstSelected.match(/data-mosaic-handle=/g) ?? []).length, 9);
+assert(firstSelected.includes('data-mosaic-effect-id="mosaic"'));
+assert(firstSelected.includes('data-mosaic-select="pixel-2"'));
+
+const secondSelected = renderToStaticMarkup(<PreviewMosaicOverlay {...props} state={multiState} selectedEffectId="pixel-2" />);
+assert.equal((secondSelected.match(/data-mosaic-handle=/g) ?? []).length, 9);
+assert(secondSelected.includes('data-mosaic-effect-id="pixel-2"'));
+assert(secondSelected.includes('data-mosaic-select="mosaic"'));
+
+console.log('PreviewMosaicOverlay.verify: local target, pixel mosaic, multi-mosaic handles, and ineligible states passed');

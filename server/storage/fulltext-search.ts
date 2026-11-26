@@ -31,7 +31,7 @@ function openSearchConnection(): DatabaseSync | null {
     const path = storePath();
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const db = new DatabaseSync(path);
-    db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
+    db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;');
     db.exec(`CREATE TABLE IF NOT EXISTS ${STATE_TABLE} (
       k TEXT PRIMARY KEY,
       sha256 TEXT NOT NULL
@@ -110,14 +110,19 @@ function textOfProject(value: unknown): { captions: string; transcript: string }
 export function indexStoreKey(key: string, value: unknown): void {
   const db = openSearchConnection();
   if (!db) return;
-  if (!key.startsWith('chat:') && !key.startsWith('project:')) return;
-  const digest = sha256(JSON.stringify(value ?? null));
+  const isChat = key.startsWith('chat:');
+  if (!isChat && !key.startsWith('project:')) return;
+  const chatRows = isChat ? textOfChat(value) : null;
+  const projectText = !isChat ? textOfProject(value) : null;
+  const digest = isChat
+    ? sha256(JSON.stringify(chatRows))
+    : sha256(`${projectText!.captions}\u0000${projectText!.transcript}`);
   const state = db.prepare(`SELECT sha256 FROM ${STATE_TABLE} WHERE k = ?`).get(key) as
     | { sha256: string }
     | undefined;
   if (state && state.sha256 === digest) return;
 
-  const projectId = key.startsWith('chat:')
+  const projectId = isChat
     ? key.slice('chat:'.length)
     : key.slice('project:'.length);
 
@@ -127,16 +132,15 @@ export function indexStoreKey(key: string, value: unknown): void {
     const insert = db.prepare(
       `INSERT INTO ${FTS_TABLE} (kind, project_id, content, ref) VALUES (?, ?, ?, ?)`,
     );
-    if (key.startsWith('chat:')) {
-      for (const row of textOfChat(value)) {
+    if (isChat) {
+      for (const row of chatRows!) {
         const content = segmentForIndex(row.text);
         if (content) insert.run('chat', projectId, content, `${key}:${row.ref}`);
       }
     } else {
-      const { captions, transcript } = textOfProject(value);
-      const captionContent = segmentForIndex(captions);
+      const captionContent = segmentForIndex(projectText!.captions);
       if (captionContent) insert.run('caption', projectId, captionContent, `${key}:captions`);
-      const transcriptContent = segmentForIndex(transcript);
+      const transcriptContent = segmentForIndex(projectText!.transcript);
       if (transcriptContent) insert.run('transcript', projectId, transcriptContent, `${key}:transcript`);
     }
     db.prepare(

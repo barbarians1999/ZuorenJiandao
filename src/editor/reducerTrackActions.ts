@@ -93,6 +93,7 @@ export function applyTrackAction(
         selectedId: null,
         selectedIds: [],
         linkGroups: undefined,
+        foldGroups: undefined,
         multicamGroups: undefined,
       });
     case 'setCanvas': {
@@ -202,8 +203,8 @@ export function applyTrackAction(
       return captions ? withTrackCaptions(s, { ...captions, ...a.patch }, target) : s;
     }
     case 'setCaptionsHidden': {
-      // Global caption-system switch: captions off also hides on-screen text
-      // clips (render layer). Keep every caption track's enabled in sync.
+      // Global caption-track switch: controls caption tracks (C1/C2) only and
+      // keeps every caption track's enabled state in sync without hiding text clips.
       let next: TimelineState = { ...s, captionsHidden: a.hidden };
       const targets = captionTrackEntries(next);
       if (targets.length) {

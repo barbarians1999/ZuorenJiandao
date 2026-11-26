@@ -12,6 +12,34 @@ export function stableOverrideKeys(
     .map(([key]) => Number(key));
 }
 
+export function buildStableOverrideMap(
+  overrides: Record<number, CaptionWordOverride> | undefined,
+): Map<string, CaptionWordOverride> {
+  const stable = new Map<string, CaptionWordOverride>();
+  if (!overrides) return stable;
+  for (const override of Object.values(overrides)) {
+    if (override.wordRef && !stable.has(override.wordRef)) {
+      stable.set(override.wordRef, override);
+    }
+  }
+  return stable;
+}
+
+export function lookupCaptionWordOverride(
+  overrides: Record<number, CaptionWordOverride> | undefined,
+  stableByRef: ReadonlyMap<string, CaptionWordOverride>,
+  index: number,
+  wordRef: string,
+): CaptionWordOverride | undefined {
+  if (!overrides) return undefined;
+  if (wordRef) {
+    const stable = stableByRef.get(wordRef);
+    if (stable !== undefined) return stable;
+  }
+  const legacy = overrides[index];
+  return legacy?.wordRef ? undefined : legacy;
+}
+
 export function captionWordOverride(
   overrides: Record<number, CaptionWordOverride> | undefined,
   index: number,

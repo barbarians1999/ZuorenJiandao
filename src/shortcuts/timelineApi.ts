@@ -1,4 +1,4 @@
-import type { TimelineItem, TimelineLinkGroup, TrackFlags } from '../editor/types';
+import type { TimelineFoldGroup, TimelineItem, TimelineLinkGroup, TrackFlags } from '../editor/types';
 import type { FxClip } from '../components/timeline/ClipContextMenu';
 import type { EditMode } from '../components/timeline/timelineUtil';
 
@@ -53,5 +53,5 @@ export interface TimelineShortcutApi {
 }
 
 export type ItemClipboard =
-  | { kind: 'item'; item: TimelineItem; tracks?: Partial<Record<string, TrackFlags>>; sourceMainTrackId?: string | null; groups?: TimelineLinkGroup[]; /** multi-copy payload (optional) */ multi?: TimelineItem[] }
+  | { kind: 'item'; item: TimelineItem; tracks?: Partial<Record<string, TrackFlags>>; sourceMainTrackId?: string | null; groups?: TimelineLinkGroup[]; foldGroups?: TimelineFoldGroup[]; /** multi-copy payload (optional) */ multi?: TimelineItem[] }
   | null;

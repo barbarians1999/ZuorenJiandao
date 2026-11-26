@@ -1,7 +1,8 @@
 // Toolbar at the top of the timeline (translated verbatim from Timeline.tsx): Editing mode cluster / Drop track mode / Narration recording /
 // Play + time code / zoom cluster / aspect ratio / caption display / full screen. The timecode span is drawn by the playhead painter
 // timecodeRef direct writing (rAF frame), here only the initial value is rendered.
-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import type { PlayerRef } from '@remotion/player';
 import { theme } from '../../theme';
 import { Icon, type IconName } from '../icons';
 import { ASPECT_PRESETS, captionTrackEntries, type TimelineState } from '../../editor/types';
@@ -18,6 +19,7 @@ import { TrackCreateControl } from './TrackCreateControl';
 import { canSplitSelectedTimelineItem } from '../../editor/splitEligibility';
 import { mainTrackId } from '../../editor/magneticTimeline';
 import { sceneDetectionUnavailable } from '../../scene-detection/apply';
+import { planFillToNextTrackClip, planSpeedForTargetSeconds } from '../../editor/speedDuration';
 import { showAppToast } from '../../ui/appToast';
 
 function ToolSep() {
@@ -359,6 +361,7 @@ interface TimelineToolbarProps {
   timecodeRef: RefObject<HTMLSpanElement | null>;
   playheadRef: RefObject<number>;
   playheadFrame: number;
+  playerRef?: RefObject<PlayerRef | null>;
   total: number;
   captionsVisible: boolean;
   zoom: number;
@@ -368,9 +371,9 @@ interface TimelineToolbarProps {
   headerLeading?: ReactNode;
 }
 
-export function TimelineToolbar({
+export const TimelineToolbar = memo(function TimelineToolbar({
   state, commands, editMode, placeMode, setPlaceMode, snapping, hoverPreviewEnabled, setHoverPreviewEnabled,
-  recorder, canRecord, playing: _playing, timecodeRef, playheadRef, playheadFrame, total, captionsVisible,
+  recorder, canRecord, playing: _playing, timecodeRef, playheadRef, playheadFrame, playerRef, total, captionsVisible,
   zoom, zoomMin = MIN_TIME_ZOOM, setZoom, onPreviewCut, headerLeading,
 }: TimelineToolbarProps) {
   const t = useT();
@@ -397,31 +400,69 @@ export function TimelineToolbar({
     };
     update();
     if (!state.selectedId) return undefined;
-    const timer = window.setInterval(update, 80);
+    const player = playerRef?.current;
+    if (player) {
+      player.addEventListener('frameupdate', update);
+      player.addEventListener('seeked', update);
+      player.addEventListener('pause', update);
+      player.addEventListener('play', update);
+      return () => {
+        player.removeEventListener('frameupdate', update);
+        player.removeEventListener('seeked', update);
+        player.removeEventListener('pause', update);
+        player.removeEventListener('play', update);
+      };
+    }
+    const timer = window.setInterval(update, 160);
     return () => window.clearInterval(timer);
-  }, [playheadRef, state]);
-  const speedItem = state.items.find((item) => (
-    item.id === state.selectedId && (item.kind === 'video' || item.kind === 'audio' || item.kind === 'sequence')
-  )) ?? null;
-  const sceneItem = state.items.find((item) => (
-    item.id === state.selectedId && item.kind === 'video'
-  )) ?? null;
-  const sceneUnavailable = sceneDetectionUnavailable(state, sceneItem);
-  const trackingItem = state.items.find((item) => (
-    item.id === state.selectedId
-    && item.kind === 'video'
-    && /^\/media\/uploads\//.test(item.src ?? '')
-  )) ?? null;
+  }, [playheadRef, playerRef, state]);
+  const pendingZoomRef = useRef<number | null>(null);
+  const zoomRafRef = useRef(0);
+  const setZoomRef = useRef(setZoom);
+  setZoomRef.current = setZoom;
+  useEffect(() => () => {
+    if (zoomRafRef.current) cancelAnimationFrame(zoomRafRef.current);
+  }, []);
+  const speedItem = useMemo(
+    () => state.items.find((item) => (
+      item.id === state.selectedId && (item.kind === 'video' || item.kind === 'audio' || item.kind === 'sequence')
+    )) ?? null,
+    [state.items, state.selectedId],
+  );
+  const speedFillPlan = useMemo(
+    () => (speedItem ? planFillToNextTrackClip(state, speedItem.id) : null),
+    [speedItem, state],
+  );
+  const sceneItem = useMemo(
+    () => state.items.find((item) => item.id === state.selectedId && item.kind === 'video') ?? null,
+    [state.items, state.selectedId],
+  );
+  const sceneUnavailable = useMemo(
+    () => sceneDetectionUnavailable(state, sceneItem),
+    [sceneItem, state],
+  );
+  const trackingItem = useMemo(
+    () => state.items.find((item) => (
+      item.id === state.selectedId
+      && item.kind === 'video'
+      && /^\/media\/uploads\//.test(item.src ?? '')
+    )) ?? null,
+    [state.items, state.selectedId],
+  );
   const [sceneDetectionTargetId, setSceneDetectionTargetId] = useState<string | null>(null);
-  const sceneDetectionTarget = state.items.find((item) => item.id === sceneDetectionTargetId) ?? null;
+  const sceneDetectionTarget = useMemo(
+    () => (sceneDetectionTargetId ? state.items.find((item) => item.id === sceneDetectionTargetId) ?? null : null),
+    [sceneDetectionTargetId, state.items],
+  );
   const [motionTrackingOpen, setMotionTrackingOpen] = useState(false);
   const modalFocus = useFocusReturn();
-  const captionTracks = captionTrackEntries(state).filter((entry) => entry.captions);
+  const captionTracks = useMemo(
+    () => captionTrackEntries(state).filter((entry) => entry.captions),
+    [state],
+  );
   const activeAspect = ASPECT_PRESETS.find((preset) => preset.width === state.width && preset.height === state.height)?.label ?? `${state.width}:${state.height}`;
   const activeFit = state.fit === 'cover' ? t('裁切') : t('留边');
-  // On-screen text clips count as captions for the toggle (render-layer hidden with them).
-  const textClipCount = state.items.filter((item) => item.kind === 'text' || item.kind === 'motion-graphic').length;
-  const hasCaptions = captionTracks.length > 0 || textClipCount > 0;
+  const hasCaptions = captionTracks.length > 0;
   return (
     <>
       <div className="cc-timeline-toolbar">
@@ -431,7 +472,19 @@ export function TimelineToolbar({
       <span ref={timecodeRef} className="cc-timeline-timecode">{fmt(playheadFrame, state.fps)} / {fmt(total, state.fps)}</span>
       <div className="cc-timeline-view-controls">
       <TB icon="zoomOut" title={actionTitle(t('缩小时间轴'), 'zoom-out')} tipRight onClick={() => invokeAction('zoom-out', undefined, 'toolbar')} />
-      <input type="range" min={zoomMin} max={6} step="any" value={zoom} onChange={(e) => setZoom(Number(e.target.value))}
+      <input type="range" min={zoomMin} max={6} step="any" value={zoom}
+        onChange={(e) => {
+          pendingZoomRef.current = Number(e.target.value);
+          if (!zoomRafRef.current) {
+            zoomRafRef.current = requestAnimationFrame(() => {
+              zoomRafRef.current = 0;
+              if (pendingZoomRef.current !== null) {
+                setZoomRef.current(pendingZoomRef.current);
+                pendingZoomRef.current = null;
+              }
+            });
+          }
+        }}
         title={t('缩放时间轴')} aria-label={t('缩放时间轴')} aria-valuetext={`${Number((zoom * 100).toFixed(2))}%`} className="cc-timeline-zoom" />
       <TB icon="zoomIn" title={actionTitle(t('放大时间轴'), 'zoom-in')} tipRight onClick={() => invokeAction('zoom-in', undefined, 'toolbar')} />
       <TB icon="fit" title={actionTitle(t('适配视图'), 'zoom-fit')} tipRight onClick={() => invokeAction('zoom-fit', undefined, 'toolbar')} />
@@ -444,10 +497,8 @@ export function TimelineToolbar({
         onSetAspect={(width, height, fit) => commands.setAspect(width, height, fit)}
       />
       <button type="button" className={`cc-caption-toggle cc-tip cc-tip-r${captionsVisible ? ' active' : ''}`} data-tip={hasCaptions
-        ? captionTracks.length
-          ? t('字幕显示')
-          : t('字幕显示（画面有 {n} 个文字素材，关闭会一并隐藏）', { n: textClipCount })
-        : t('字幕显示（暂无字幕或文字素材）')} aria-label={t('字幕显示')} aria-pressed={captionsVisible} disabled={!hasCaptions} onClick={() => commands.setCaptionsHidden(captionsVisible)}><Icon name="captions" size={17} /><span>{captionsVisible ? t('字幕 开') : t('字幕 关')}</span></button>
+        ? t('字幕显示（仅控制字幕轨，不影响画面文字）')
+        : t('字幕显示（暂无字幕轨）')} aria-label={t('字幕显示')} aria-pressed={captionsVisible} disabled={!hasCaptions} onClick={() => commands.setCaptionsHidden(captionsVisible)}><Icon name="captions" size={17} /><span>{captionsVisible ? t('字幕 开') : t('字幕 关')}</span></button>
       </div>
       </div>
       </div>
@@ -500,7 +551,28 @@ export function TimelineToolbar({
           {recorder.recording && <span title={t('录音中')} style={{ width: 8, height: 8, borderRadius: '50%', background: theme.accent, animation: 'cc-rec-pulse 1.2s ease-out infinite', flexShrink: 0 }} />}
           <TimelineSpeedControl
             item={speedItem}
+            fps={state.fps}
+            fillPlan={speedFillPlan}
             onChange={(rate) => { if (speedItem) commands.setItemSpeed(speedItem.id, rate); }}
+            onDurationChange={(targetSeconds) => {
+              if (!speedItem) return;
+              const plan = planSpeedForTargetSeconds(speedItem, targetSeconds, state.fps);
+              if (!plan) return;
+              commands.setItemSpeed(speedItem.id, plan.rate);
+              if (plan.clamped) {
+                showAppToast(t('超出 0.1×–8× 变速范围，已调整为 {rate}×（{seconds} 秒）', {
+                  rate: Number(plan.rate.toFixed(2)),
+                  seconds: (plan.resultingFrames / Math.max(1, state.fps)).toFixed(2),
+                }));
+              }
+            }}
+            onFillToNext={() => {
+              if (!speedItem || !speedFillPlan?.ok) return;
+              commands.setItemSpeed(speedItem.id, speedFillPlan.rate);
+              if (speedFillPlan.remainingGapFrames > 0) {
+                showAppToast(t('已按最慢 0.10× 变速延长，仍有空隙未能完全填满'));
+              }
+            }}
           />
         </div>
       </div>
@@ -525,4 +597,4 @@ export function TimelineToolbar({
       )}
     </>
   );
-}
+});

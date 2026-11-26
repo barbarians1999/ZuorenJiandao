@@ -1,7 +1,10 @@
-import type { KeptSegment } from './edit';
+export interface SegmentLookupSpan {
+  srcStartFrame: number;
+  srcEndFrame: number;
+}
 
 /** Preserve first-match semantics for reordered/overlapping source segments. */
-export function wordSegmentLookup(segments: readonly KeptSegment[]): (start: number, end: number) => KeptSegment | undefined {
+export function wordSegmentLookup<T extends SegmentLookupSpan>(segments: readonly T[]): (start: number, end: number) => T | undefined {
   const ordered = segments.every((segment, index) =>
     Number.isFinite(segment.srcStartFrame) && Number.isFinite(segment.srcEndFrame)
     && segment.srcEndFrame >= segment.srcStartFrame

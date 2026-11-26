@@ -1,9 +1,11 @@
-import { canTrackAcceptItemKind, defaultTrackId, isEffectItemKind, isEffectTrack, isTextTrack, timelineTrackIds, trackKind, type TimelineState, type TrackFlags, type TrackVisualRole, type TimelineItem, type TimelineLinkGroup } from './types';
+import { canTrackAcceptItemKind, defaultTrackId, isDedicatedEffectItemKind, isEffectItemKind, isEffectTrack, isTextTrack, timelineTrackIds, trackKind, type TimelineFoldGroup, type TimelineState, type TrackFlags, type TrackVisualRole, type TimelineItem, type TimelineLinkGroup } from './types';
 import { attachToMainClip, mainTrackId, planDirectionalChange, planMagneticInsert, type MagneticPlan } from './magneticTimeline';
+import { cloneFoldGroupsForCopiedItems } from './foldGroups';
 
 export interface ClipPasteOptions {
   sourceMainTrackId?: string | null;
   groups?: readonly TimelineLinkGroup[];
+  foldGroups?: readonly TimelineFoldGroup[];
   /** Duplicate keeps original lanes instead of targeting the selected lane. */
   keepSourceTracks?: boolean;
 }
@@ -34,7 +36,10 @@ export function planClipPasteResult(state: TimelineState, clips: readonly Timeli
     const kind = members[0]!.kind === 'audio' ? 'audio' : 'video';
     const isTextGroup = kind === 'video' && members.every((clip) => clip.kind === 'text');
     const sourceWasEffect = sourceTracks?.[sourceId]?.visualRole === 'effect';
-    const isEffectGroup = kind === 'video' && !isTextGroup && sourceWasEffect && members.every((clip) => isEffectItemKind(clip.kind));
+    const isEffectGroup = kind === 'video' && !isTextGroup && (
+      members.every((clip) => isDedicatedEffectItemKind(clip.kind))
+      || (sourceWasEffect && members.every((clip) => isEffectItemKind(clip.kind)))
+    );
     const roleForLane: TrackVisualRole | undefined = isTextGroup ? 'text' : isEffectGroup ? 'effect' : undefined;
     const isValidTarget = (id: string) =>
       trackKind(state, id) === kind && members.every((clip) => canTrackAcceptItemKind(state, clip.kind, id, main))
@@ -97,7 +102,10 @@ export function planClipPasteResult(state: TimelineState, clips: readonly Timeli
       && other.startFrame + other.durationInFrames > clip.startFrame))) {
       const memberKind = members[0]!.kind === 'audio' ? 'audio' : 'video';
       const memberIsText = memberKind === 'video' && members.every((clip) => clip.kind === 'text');
-      const memberIsEffect = memberKind === 'video' && !memberIsText && sourceTracks?.[sourceId]?.visualRole === 'effect' && members.every((clip) => isEffectItemKind(clip.kind));
+      const memberIsEffect = memberKind === 'video' && !memberIsText && (
+        members.every((clip) => isDedicatedEffectItemKind(clip.kind))
+        || (sourceTracks?.[sourceId]?.visualRole === 'effect' && members.every((clip) => isEffectItemKind(clip.kind)))
+      );
       const target = createLane(sourceId, memberKind, memberIsText ? 'text' : memberIsEffect ? 'effect' : undefined);
       for (const clip of members) clip.track = target;
     }
@@ -116,8 +124,15 @@ export function planClipPasteResult(state: TimelineState, clips: readonly Timeli
   const copiedGroups = (options.groups ?? []).filter((group) => group.itemIds.every((id) => idMap.has(id))).map((group) => ({
     ...group, id: uid('group'), itemIds: group.itemIds.map((id) => idMap.get(id)!), anchorItemId: idMap.get(group.anchorItemId)!,
   }));
+  const copiedFoldGroups = cloneFoldGroupsForCopiedItems(
+    options.foldGroups,
+    idMap,
+    next.items.filter((clip) => copiedIds.has(clip.id)),
+    uid,
+  );
   next = { ...next,
     ...(copiedGroups.length ? { linkGroups: [...(next.linkGroups ?? []), ...copiedGroups] } : {}),
+    ...(copiedFoldGroups.length ? { foldGroups: [...(next.foldGroups ?? []), ...copiedFoldGroups] } : {}),
     selectedIds: copied.map((clip) => clip.id), selectedId: copied.at(-1)!.id,
   };
   const result = planDirectionalChange(state, next);

@@ -22,6 +22,8 @@ import { browserExecutable, resolveRenderGlBackend, withAbortableCompositionSele
 import { nativeOpaqueVideoSources, nativeVideoExperimentEnabled } from './native-video.mjs';
 import { tryDirectCutExport, inspectDirectCutExport } from './direct-cut.mjs';
 import { buildSparseOverlayPlan, inspectOverlayHybridExport, tryOverlayHybridExport } from './overlay-hybrid.mjs';
+import { localVideoPath } from './native-video.mjs';
+import { summarizeExportPreflight } from '../shared/export-route-plan.mjs';
 import { binariesDirectory, currentRenderConcurrency, remotionFfmpegPath, remotionCancelSignal } from './render-runtime.mjs';
 
 export { assertMaterializedRenderSnapshot } from './render-contract.mjs';
@@ -126,24 +128,70 @@ async function nativeVideoInput(state, project, signal) {
 /** @param {() => string} fn returns the absolute path of the current asset directory*/
 export function setUploadsDirProvider(fn) { uploadsDirProvider = fn; }
 
-/** Read-only eligibility for UI route selection; render rechecks the snapshot. */
-export async function inspectTimelineDirectExport(options) {
+/** Read-only eligibility + ffprobe-backed preflight summary for UI route selection. */
+export async function inspectTimelineExportCapabilities(options) {
   const uploadsDirectory = uploadsDirProvider();
-  const inspected = await inspectDirectCutExport({
+  const allowDirectCut = options.allowDirectCut !== false;
+  let hasUnresolvedMedia = false;
+  for (const item of options.state?.items ?? []) {
+    if (!item || options.state?.tracks?.[item.track]?.hidden) continue;
+    if ((item.kind === 'video' || item.kind === 'audio' || item.kind === 'gif') && typeof item.src === 'string' && item.src) {
+      if (!localVideoPath(item.src, uploadsDirectory, ASSETS_DIR) && !options.resolveMediaSource?.(item.src)) {
+        hasUnresolvedMedia = true;
+      }
+    }
+  }
+  const direct = allowDirectCut ? await inspectDirectCutExport({
     ...options,
     allowTextWindows: true,
     uploadsDirectory,
     assetsDirectory: ASSETS_DIR,
-  });
-  if (inspected) return inspected.plan.renderRoute ?? 'direct-cut';
-  const hybrid = await inspectOverlayHybridExport({
-    ...options,
+  }) : null;
+  let hybridDeclineReason;
+  const hybrid = !direct && options.codec === 'h264'
+    ? await inspectOverlayHybridExport({
+      ...options,
+      scale: options.scale ?? 1,
+      allowCompatSpans: true,
+      uploadsDirectory,
+      assetsDirectory: ASSETS_DIR,
+    }, { onDecline: (reason) => { hybridDeclineReason = reason; } })
+    : null;
+  const renderRoute = direct
+    ? (direct.plan.renderRoute ?? 'direct-cut')
+    : hybrid
+      ? (hybrid.plan.renderRoute ?? 'hybrid')
+      : null;
+  const preflight = summarizeExportPreflight({
+    state: options.state,
+    project: options.project,
+    timelineId: options.timelineId,
+    codec: options.codec,
+    fps: options.fps ?? options.state?.fps ?? 30,
+    frameRange: options.frameRange,
     scale: options.scale ?? 1,
-    allowCompatSpans: true,
-    uploadsDirectory,
-    assetsDirectory: ASSETS_DIR,
+    ...(direct
+      ? {
+        hybridPlan: {
+          eligible: true,
+          compatFrames: 0,
+          compatSpans: [],
+          compatReasons: [],
+          frames: direct.plan.totalFrames,
+        },
+      }
+      : hybrid
+        ? { hybridPlan: hybrid.plan }
+        : { hybridPlan: null, fallbackReason: hybridDeclineReason }),
+    probeStatus: hasUnresolvedMedia ? 'pending-media' : 'probed',
   });
-  return hybrid ? (hybrid.plan.renderRoute ?? 'hybrid') : null;
+  return { renderRoute, preflight };
+}
+
+/** Read-only eligibility for UI route selection; render rechecks the snapshot. */
+export async function inspectTimelineDirectExport(options) {
+  const { renderRoute } = await inspectTimelineExportCapabilities(options);
+  return renderRoute;
 }
 
 async function buildServeUrl() {

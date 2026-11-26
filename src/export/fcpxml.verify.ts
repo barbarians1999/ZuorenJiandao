@@ -4,7 +4,7 @@
 // ② The assets are converted to the absolute file:// path under mediaDir, otherwise the NLE is full of offline assets.
 import assert from 'node:assert/strict';
 import { resolveAssetSrc, timelineToFcpxml } from './fcpxml';
-import { keptSegments } from '../transcript/edit';
+import { reduce } from '../editor/reduce';
 import type { TimelineState } from '../editor/types';
 
 const clipsOf = (xml: string): string[] => xml.match(/<asset-clip[^>]*\/>/g) ?? [];
@@ -47,44 +47,49 @@ const attr = (el: string, name: string): string => el.match(new RegExp(`${name}=
   assert.equal(attr(clipsOf(xml)[0]!, 'lane'), '-1', '音频挂负 lane');
 }
 
-// ── P0-①: Audio transcript editing → multiple paragraphs, aligned with keptSegments one by one ──
+// ── P0-①: Audio transcript editing compiles to real sub-clips matching FCPXML <asset-clip>s ──
 {
-  // hello 0–1s | ummmm 1–3s(delete) | world 3–4s, timestamp is milliseconds
   const transcript = [
     { text: 'hello', start: 0, end: 1000 },
     { text: 'ummmm', start: 1000, end: 3000 },
     { text: 'world', start: 3000, end: 4000 },
   ];
-  const segs = keptSegments(transcript, new Set([1]), 30, 0, {});
-  const edited = segs.reduce((sum, seg) => sum + seg.durFrames, 0);
-  const state: TimelineState = {
+  const baseState: TimelineState = {
     fps: 30, width: 1920, height: 1080, selectedId: null,
     tracks: { A1: { kind: 'audio' } }, trackOrder: ['A1'],
     items: [{
-      id: 'vo', track: 'A1', startFrame: 0, durationInFrames: edited, kind: 'audio',
-      name: '配音', src: '/media/uploads/vo.wav', transcript, deletedWordIdx: [1],
+      id: 'vo', track: 'A1', startFrame: 0, durationInFrames: 120, kind: 'audio',
+      name: '配音', src: '/media/uploads/vo.wav', transcript,
     }],
   };
+  const state = reduce(baseState, { type: 'deleteWords', id: 'vo', idxs: [1] });
   const clips = clipsOf(timelineToFcpxml(state));
-  assert.equal(clips.length, segs.length, `导出段数须等于播放段数(${segs.length})`);
-  segs.forEach((seg, i) => {
-    assert.equal(attr(clips[i]!, 'offset'), `${seg.fromFrame}/30s`, `第 ${i + 1} 段时间线位置`);
-    assert.equal(attr(clips[i]!, 'duration'), `${seg.durFrames}/30s`, `第 ${i + 1} 段时长`);
-    assert.equal(attr(clips[i]!, 'start'), `${seg.srcStartFrame}/30s`, `第 ${i + 1} 段源入点`);
-  });
-  // Regression red line: deleted words must not be overwritten by a paragraph (source frames 30–90)
+  assert.equal(clips.length, 2, '删词后时间轴拆为 2 段，导出段数须等于轨道段数');
+  assert.equal(attr(clips[0]!, 'offset'), '0/30s');
+  assert.equal(attr(clips[0]!, 'duration'), '30/30s');
+  assert.equal(attr(clips[0]!, 'start'), '0/30s');
+  assert.equal(attr(clips[1]!, 'offset'), '30/30s');
+  assert.equal(attr(clips[1]!, 'duration'), '30/30s');
+  assert.equal(attr(clips[1]!, 'start'), '90/30s');
   const covers = clips.some((c) => {
     const s = Number(attr(c, 'start').split('/')[0]);
     const d = Number(attr(c, 'duration').split('/')[0]);
     return s < 90 && s + d > 30;
   });
   assert.ok(!covers, '删掉的口癖不得出现在任何一段里');
-  // The asset duration should cover the farthest source frame actually used (duration after editing 60 < used 120)
   const assetDur = timelineToFcpxml(state).match(/<asset [^>]*duration="([^"]*)"/)?.[1];
   assert.equal(assetDur, '120/30s', 'asset 时长按真实用到的源区间');
+  // Fractional sub-frame audio srcInFrame exports valid integer rational time in 48000Hz units
+  const subFrameState: TimelineState = {
+    fps: 30, width: 1920, height: 1080, selectedId: null,
+    tracks: { A1: { kind: 'audio' } }, trackOrder: ['A1'],
+    items: [{ id: 'sub-a', track: 'A1', startFrame: 0, durationInFrames: 30, srcInFrame: 30.48, kind: 'audio', name: 'SubFrameAudio', src: '/media/uploads/vo.wav' }],
+  };
+  const subXml = timelineToFcpxml(subFrameState);
+  assert.equal(attr(clipsOf(subXml)[0]!, 'start'), `${Math.round((30.48 / 30) * 48000)}/48000s`);
 }
 
-// ── The deletion of words in the video file does not change the picture → it is still a single segment (same semantics as the rendering layer) ──
+// ── Single continuous video clip stays 1 <asset-clip> ──────────────────────────
 {
   const state: TimelineState = {
     fps: 30, width: 1920, height: 1080, selectedId: null,
@@ -93,7 +98,6 @@ const attr = (el: string, name: string): string => el.match(new RegExp(`${name}=
       id: 'cam', track: 'V1', startFrame: 0, durationInFrames: 60, kind: 'video',
       name: '机位', src: '/media/uploads/cam.mp4',
       transcript: [{ text: 'a', start: 0, end: 1000 }, { text: 'b', start: 1000, end: 2000 }],
-      deletedWordIdx: [0],
     }],
   };
   assert.equal(clipsOf(timelineToFcpxml(state)).length, 1, 'video 件保持单段连续播放');

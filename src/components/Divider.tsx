@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { theme } from '../theme';
 import { useT } from '../i18n/locale';
 
@@ -18,12 +18,41 @@ export function Divider({ onResize, orientation = 'vertical', ariaValue, ariaVal
   const t = useT();
   const last = useRef<number | null>(null);
   const pointerId = useRef<number | null>(null);
+  const pendingDeltaRef = useRef(0);
+  const resizeRafRef = useRef(0);
+  const onResizeRef = useRef(onResize);
+  onResizeRef.current = onResize;
   const [active, setActive] = useState(false);
   const [hovered, setHovered] = useState(false);
   const horiz = orientation === 'horizontal';
   const axis = (e: React.PointerEvent) => (horiz ? e.clientY : e.clientX);
+  const flushPendingResize = () => {
+    if (resizeRafRef.current) {
+      cancelAnimationFrame(resizeRafRef.current);
+      resizeRafRef.current = 0;
+    }
+    const delta = pendingDeltaRef.current;
+    pendingDeltaRef.current = 0;
+    if (delta) onResizeRef.current(delta);
+  };
+  useEffect(() => () => {
+    if (resizeRafRef.current) {
+      cancelAnimationFrame(resizeRafRef.current);
+      resizeRafRef.current = 0;
+    }
+    pendingDeltaRef.current = 0;
+  }, []);
   const finishDrag = (cancelled: boolean) => {
     if (last.current === null) return;
+    if (cancelled) {
+      if (resizeRafRef.current) {
+        cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = 0;
+      }
+      pendingDeltaRef.current = 0;
+    } else {
+      flushPendingResize();
+    }
     last.current = null;
     pointerId.current = null;
     setActive(false);
@@ -43,6 +72,7 @@ export function Divider({ onResize, orientation = 'vertical', ariaValue, ariaVal
       aria-valuetext={ariaValue && ariaValueLabel ? `${t(ariaValueLabel)} ${Math.round(ariaValue.value * 10) / 10}%` : undefined}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
+        e.preventDefault();
         e.currentTarget.focus({ preventScroll: true });
         e.currentTarget.setPointerCapture(e.pointerId);
         pointerId.current = e.pointerId;
@@ -52,16 +82,30 @@ export function Divider({ onResize, orientation = 'vertical', ariaValue, ariaVal
       }}
       onPointerMove={(e) => {
         if (last.current == null) return;
+        if (pointerId.current !== null && e.pointerId !== pointerId.current) return;
         const cur = axis(e);
         const d = cur - last.current;
         last.current = cur;
-        if (d) onResize(d);
+        if (!d) return;
+        pendingDeltaRef.current += d;
+        if (!resizeRafRef.current) {
+          resizeRafRef.current = requestAnimationFrame(() => {
+            resizeRafRef.current = 0;
+            const delta = pendingDeltaRef.current;
+            pendingDeltaRef.current = 0;
+            if (delta) onResizeRef.current(delta);
+          });
+        }
       }}
       onPointerUp={(e) => {
+        if (pointerId.current !== null && e.pointerId !== pointerId.current) return;
         finishDrag(false);
         if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
       }}
-      onPointerCancel={() => finishDrag(true)}
+      onPointerCancel={(e) => {
+        if (pointerId.current !== null && e.pointerId !== pointerId.current) return;
+        finishDrag(true);
+      }}
       onLostPointerCapture={() => finishDrag(true)}
       onDoubleClick={() => { if (last.current === null) onReset?.(); }}
       onKeyDown={(event) => {

@@ -218,7 +218,6 @@ export function CaptionInspectorControls({ selection, onUpdate }: CaptionInspect
         <FontPicker value={fontScope === 'selected' ? target.preset.fontFamily : captions.styleOverride?.fontFamily ?? target.preset.fontFamily}
           targetKey={`${selection.trackId}:${fontTargetIdentity}:${fontScope}`}
           fontAssetId={fontScope === 'selected' ? target.preset.fontAssetId : captions.styleOverride?.fontAssetId}
-          sampleText={target.cue.text}
           mixed={fontScope === 'selected' && mixedFonts}
           onChange={(choice) => onUpdate(fontScope === 'selected'
             ? captionSelectedFontsPatch(captions, choice, fontTargets)

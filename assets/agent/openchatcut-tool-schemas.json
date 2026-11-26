@@ -620,7 +620,7 @@
           },
           "clearPlayOrder": {
             "type": "boolean",
-            "description": "set_play_order: when true, clear transcriptPlayOrder and restore chronological speech."
+            "description": "set_play_order: when true, restore chronological speech clip order on the track."
           },
           "lang": {
             "type": "string",
@@ -1519,7 +1519,7 @@
     },
     {
       "name": "read_captions",
-      "description": "Read one caption track's state and resolved pages. Pass captionTrackId as C1/C2 or a stable id; omit it for C1. Use list=true to discover every caption track.",
+      "description": "Read one caption track's state and resolved pages (plus `manualCues` with `{cueId, laneId, index, text, startMs, endMs}` when manual caption lanes exist). Pass captionTrackId as C1/C2 or a stable id; omit it for C1. Use list=true to discover every caption track.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -1536,7 +1536,7 @@
     },
     {
       "name": "edit_captions",
-      "description": "Manage the captions/subtitles overlay via a single `action`. Read text first only for display_text (use read_captions); every other action is one direct call.\n- enable / disable: toggle captions data (enable optionally takes a built-in `preset` name).\n- hide_overlay / show_overlay: global captionsHidden flag (toolbar 字幕显示) — hides on-screen caption overlay and text clips without wiping caption data; show_overlay re-enables.\n- template: no arg → list the 21 built-in presets; `templatePreset:\"netflix\"` → apply one (size/position preserved).\n- style: custom look via `json` — {font|fontFamily,sizePx|fontSizeRatio|fontSize,color,weight|fontWeight,fontStyle,textAlign|align,underline,strike,letterSpacing,lineHeight,strokeColor,strokeWidth,highlightColor,highlightBackground,shadow|shadowStrength,background|backgroundColor,backgroundOpacity,borderRadius,textTransform,displayMode,wordsPerPage,pacing}. Layered over the current template; unmapped fields are reported in `ignored`. sizePx is relative to CANVAS height — on 9:16 vertical (1080×1920) social captions want sizePx ≥ 86 (≈4.5% of height); leave size unset to keep the template default. pacing: 'phrase' (default, readable pages + karaoke highlight) — only use 'word' when the user explicitly wants single-word pop.\n- animation: deterministic burn-in motion shared by preview/export; set `motionPreset` to none, fade-up, pop, word-pop, or karaoke-pulse.\n- layout: place the whole block via `json` {preset:\"bottom-center|top-center|center|…3×3\", offsetXRatio, offsetYRatio, scale, rotation, opacity}; transforms may also be nested as `{transforms:{scale,rotation,opacity}}`.\n- display_text: per-word DISPLAY overrides via `json` {overrides:[{wordRef, text, hidden, forcePageBreak}], clearOverrides} — get the opaque wordRef from read_captions. wordIndex remains a legacy fallback; wordRef is stable across regrouping and source reorder. Set clear:true on an entry to clear that word by either selector. Doesn't touch the transcript.\n- source_set / source_add / source_remove / source_list: choose which transcribed track(s)/item(s) the captions read (json {mode:\"timeline\"} for all audible, or {sources:[{trackId|itemId}]}).\n  Multi-source entries accept a 0-based trackOrder. source_update can move an existing source with {sourceId|index, trackOrder}; source_list returns the normalized visual order.\n- language_mode / bilingual: switch caption language — json {mode:\"original|translation|bilingual\", languageCode} (create the translation first with manage_transcript translate).\n- track: legacy single-source trackId or internal 0-based trackOrder (prefer source_set for visible text sources).\n- layout_policy / positions / source_update: arrange, style, hide, and reorder individual source lanes. preset_* manages user-saved caption styles.",
+      "description": "Manage the captions/subtitles overlay via a single `action`. Read text first only for display_text (use read_captions); every other action is one direct call.\n- enable / disable: toggle captions data (enable optionally takes a built-in `preset` name, `skipAvoidance: true` to skip auto subject-avoidance analysis on long videos, or `json:{manual:true}` to enable an empty manual caption track without ASR).\n- hide_overlay / show_overlay: global captionsHidden flag (toolbar 字幕显示) — hides on-screen caption track overlay without wiping caption data or affecting video-track text clips; show_overlay re-enables.\n- cue_add / cue_update / cue_remove: create, edit, or delete individual manual subtitle cues directly in the caption track (visible in Caption List). cue_add json: {text, startMs, endMs?, laneId?} or {cues:[{text, startMs, endMs?}], laneId?} (auto-enables a manual caption track if off). cue_update json: {cueId|index, laneId?, text?, startMs?, endMs?} or {cues:[...]}. cue_remove json: {cueId} | {cueIds:[...]} | {laneId?, index} | {laneId?, clearAll:true}.\n- import_srt: import UTF-8 SRT subtitle text directly into a caption track via json {srt|content, name?, mode?:\"create_track\"|\"replace\"|\"append_lane\", createTrack?}.\n- paste_transcript: align pasted full script text against a transcribed speech track into a caption track via json {script|text, trackId?, name?, mode?:\"create_track\"|\"replace\"|\"append_lane\", createTrack?}.\n- template: no arg → list the 21 built-in presets; `templatePreset:\"netflix\"` → apply one (size/position preserved).\n- style: custom look via `json` — {font|fontFamily,sizePx|fontSizeRatio|fontSize,color,weight|fontWeight,fontStyle,textAlign|align,underline,strike,letterSpacing,lineHeight,strokeColor,strokeWidth,highlightColor,highlightBackground,shadow|shadowStrength,background|backgroundColor,backgroundOpacity,borderRadius,textTransform,displayMode,wordsPerPage,pacing}. Layered over the current template; unmapped fields are reported in `ignored`. sizePx is relative to CANVAS height — on 9:16 vertical (1080×1920) social captions want sizePx ≥ 86 (≈4.5% of height); leave size unset to keep the template default. pacing: 'phrase' (default, readable pages + karaoke highlight) — only use 'word' when the user explicitly wants single-word pop.\n- animation: deterministic burn-in motion shared by preview/export; set `motionPreset` to none, fade-up, pop, word-pop, or karaoke-pulse.\n- layout: place the whole block via `json` {preset:\"bottom-center|top-center|center|…3×3\", offsetXRatio, offsetYRatio, scale, rotation, opacity}; transforms may also be nested as `{transforms:{scale,rotation,opacity}}`.\n- display_text: per-word DISPLAY overrides via `json` {overrides:[{wordRef, text, hidden, forcePageBreak}], clearOverrides} — get the opaque wordRef from read_captions. wordIndex remains a legacy fallback; wordRef is stable across regrouping and source reorder. Set clear:true on an entry to clear that word by either selector. Doesn't touch the transcript.\n- source_set / source_add / source_remove / source_list: choose which transcribed track(s)/item(s) the captions read (json {mode:\"timeline\"} for all audible, or {sources:[{trackId|itemId}]}).\n  Multi-source entries accept a 0-based trackOrder. source_update can move an existing source with {sourceId|index, trackOrder}; source_list returns the normalized visual order.\n- language_mode / bilingual: switch caption language — json {mode:\"original|translation|bilingual\", languageCode} (create the translation first with manage_transcript translate).\n- track: legacy single-source trackId or internal 0-based trackOrder (prefer source_set for visible text sources).\n- layout_policy / positions / source_update: arrange, style, hide, and reorder individual source lanes. preset_* manages user-saved caption styles.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -1547,6 +1547,11 @@
               "disable",
               "hide_overlay",
               "show_overlay",
+              "cue_add",
+              "cue_update",
+              "cue_remove",
+              "import_srt",
+              "paste_transcript",
               "display_text",
               "template",
               "style",
@@ -1619,6 +1624,10 @@
           "captionsItemId": {
             "type": "string",
             "description": "Legacy alias for captionTrackId."
+          },
+          "skipAvoidance": {
+            "type": "boolean",
+            "description": "For action=enable/source_set/source_add: skip automatic whole-video face/subject avoidance geometry analysis (recommended for long videos to avoid timeouts; default false)."
           }
         },
         "required": [
@@ -4113,7 +4122,7 @@
     },
     {
       "name": "read_captions",
-      "description": "Read one caption track's state and resolved pages. Pass captionTrackId as C1/C2 or a stable id; omit it for C1. Use list=true to discover every caption track.",
+      "description": "Read one caption track's state and resolved pages (plus `manualCues` with `{cueId, laneId, index, text, startMs, endMs}` when manual caption lanes exist). Pass captionTrackId as C1/C2 or a stable id; omit it for C1. Use list=true to discover every caption track.",
       "input_schema": {
         "type": "object",
         "properties": {

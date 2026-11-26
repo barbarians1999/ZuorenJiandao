@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { PlayerRef } from '@remotion/player';
-import type { TimelineItem, TrackId } from '../editor/types';
+import type { TimelineFoldGroup, TimelineItem, TrackId } from '../editor/types';
 import { emitSelectionRef, transcriptRefFromDomSelection, useSelectionRefMode } from '../agent/selection-refs';
 import { useTranscript } from './useTranscript';
 import { wordTimelineFrame } from './edit';
+import { resolveTranscriptUnit } from './trackEditCompiler';
 import { preferredTranscriptionProvider } from './provider';
 import { hasOperationalTranscript, type TranscriptWord } from './types';
 import { analyzeSilences } from './segment';
@@ -22,6 +23,7 @@ interface TranscriptPanelProps {
   playerRef: RefObject<PlayerRef | null>;
   fps: number;
   items: TimelineItem[];
+  foldGroups?: TimelineFoldGroup[];
   /** ordered tracks with A1/V1 aliases from EditorCore */
   trackOptions: TranscriptTrackOption[];
   onSetItemTranscript: (id: string, words: TranscriptWord[]) => void;
@@ -38,7 +40,7 @@ interface TranscriptPanelProps {
 const MANY_CLIPS = 10;
 
 export function TranscriptPanel({
-  playerRef, fps, items, trackOptions,
+  playerRef, fps, items, foldGroups, trackOptions,
   onSetItemTranscript, onToggleWord, onCleanScript, onSetGapCap, onSetTranscriptPlayOrder, onReorderTrackItems, onClearEdits,
   onImportSrt, onOpenCaptionStyles,
 }: TranscriptPanelProps) {
@@ -95,10 +97,14 @@ export function TranscriptPanel({
     || clips[0]
     || null;
 
+  const focusUnit = useMemo(
+    () => (focusItem ? resolveTranscriptUnit({ items, foldGroups, fps }, focusItem.id) : null),
+    [items, foldGroups, fps, focusItem],
+  );
   const editable = hasOperationalTranscript(focusItem);
   /** any clip on the track already has words (not only the focused chip) */
   const trackHasWords = transcribed.length > 0;
-  const focusDeleted = new Set(focusItem?.deletedWordIdx ?? []);
+  const focusDeleted = focusUnit?.deletedSet ?? new Set<number>();
 
   // Tracks that actually have media (for selector)
   const selectable = useMemo(
@@ -353,8 +359,9 @@ export function TranscriptPanel({
             )}
             <div className="cc-tx-sections">
               {sectionsToShow.map((c) => {
-                const cWords = c.transcript ?? [];
-                const cDel = new Set(c.deletedWordIdx ?? []);
+                const unit = resolveTranscriptUnit({ items, foldGroups, fps }, c.id);
+                const cWords = unit?.canonicalWords ?? c.transcript ?? [];
+                const cDel = unit?.deletedSet ?? new Set<number>();
                 const active = focusItem?.id === c.id;
                 const operational = hasOperationalTranscript(c);
                 const idx = clips.findIndex((x) => x.id === c.id);
@@ -416,7 +423,7 @@ export function TranscriptPanel({
                       <span className="cc-tx-muted">
                         {(c.durationInFrames / fps).toFixed(1)}s
                         {cWords.length ? t(' · {n} 词', { n: cWords.length }) : t(' · 未转写')}
-                        {c.transcriptStale ? t(' · 转写已失效，仅供查看') : c.transcriptPlayOrder?.length ? t(' · 已重排语段') : ''}
+                        {c.transcriptStale ? t(' · 转写已失效，仅供查看') : unit?.playOrder?.length ? t(' · 已重排语段') : ''}
                       </span>
                     </header>
                     {!cWords.length ? (
@@ -427,34 +434,30 @@ export function TranscriptPanel({
                         deleted={cDel}
                         editMode={editMode && active && operational}
                         fps={fps}
-                        gapCapsMs={c.gapCapsMs}
-                        silenceFrames={c.silenceFrames}
-                        playOrder={c.transcriptPlayOrder}
+                        gapCapsMs={unit?.gapCapsMs}
+                        playOrder={unit?.playOrder}
                         minDisplayMs={minDisplayMs}
                         onWord={(w) => {
                           if (pickMode) return; // selection mode: words are for drag-select, not seek/delete
                           if (!operational) return;
                           setFocusItemId(c.id);
-                          if (editMode) onToggleWord(c.id, w.gi);
-                          // Project the SOURCE word through the same math the
-                          // render layer uses — naive startFrame+msToFrame is
-                          // wrong on split/trimmed/edited/rate-stretched clips.
-                          else playerRef.current?.seekTo(wordTimelineFrame(c, w, fps) ?? c.startFrame);
+                          if (editMode) onToggleWord(unit?.anchorItemId ?? c.id, w.gi);
+                          else playerRef.current?.seekTo(unit?.wordFrameByIndex.get(w.gi)?.fromFrame ?? wordTimelineFrame(c, w, fps) ?? c.startFrame);
                         }}
                         onDeleteGap={(afterGi) => {
                           if (!operational) return;
                           setFocusItemId(c.id);
-                          onSetGapCap(c.id, afterGi, 0);
+                          onSetGapCap(unit?.anchorItemId ?? c.id, afterGi, 0);
                         }}
                         onCapGap={(afterGi, maxMs) => {
                           if (!operational) return;
                           setFocusItemId(c.id);
-                          onSetGapCap(c.id, afterGi, maxMs);
+                          onSetGapCap(unit?.anchorItemId ?? c.id, afterGi, maxMs);
                         }}
                         onReorderSpeech={(order) => {
                           if (!operational) return;
                           setFocusItemId(c.id);
-                          onSetTranscriptPlayOrder(c.id, order);
+                          onSetTranscriptPlayOrder(unit?.anchorItemId ?? c.id, order);
                         }}
                       />
                     )}

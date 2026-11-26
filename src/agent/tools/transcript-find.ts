@@ -1,14 +1,8 @@
 import type { AgentContext } from '../context';
 import { resolveTrackId, trackAlias, type TimelineItem, type TimelineState } from '../../editor/types';
-import { itemEditOpts, itemWindow, keptSegments, type EditOpts } from '../../transcript/edit';
+import { sourceFramesToTimelineFrames, sourceWindowForTimelineRange } from '../../editor/sourceLimit';
+import { resolveTranscriptUnitsForItems } from '../../transcript/trackEditCompiler';
 import { hasOperationalTranscript, msToFrame, type TranscriptWord } from '../../transcript/types';
-
-// find_transcript — Parameter surface: query (required) + asset / track / fuzzy /
-// includeWordTimestamps/limit. Time coordinate query: Locate when a sentence was spoken, and
-// B-roll/MG/marker/overlay anchor to that moment. The timeline mode respects clipping (deleting words no longer hits);
-// Asset mode checks asset RAW transcription (library query, ignores clipping). Word→frame conversion is shared with the playback layer
-// keptSegments to keep word frames consistent. The transcriptSegments of markers are also reused
-// makeWordFrameMapper, the two anchoring semantics are always consistent.
 
 type Args = Record<string, unknown>;
 
@@ -41,27 +35,22 @@ export function findPhrase(words: TranscriptWord[], query: string): { start: num
   return { start: s, count: e - s + 1 };
 }
 
-// ── word → timeline frame mapping (the same set of keptSegments mathematics as the TimelineComposition playback layer)──
-
-/** Word-level frame mapping of a clip: gi → timeline {fromFrame,toFrame}; deleted/compressed words → null. */
+/** Word-level frame mapping of a clip strictly via its continuous media window. */
 export function makeWordFrameMapper(item: TimelineItem, fps: number): (gi: number) => { fromFrame: number; toFrame: number } | null {
   if (!hasOperationalTranscript(item)) return () => null;
   const words = item.transcript ?? [];
-  const deleted = new Set(item.deletedWordIdx ?? []);
-  // The trimmed words no longer produce frame bits (consistent with the playback layer)
-  const opts: EditOpts = { ...itemEditOpts(item), window: itemWindow(item) };
-  const segs = keptSegments(words, deleted, fps, item.startFrame, opts);
+  const win = sourceWindowForTimelineRange(item, 0, item.durationInFrames);
   return (gi: number) => {
     const w = words[gi];
-    if (!w || deleted.has(gi)) return null;
+    if (!w) return null;
     const wS = msToFrame(w.start, fps);
     const wE = msToFrame(w.end, fps);
-    const seg = segs.find((s) => wS >= s.srcStartFrame && wS < s.srcEndFrame)
-      ?? segs.find((s) => wS <= s.srcEndFrame && wE >= s.srcStartFrame);
-    if (!seg) return null;
-    const fromFrame = seg.fromFrame + (Math.max(wS, seg.srcStartFrame) - seg.srcStartFrame);
-    const toFrame = seg.fromFrame + (Math.min(wE, seg.srcEndFrame) - seg.srcStartFrame);
-    return { fromFrame, toFrame: Math.max(fromFrame, toFrame) };
+    if (wE <= win.startFrame || wS >= win.endFrame) return null;
+    const fromLocal = Math.round(sourceFramesToTimelineFrames(item, Math.max(wS, win.startFrame) - win.startFrame));
+    const toLocal = Math.round(sourceFramesToTimelineFrames(item, Math.min(wE, win.endFrame) - win.startFrame));
+    const fromFrame = item.startFrame + Math.max(0, fromLocal);
+    const toFrame = item.startFrame + Math.max(fromLocal, toLocal);
+    return { fromFrame, toFrame };
   };
 }
 
@@ -232,15 +221,17 @@ export function execFindTranscript(args: Args, ctx: AgentContext): unknown {
     return { error: trackQ ? `no transcript on ${trackQ}; call transcribe_track first` : 'no transcribed clip on the timeline; call transcribe_track first' };
   }
 
+  const units = resolveTranscriptUnitsForItems(state, items);
   const matches: NonNullable<ReturnType<typeof timelineMatchRow>>[] = [];
-  for (const it of items) {
+  for (const unit of units) {
     if (matches.length >= opts.limit) break;
-    const view = searchView(it.transcript!, new Set(it.deletedWordIdx ?? [])); // timeline mode respects clipping
+    const anchor = unit.clips[0]!;
+    const view = searchView(unit.canonicalWords, unit.deletedSet);
     const found = (opts.fuzzy ? fuzzyMatches : contiguousMatches)(view, opts.query, opts.limit - matches.length);
-    const mapper = makeWordFrameMapper(it, state.fps);
+    const mapper = (gi: number) => unit.wordFrameByIndex.get(gi) ?? null;
     for (const m of found) {
       if (matches.length >= opts.limit) break;
-      const row = timelineMatchRow(state, it, view, m, opts, mapper);
+      const row = timelineMatchRow(state, anchor, view, m, opts, mapper);
       if (row) matches.push(row);
     }
   }

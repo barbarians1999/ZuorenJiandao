@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { TimelineItem } from '../../editor/types';
 import { filmstripBackground, peaksPath, useClipPreview } from '../../media/clipPreview';
 import { filmstripDrawPlan } from '../../media/filmstripLayout';
@@ -14,6 +14,32 @@ import { clipMediaGeometry, type ClipMediaGeometry } from './clipMediaGeometry';
 const STRIP_RATIO = 0.62; // Video with sound: upper 62% frame bar, lower 38% sound wave
 const MAX_STRIP_IMAGE_CACHE = 40;
 const stripImageCache = new Map<string, HTMLImageElement>();
+
+const staggeredQueue: Array<() => void> = [];
+let staggeredRaf = 0;
+
+function flushStaggeredQueue() {
+  staggeredRaf = 0;
+  const deadline = performance.now() + 4.5;
+  let ran = 0;
+  while (staggeredQueue.length > 0 && (ran === 0 || (ran < 3 && performance.now() < deadline))) {
+    const task = staggeredQueue.shift()!;
+    ran += 1;
+    task();
+  }
+  if (staggeredQueue.length > 0) {
+    staggeredRaf = requestAnimationFrame(flushStaggeredQueue);
+  }
+}
+
+function enqueueStaggeredTask(task: () => void): () => void {
+  staggeredQueue.push(task);
+  if (!staggeredRaf) staggeredRaf = requestAnimationFrame(flushStaggeredQueue);
+  return () => {
+    const idx = staggeredQueue.indexOf(task);
+    if (idx >= 0) staggeredQueue.splice(idx, 1);
+  };
+}
 
 function acquireStripImage(stripUrl: string): HTMLImageElement {
   const cached = stripImageCache.get(stripUrl);
@@ -47,10 +73,13 @@ interface FilmstripPaintParams {
   srcInFrame: number;
   durationInFrames: number;
   playbackRate: number;
+  widthPx: number;
+  heightPx: number;
 }
 
-function FilmstripLayer({ geometry, hasWave, strip, stripUrl, metadata, fps, px, playbackRate }: {
+function FilmstripLayer({ geometry, heightPx, hasWave, strip, stripUrl, metadata, fps, px, playbackRate }: {
   geometry: ClipMediaGeometry;
+  heightPx: number;
   hasWave: boolean;
   strip: FilmstripStyle | null;
   stripUrl: string | null;
@@ -62,6 +91,8 @@ function FilmstripLayer({ geometry, hasWave, strip, stripUrl, metadata, fps, px,
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const paintParamsRef = useRef<FilmstripPaintParams | null>(null);
   const scheduleRef = useRef<(() => void) | null>(null);
+  const lastPaintedRef = useRef<{ stripUrl: string; px: number } | null>(null);
+  const zoomTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -74,9 +105,11 @@ function FilmstripLayer({ geometry, hasWave, strip, stripUrl, metadata, fps, px,
       srcInFrame: geometry.srcInFrame,
       durationInFrames: geometry.durationInFrames,
       playbackRate,
+      widthPx: geometry.widthPx,
+      heightPx,
     };
     // Static strips can number in the hundreds; avoid an accelerated layer per tiny canvas.
-    const context = canvas.getContext('2d', { willReadFrequently: true });
+    const context = canvas.getContext('2d');
     if (!context) return;
     const image = acquireStripImage(stripUrl);
     let disposed = false;
@@ -91,15 +124,14 @@ function FilmstripLayer({ geometry, hasWave, strip, stripUrl, metadata, fps, px,
         disposed || image.naturalWidth < meta.frameCount * meta.cellWidth
         || image.naturalHeight < meta.cellHeight
       ) return;
-      const rect = canvas.getBoundingClientRect();
-      if (!(rect.width > 0 && rect.height > 0)) return;
+      if (!(params.widthPx > 0 && params.heightPx > 0)) return;
       const scale = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-      const backingWidth = Math.max(1, Math.round(rect.width * scale));
-      const backingHeight = Math.max(1, Math.round(rect.height * scale));
+      const backingWidth = Math.max(1, Math.round(params.widthPx * scale));
+      const backingHeight = Math.max(1, Math.round(params.heightPx * scale));
       if (canvas.width !== backingWidth) canvas.width = backingWidth;
       if (canvas.height !== backingHeight) canvas.height = backingHeight;
       context.setTransform(scale, 0, 0, scale, 0, 0);
-      context.clearRect(0, 0, rect.width, rect.height);
+      context.clearRect(0, 0, params.widthPx, params.heightPx);
 
       const tiles = filmstripDrawPlan({
         durationMs: meta.durationMs,
@@ -111,8 +143,8 @@ function FilmstripLayer({ geometry, hasWave, strip, stripUrl, metadata, fps, px,
         srcInFrame: params.srcInFrame,
         durationInFrames: params.durationInFrames,
         playbackRate: params.playbackRate,
-        widthPx: rect.width,
-        heightPx: rect.height,
+        widthPx: params.widthPx,
+        heightPx: params.heightPx,
       });
       for (const tile of tiles) {
         context.drawImage(
@@ -122,6 +154,7 @@ function FilmstripLayer({ geometry, hasWave, strip, stripUrl, metadata, fps, px,
           tile.x, tile.y, tile.width, tile.height,
         );
       }
+      lastPaintedRef.current = { stripUrl: params.stripUrl, px: params.px };
     };
 
     const schedule = () => {
@@ -130,8 +163,6 @@ function FilmstripLayer({ geometry, hasWave, strip, stripUrl, metadata, fps, px,
     };
     scheduleRef.current = schedule;
 
-    const observer = new ResizeObserver(schedule);
-    observer.observe(canvas);
     const onLoad = () => schedule();
     if (!image.complete) image.addEventListener('load', onLoad, { once: true });
     else schedule();
@@ -140,7 +171,6 @@ function FilmstripLayer({ geometry, hasWave, strip, stripUrl, metadata, fps, px,
       if (raf) cancelAnimationFrame(raf);
       if (scheduleRef.current === schedule) scheduleRef.current = null;
       image.removeEventListener('load', onLoad);
-      observer.disconnect();
     };
   }, [stripUrl, metadata]);
 
@@ -154,10 +184,40 @@ function FilmstripLayer({ geometry, hasWave, strip, stripUrl, metadata, fps, px,
           srcInFrame: geometry.srcInFrame,
           durationInFrames: geometry.durationInFrames,
           playbackRate,
+          widthPx: geometry.widthPx,
+          heightPx,
         }
       : null;
-    scheduleRef.current?.();
-  }, [stripUrl, metadata, fps, px, geometry.srcInFrame, geometry.durationInFrames, playbackRate]);
+    if (zoomTimerRef.current !== null) {
+      window.clearTimeout(zoomTimerRef.current);
+      zoomTimerRef.current = null;
+    }
+    let cancelStagger: (() => void) | null = null;
+    const canvas = canvasRef.current;
+    const hasBitmap = !!canvas && canvas.width > 0 && canvas.height > 0;
+    const onlyZoomChanged = hasBitmap
+      && lastPaintedRef.current?.stripUrl === stripUrl
+      && lastPaintedRef.current?.px !== px;
+    if (onlyZoomChanged) {
+      zoomTimerRef.current = window.setTimeout(() => {
+        zoomTimerRef.current = null;
+        cancelStagger = enqueueStaggeredTask(() => {
+          cancelStagger = null;
+          scheduleRef.current?.();
+        });
+      }, 80);
+    } else {
+      scheduleRef.current?.();
+    }
+    return () => {
+      if (zoomTimerRef.current !== null) {
+        window.clearTimeout(zoomTimerRef.current);
+        zoomTimerRef.current = null;
+      }
+      cancelStagger?.();
+      cancelStagger = null;
+    };
+  }, [stripUrl, metadata, fps, px, geometry.srcInFrame, geometry.durationInFrames, geometry.widthPx, heightPx, playbackRate]);
 
   return (
     <div
@@ -175,8 +235,9 @@ function FilmstripLayer({ geometry, hasWave, strip, stripUrl, metadata, fps, px,
   );
 }
 
-function WaveLayer({ geometry, height, path, strip, video }: {
+function WaveLayer({ geometry, viewBoxWidth, height, path, strip, video }: {
   geometry: ClipMediaGeometry;
+  viewBoxWidth: number;
   height: number;
   path: string;
   strip: boolean;
@@ -186,7 +247,7 @@ function WaveLayer({ geometry, height, path, strip, video }: {
     <svg
       aria-hidden
       className={`cc-clip-wave${video ? ' on-video' : ''}`}
-      viewBox={`0 0 ${geometry.widthPx.toFixed(1)} ${height.toFixed(1)}`}
+      viewBox={`0 0 ${viewBoxWidth.toFixed(1)} ${height.toFixed(1)}`}
       preserveAspectRatio="none"
       style={{
         position: 'absolute', left: geometry.leftPx, width: geometry.widthPx, bottom: 0,
@@ -220,14 +281,47 @@ export const ClipMediaLayers = memo(function ClipMediaLayers({ item, px, fps, he
   const hasStrip = isVideo && !!preview?.stripUrl;
   const hasWave = (preview?.peaks.length ?? 0) > 0;
   const waveH = hasStrip && hasWave ? Math.max(6, height * (1 - STRIP_RATIO)) : height;
-  const d = useMemo(() => (
-    preview && geometry && hasWave && height > 0
+  const geoWidthPx = geometry?.widthPx ?? 0;
+  const geoSrcInFrame = geometry?.srcInFrame ?? 0;
+  const geoDurationInFrames = geometry?.durationInFrames ?? 0;
+  const [settledPx, setSettledPx] = useState(px);
+  const lastWaveRef = useRef<{ path: string; widthPx: number; px: number } | null>(null);
+  useEffect(() => {
+    if (px === settledPx) return;
+    if (!lastWaveRef.current?.path) {
+      setSettledPx(px);
+      return;
+    }
+    let cancelStagger: (() => void) | null = null;
+    const timer = window.setTimeout(() => {
+      cancelStagger = enqueueStaggeredTask(() => {
+        cancelStagger = null;
+        setSettledPx(px);
+      });
+    }, 80);
+    return () => {
+      window.clearTimeout(timer);
+      cancelStagger?.();
+      cancelStagger = null;
+    };
+  }, [px, settledPx]);
+
+  const zoomPending = px !== settledPx && !!lastWaveRef.current?.path;
+  const computedWave = useMemo(() => {
+    if (zoomPending && lastWaveRef.current) {
+      return lastWaveRef.current;
+    }
+    const path = preview && geoWidthPx > 0 && hasWave && height > 0
       ? peaksPath(preview, {
-          widthPx: geometry.widthPx, height: waveH, fps,
-          srcInFrame: geometry.srcInFrame, durationInFrames: geometry.durationInFrames, playbackRate,
+          widthPx: geoWidthPx, height: waveH, fps,
+          srcInFrame: geoSrcInFrame, durationInFrames: geoDurationInFrames, playbackRate,
         })
-      : ''
-  ), [preview, geometry, hasWave, height, waveH, fps, playbackRate]);
+      : '';
+    return { path, widthPx: geoWidthPx, px };
+  }, [zoomPending, preview, geoWidthPx, geoSrcInFrame, geoDurationInFrames, hasWave, height, waveH, fps, playbackRate, px]);
+  if (!zoomPending) {
+    lastWaveRef.current = computedWave.path ? computedWave : null;
+  }
 
   if (!preview || !geometry || height <= 0) return null;
 
@@ -239,6 +333,7 @@ export const ClipMediaLayers = memo(function ClipMediaLayers({ item, px, fps, he
     <>
       {hasStrip && <FilmstripLayer
         geometry={geometry}
+        heightPx={hasWave ? height * STRIP_RATIO : height}
         hasWave={hasWave}
         strip={strip}
         stripUrl={preview.stripUrl}
@@ -247,7 +342,16 @@ export const ClipMediaLayers = memo(function ClipMediaLayers({ item, px, fps, he
         px={px}
         playbackRate={playbackRate}
       />}
-      {d && <WaveLayer geometry={geometry} height={waveH} path={d} strip={hasStrip} video={isVideo} />}
+      {computedWave.path && (
+        <WaveLayer
+          geometry={geometry}
+          viewBoxWidth={computedWave.widthPx > 0 ? computedWave.widthPx : geoWidthPx}
+          height={waveH}
+          path={computedWave.path}
+          strip={hasStrip}
+          video={isVideo}
+        />
+      )}
     </>
   );
 });

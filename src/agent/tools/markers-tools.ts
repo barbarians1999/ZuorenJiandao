@@ -3,7 +3,7 @@ import type { AgentContext } from '../context';
 import { MARKER_HEX, type Marker, type MarkerColor, type Timeline, type TimelineState } from '../../editor/types';
 import { makeDraft } from '../../editor/store';
 import { buildModel, type SegRow } from '../../script/serialize';
-import { makeWordFrameMapper } from './transcript-find';
+import { resolveTranscriptUnit } from '../../transcript/trackEditCompiler';
 import { hasOperationalTranscript } from '../../transcript/types';
 import { resolveTimeline } from './timeline-target';
 
@@ -69,9 +69,10 @@ function resolveTranscriptSegments(state: TimelineState, spec: string, trackFilt
 
   const cand = candidates[0]!;
   const item = state.items.find((it) => it.id === cand.itemId);
-  if (!hasOperationalTranscript(item)) return { error: `转写区域对应的 clip ${cand.itemId} 已无当前转写,请重新 read_script` };
-  const deleted = new Set(item.deletedWordIdx ?? []);
-  const mapper = makeWordFrameMapper(item, state.fps);
+  const unit = item ? resolveTranscriptUnit(state, item.id) : null;
+  if (!unit && !hasOperationalTranscript(item)) return { error: `转写区域对应的 clip ${cand.itemId} 已无当前转写,请重新 read_script` };
+  const deleted = unit?.deletedSet ?? new Set<number>();
+  const mapper = (gi: number) => unit?.wordFrameByIndex.get(gi) ?? null;
   const firstRow = cand.rows.get(sns[0]!)!;
   const lastRow = cand.rows.get(sns[sns.length - 1]!)!;
   const firstGi = firstRow.wordGis.find((g) => !deleted.has(g));

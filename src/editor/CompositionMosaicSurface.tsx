@@ -11,13 +11,13 @@ import type { TimelineItem } from './types';
 const NO_TRANSFORMS: readonly MosaicMaskTransform[] = [];
 const SUPPORTED_KEYFRAMES = new Set(['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity']);
 
-function MaskReadiness({ source, onReady, onError }: {
-  source: string; onReady: (source: string) => void; onError: (source: string, message: string) => void;
+function MaskReadiness({ source, blockRender, onReady, onError }: {
+  source: string; blockRender: boolean; onReady: (source: string) => void; onError: (source: string, message: string) => void;
 }) {
-  const [handle] = useState(() => delayRender('Preparing composition mosaic mask'));
+  const [handle] = useState(() => (blockRender ? delayRender('Preparing composition mosaic mask') : null));
   useEffect(() => {
     let active = true, released = false, frame = 0;
-    const release = () => { if (!released) { released = true; continueRender(handle); } };
+    const release = () => { if (!released) { released = true; if (handle != null) continueRender(handle); } };
     const image = new Image(); image.src = source;
     image.decode().then(() => {
       if (!active) return;
@@ -41,9 +41,22 @@ export function CompositionMosaicSurface({ configuration, width, height, active,
   const id = `cc-composition-mosaic-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const value = useMemo(() => parseCompositionMosaic(configuration), [configuration]);
   const sizeValid = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0;
-  const matrix = useMemo(() => compositionMosaicMatrix(transforms, width, height), [height, transforms, width]);
-  const mask = useMemo(() => value && sizeValid && matrix ? compositionMosaicMaskAsset(value, width, height, matrix) : null,
-    [height, matrix, sizeValid, value, width]);
+  const transformsKey = transforms.map((t) => `${t.x},${t.y},${t.rotation},${t.scaleX},${t.scaleY}`).join(';');
+  const stableTransforms = useMemo(() => transforms, [transformsKey]);
+  const matrix = useMemo(() => compositionMosaicMatrix(stableTransforms, width, height), [height, stableTransforms, width]);
+  const mask = useMemo(() => {
+    if (!value || !sizeValid || !matrix) return null;
+    return compositionMosaicMaskAsset({
+      shape: value.shape,
+      centerX: value.centerX,
+      centerY: value.centerY,
+      width: value.width,
+      height: value.height,
+      strength: value.strength,
+      feather: value.feather,
+      opacity: 1,
+    }, width, height, matrix);
+  }, [height, matrix, sizeValid, value?.centerX, value?.centerY, value?.feather, value?.height, value?.shape, value?.width, width]);
   const strength = value?.strength ?? 70;
   const sigma = useMemo(() => compositionMosaicSigma({ strength }), [strength]);
   const [supported, setSupported] = useState<boolean | null>(null);
@@ -73,22 +86,34 @@ export function CompositionMosaicSurface({ configuration, width, height, active,
     if (failed && environment.isRendering) cancelRender(new Error(failureMessage ?? 'Composition mosaic configuration or renderer is unavailable'));
   }, [environment.isRendering, failed, failureMessage]);
 
+  const blurPad = Math.ceil(sigma * 3);
+  const blurX = mask ? Math.max(0, Math.floor(mask.x - blurPad)) : 0;
+  const blurY = mask ? Math.max(0, Math.floor(mask.y - blurPad)) : 0;
+  const blurW = mask ? Math.max(1, Math.min(width, Math.ceil(mask.x + mask.width + blurPad)) - blurX) : width;
+  const blurH = mask ? Math.max(1, Math.min(height, Math.ceil(mask.y + mask.height + blurPad)) - blurY) : height;
+  const maskX = mask ? Math.max(0, Math.floor(mask.x)) : 0;
+  const maskY = mask ? Math.max(0, Math.floor(mask.y)) : 0;
+  const maskW = mask ? Math.max(1, Math.min(width, Math.ceil(mask.x + mask.width)) - maskX) : width;
+  const maskH = mask ? Math.max(1, Math.min(height, Math.ceil(mask.y + mask.height)) - maskY) : height;
+
   const protection = value && sizeValid && matrix ? compositionMosaicProtectionRect(value, width, height, matrix)
     : { x: 0, y: 0, width: '100%', height: '100%' };
   return <div data-composition-mosaic={id} data-mosaic-status={!visible ? 'inactive' : failed ? 'failed' : filtered ? 'ready' : 'loading'}
     style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-    {mask && value && matrix && sizeValid && <svg width="0" height="0" aria-hidden="true" style={{ position: 'absolute' }}>
+    {visible && mask && value && matrix && sizeValid && <svg width="0" height="0" aria-hidden="true" style={{ position: 'absolute' }}>
       <defs>
         <filter id={id} filterUnits="userSpaceOnUse" primitiveUnits="userSpaceOnUse" x="0" y="0" width={width} height={height} colorInterpolationFilters="sRGB">
-        <feGaussianBlur in="SourceGraphic" stdDeviation={sigma} result="blurred" />
+        <feGaussianBlur x={blurX} y={blurY} width={blurW} height={blurH} edgeMode="duplicate" in="SourceGraphic" stdDeviation={sigma} result="blurred" />
         <feImage href={mask.source} x={mask.x} y={mask.y} width={mask.width} height={mask.height} preserveAspectRatio="none" result="shape" />
         <feComponentTransfer in="shape" result="region"><feFuncA type="linear" slope={value.opacity} /></feComponentTransfer>
-        <feComposite in="blurred" in2="region" operator="in" result="inside" />
+        <feComposite x={maskX} y={maskY} width={maskW} height={maskH} in="blurred" in2="region" operator="in" result="inside" />
         <feComposite in="SourceGraphic" in2="region" operator="out" result="outside" />
         <feComposite in="inside" in2="outside" operator="arithmetic" k2="1" k3="1" />
       </filter></defs>
     </svg>}
-    {visible && mask && supported !== false && <MaskReadiness key={mask.source} source={mask.source} onReady={onReady} onError={onError} />}
+    {(visible || !environment.isRendering) && mask && supported !== false && (
+      <MaskReadiness key={mask.source} source={mask.source} blockRender={environment.isRendering} onReady={onReady} onError={onError} />
+    )}
     <div style={{ position: 'absolute', inset: 0, filter: filtered ? `url(#${id})` : undefined }}>{children}</div>
     {visible && !filtered && <div data-mosaic-protection style={{ position: 'absolute', left: protection.x, top: protection.y,
       width: protection.width, height: protection.height, background: '#000' }} />}

@@ -10,6 +10,7 @@ import type { TimelineItem, TimelineState, TrackId } from '../editor/types';
 import type { EditorCommands } from '../editor/store';
 import { itemById, serializeTimeline, type Row, type SegRow, type SilenceRow } from './serialize';
 import { parseScript, type ParsedRun, type ParsedSegRow, type ParsedSilenceRow } from './parse';
+import { resolveTranscriptUnit } from '../transcript/trackEditCompiler';
 import { hasOperationalTranscript } from '../transcript/types';
 
 type Cmds = Pick<EditorCommands, 'deleteWords' | 'toggleWord' | 'removeItem' | 'moveItem' | 'setGapCap' | 'reorderTrackItems'>;
@@ -44,10 +45,11 @@ function consumeRun(words: { text: string }[], wi: number, run: ParsedRun, line:
 // plan of one transcript item's word edits
 interface WordPlan { item: TimelineItem; toDelete: number[]; toRestore: number[]; removeWhole: boolean }
 
-function planSegRows(item: TimelineItem, canonRows: SegRow[], parsedRows: ParsedSegRow[]): WordPlan {
-  if (!hasOperationalTranscript(item)) throw new Error(`「${item.name}」的转写已失效，请重新转写后再应用脚本编辑`);
-  const words = item.transcript!;
-  const currentDeleted = new Set(item.deletedWordIdx ?? []);
+function planSegRows(state: TimelineState, item: TimelineItem, canonRows: SegRow[], parsedRows: ParsedSegRow[]): WordPlan {
+  const unit = resolveTranscriptUnit(state, item.id);
+  if (!unit && !hasOperationalTranscript(item)) throw new Error(`「${item.name}」的转写已失效，请重新转写后再应用脚本编辑`);
+  const words = unit?.canonicalWords ?? item.transcript!;
+  const currentDeleted = unit?.deletedSet ?? new Set<number>();
   const bySn = new Map<number, ParsedSegRow>();
   for (const r of parsedRows) {
     if (r.occurrence !== undefined) throw new Error(`timeline.md 第 ${r.line} 行: [s${r.sn}@${r.occurrence}] 重复占位暂不支持`);
@@ -203,9 +205,10 @@ export function applyScript(getState: () => TimelineState, commands: Cmds, md: s
     }
     // plan word edits per transcript item (absent items → whole-item delete)
     for (const [itemId, canonRows] of canonSegByItem) {
-      const plan = planSegRows(items.get(itemId)!, canonRows, parsedSegByItem.get(itemId) ?? []);
+      const plan = planSegRows(base, items.get(itemId)!, canonRows, parsedSegByItem.get(itemId) ?? []);
       if (plan.removeWhole) {
-        removeIds.push(itemId);
+        const unit = resolveTranscriptUnit(base, itemId);
+        for (const c of unit?.clips ?? [plan.item]) removeIds.push(c.id);
         removed.push(`${plan.item.name}（整段口播）`);
       } else {
         if (plan.toDelete.length) changes.push(`${plan.item.name}: 删 ${plan.toDelete.length} 词`);

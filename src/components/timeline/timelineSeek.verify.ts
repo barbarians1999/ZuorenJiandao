@@ -115,6 +115,134 @@ assert.deepEqual(
   assert.deepEqual(seeks, [13, 16]);
 }
 
+{
+  // Decoder backpressure: do not flood seekTo while a video element is still decoding.
+  class ScrubVideoContainer extends EventTarget {
+    readonly videos: Array<{ seeking: boolean; readyState: number }> = [{ seeking: false, readyState: 4 }];
+    private readonly settleListeners = new Set<EventListenerOrEventListenerObject>();
+
+    override addEventListener(
+      type: string,
+      callback: EventListenerOrEventListenerObject | null,
+      options?: AddEventListenerOptions | boolean,
+    ): void {
+      super.addEventListener(type, callback, options);
+      if (type === 'seeked' && callback) this.settleListeners.add(callback);
+    }
+
+    override removeEventListener(
+      type: string,
+      callback: EventListenerOrEventListenerObject | null,
+      options?: EventListenerOptions | boolean,
+    ): void {
+      super.removeEventListener(type, callback, options);
+      if (type === 'seeked' && callback) this.settleListeners.delete(callback);
+    }
+
+    querySelectorAll(selector: string) {
+      return selector === 'video' ? this.videos : [];
+    }
+
+    get seekedListenerCount() {
+      return this.settleListeners.size;
+    }
+  }
+
+  let nextId = 0;
+  const callbacks = new Map<number, () => void>();
+  const runFrame = () => {
+    const scheduled = [...callbacks.values()];
+    callbacks.clear();
+    for (const callback of scheduled) callback();
+  };
+  let timerId = 0;
+  const timers = new Map<number, () => void>();
+  const container = new ScrubVideoContainer();
+  let nowMs = 1000;
+  let frame = 0;
+  const seeks: number[] = [];
+  let painted = 0;
+  const paint = (next: number) => { painted = next; };
+
+  const scrub = createTimelineScrubSeek(
+    () => ({
+      getCurrentFrame: () => frame,
+      isPlaying: () => false,
+      pause: () => {},
+      seekTo: (next) => {
+        frame = next;
+        seeks.push(next);
+        container.videos[0]!.seeking = true;
+      },
+      getContainerNode: () => container,
+    }),
+    (callback) => { callbacks.set(++nextId, callback); return nextId; },
+    (id) => callbacks.delete(id),
+    {
+      maxDecodeWaitMs: 180,
+      now: () => nowMs,
+      setTimer: (callback) => {
+        const id = ++timerId;
+        timers.set(id, callback);
+        return id as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: (id) => { timers.delete(id as unknown as number); },
+    },
+  );
+
+  scrub.move(10, paint);
+  runFrame();
+  assert.deepEqual(seeks, [10], 'first move seeks immediately');
+
+  nowMs = 1030;
+  scrub.move(20, paint);
+  runFrame();
+  scrub.move(30, paint);
+  runFrame();
+  assert.equal(painted, 30, 'playhead paints immediately even while video is seeking');
+  assert.deepEqual(seeks, [10], 'in-flight video seek is not aborted by rapid scrubbing');
+  assert.equal(scrub.pending, true);
+  assert.equal(container.seekedListenerCount, 1);
+
+  container.videos[0]!.seeking = false;
+  container.dispatchEvent(new Event('seeked'));
+  runFrame();
+  assert.deepEqual(seeks, [10, 30], 'settling flushes only the newest target frame');
+  assert.equal(container.seekedListenerCount, 0);
+
+  // Watchdog fallback forces a seek if a video stays stuck in seeking past maxDecodeWaitMs.
+  nowMs = 1050;
+  scrub.move(40, paint);
+  runFrame();
+  assert.deepEqual(seeks, [10, 30], 'still waiting before watchdog threshold');
+  const [watchdogId, watchdogFn] = [...timers.entries()][0]!;
+  assert.ok(watchdogId > 0 && watchdogFn);
+  nowMs = 1230;
+  watchdogFn();
+  runFrame();
+  assert.deepEqual(seeks, [10, 30, 40], 'watchdog expiration forces deferred seek');
+
+  // Commit immediately cancels wait and seeks to exact frame.
+  nowMs = 1240;
+  scrub.move(42, paint);
+  runFrame();
+  assert.equal(scrub.pending, true);
+  scrub.commit(45, paint);
+  assert.deepEqual(seeks, [10, 30, 40, 45]);
+  assert.equal(scrub.pending, false);
+  assert.equal(container.seekedListenerCount, 0);
+
+  // Cancel detaches listeners and restores player frame.
+  nowMs = 1250;
+  scrub.move(50, paint);
+  runFrame();
+  assert.equal(painted, 50);
+  scrub.cancel(paint);
+  assert.equal(painted, 45);
+  assert.equal(scrub.pending, false);
+  assert.equal(container.seekedListenerCount, 0);
+}
+
 type FrameListener = (event: { detail: { frame: number } }) => void;
 
 class MetadataContainer extends EventTarget {

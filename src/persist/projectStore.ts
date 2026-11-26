@@ -9,6 +9,7 @@ import {
   kvKeys as idbKeys,
   kvSet,
   kvSet as idbSet,
+  kvSyncRemoteEntry,
   kvPurgeProject,
   resetSharedKvMemory,
 } from './sharedKv';
@@ -20,6 +21,7 @@ import {
 } from './agentSessionGeneration';
 import { clearProjectSessionPrefs } from './sessionPrefs';
 import { dedupeAssets, normalizeTimelineTracks } from './migrations/normalize';
+import { hasLegacyTranscriptOrVirtualFields } from './migrations/legacyTranscriptTiming';
 import {
   runProjectMigrations,
   type ProjectMigrationOptions,
@@ -39,6 +41,40 @@ import {
 // shared by every local browser and dev port; Node checks use a memory fallback.
 const INDEX_KEY = 'projects';
 const projectKey = (id: string) => `project:${id}`;
+const legacyBackupKey = (id: string) => `project-legacy-backup:${id}`;
+
+function isLegacyTranscriptModelRaw(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  return (raw as { transcriptTimingModel?: unknown }).transcriptTimingModel !== 'track-ssot-v1'
+    && hasLegacyTranscriptOrVirtualFields(raw);
+}
+
+/**
+ * Write-once pre-migration backup for pre-`track-ssot-v1` projects.
+ * Never overwrites an existing backup snapshot.
+ */
+async function ensureLegacyProjectBackup(id: string, raw: unknown): Promise<void> {
+  if (!isLegacyTranscriptModelRaw(raw)) return;
+  try {
+    const existing = await idbGet<unknown>(legacyBackupKey(id));
+    if (existing !== undefined && existing !== null) return;
+    await idbSet(legacyBackupKey(id), {
+      backedUpAt: now(),
+      rawDoc: structuredClone(raw),
+    });
+  } catch {
+    // Backup persistence failure must never corrupt or block loading raw bytes.
+  }
+}
+
+export async function loadLegacyProjectBackup(id: string): Promise<{ backedUpAt: number; rawDoc: unknown } | null> {
+  try {
+    const val = await idbGet<{ backedUpAt: number; rawDoc: unknown }>(legacyBackupKey(id));
+    return val ?? null;
+  } catch {
+    return null;
+  }
+}
 
 
 async function persistProjectSnapshot(
@@ -85,6 +121,7 @@ export function docFromTimeline(ts: TimelineState, name = '序列 1'): ProjectDo
   const timeline = normalizeTimelineTracks({ ...state, id, name, order: 0 });
   return {
     version: CURRENT_PROJECT_VERSION,
+    ...(hasLegacyTranscriptOrVirtualFields({ timelines: [timeline] }) ? { transcriptTimingModel: 'track-ssot-v1' as const } : {}),
     assets: dedupeAssets(assets),
     mediaFolders: [],
     timelines: [timeline],
@@ -308,6 +345,7 @@ export async function loadRawProject(id: string): Promise<unknown> {
 export async function loadProject(id: string, options?: ProjectMigrationOptions): Promise<ProjectDoc | null> {
   try {
     const raw = await idbGet<unknown>(projectKey(id));
+    await ensureLegacyProjectBackup(id, raw);
     return migrateProjectDoc(raw, options);
   } catch {
     return null;
@@ -335,6 +373,25 @@ export async function loadProjectForEditing(
     return { status: 'unreadable' };
   }
   if (raw === undefined || raw === null) return { status: 'missing' };
+  await ensureLegacyProjectBackup(id, raw);
+  const doc = migrateProjectDoc(raw, options);
+  return doc ? { status: 'ok', doc } : { status: 'unreadable' };
+}
+
+/** Force-read the latest persisted project directly from the shared store
+ *  (bypassing in-memory TTL caches) for explicit user-triggered project sync. */
+export async function reloadProjectForEditing(
+  id: string,
+  options?: ProjectMigrationOptions,
+): Promise<ProjectLoadResult> {
+  let raw: unknown;
+  try {
+    raw = await kvSyncRemoteEntry<unknown>(projectKey(id));
+  } catch {
+    return { status: 'unreadable' };
+  }
+  if (raw === undefined || raw === null) return { status: 'missing' };
+  await ensureLegacyProjectBackup(id, raw);
   const doc = migrateProjectDoc(raw, options);
   return doc ? { status: 'ok', doc } : { status: 'unreadable' };
 }

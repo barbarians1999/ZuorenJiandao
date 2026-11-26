@@ -318,12 +318,18 @@ export function useTimelineZoomController(options: TimelineZoomControllerOptions
     element.scrollLeft = 0;
   }, [fps, rawSetZoom, scrollRef, totalFrames]);
 
+  const getExpectedScrollLeft = useCallback(
+    () => pendingScrollRef.current?.scrollLeft ?? scrollRef.current?.scrollLeft ?? 0,
+    [scrollRef],
+  );
+
   return {
     zoom,
     zoomMin: zoomLimits.min,
     setZoom: applyAnchoredZoom,
     zoomBy,
     fitToView,
+    getExpectedScrollLeft,
     pixelsPerFrame: PX_PER_FRAME * zoom,
     trackScale,
   };

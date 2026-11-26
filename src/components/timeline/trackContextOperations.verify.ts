@@ -4,6 +4,9 @@ import { selectableItemIdsOnTrackSide } from '../../editor/multiSelect';
 import { closeCaptionTrackGaps, trackClearPlan, trackContextMenuLabels } from './trackContextOperations';
 
 assert.deepEqual(trackContextMenuLabels('video').slice(0, 2), ['插入素材', '闭合缝隙']);
+assert.ok(trackContextMenuLabels('video').includes('整理轨道'));
+assert.ok(trackContextMenuLabels('audio').includes('整理轨道'));
+assert.ok(trackContextMenuLabels('caption').includes('整理轨道'));
 assert.ok(trackContextMenuLabels('video').includes('向左全选'));
 assert.ok(trackContextMenuLabels('video').includes('向右全选'));
 assert.ok(trackContextMenuLabels('audio').includes('人声与配乐'));

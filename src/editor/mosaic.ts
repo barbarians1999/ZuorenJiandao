@@ -118,8 +118,8 @@ export function mosaicRegionToStage(region: MosaicRegion, source: { width: numbe
     width: (right - left) / width, height: (bottom - top) / height };
 }
 export function mosaicTrackRegionToStatic(item: TimelineItem, region: MosaicRegion, fit: AspectFit,
-  canvas: { width: number; height: number }): MosaicRegion {
-  const track = mosaicTrackFor(item);
+  canvas: { width: number; height: number }, effectId?: string): MosaicRegion {
+  const track = effectId ? mosaicTrackForEffect(item, effectId) : mosaicTrackFor(item);
   if (!track) return region;
   const source = { width: track.sourceWidth, height: track.sourceHeight };
   const stage = visibleVisualFrameRect(canvas,
@@ -129,23 +129,48 @@ export function mosaicTrackRegionToStatic(item: TimelineItem, region: MosaicRegi
 export function mosaicEffectsAt(item: TimelineItem, localFrame: number, fit: AspectFit, stage: { width: number; height: number }): ClipEffect[] | undefined {
   const effects = item.effects;
   if (!effects) return effects;
-  const track = mosaicTrackFor(item);
-  if (!track) return effects;
-  const mosaic = readMosaicAt(item, localFrame);
-  if (mosaic.mode !== 'local' || mosaic.count !== 1) return effects;
-  const index = effects.findIndex((effect) => effect.assetId === GAUSSIAN_MOSAIC_ID);
-  const original = effects[index]!;
-  const size = { width: track.sourceWidth, height: track.sourceHeight };
-  const mapped = mosaicRegionToStage(mosaic.region, size, stage, fit);
-  if (!mapped) return effects.filter((_, at) => at !== index);
-  if (mapped.centerX === Number(original.overrides?.center_x ?? .5)
-    && mapped.centerY === Number(original.overrides?.center_y ?? .5)
-    && mapped.width === Number(original.overrides?.width_ratio ?? .35)
-    && mapped.height === Number(original.overrides?.height_ratio ?? .35)) return effects;
-  return effects.map((effect, at) => at === index ? { ...effect, overrides: {
-    ...effect.overrides, center_x: mapped.centerX, center_y: mapped.centerY,
-    width_ratio: mapped.width, height_ratio: mapped.height,
-  } } : effect);
+  const identity = mosaicSourceIdentity(item);
+  if (!identity) return effects;
+  let changed = false;
+  const next: ClipEffect[] = [];
+  for (const effect of effects) {
+    if (effect.assetId !== GAUSSIAN_MOSAIC_ID || !effect.mosaicTrack) {
+      next.push(effect);
+      continue;
+    }
+    const track = mosaicTrackForEffect(item, effect.id);
+    if (!track) {
+      next.push(effect);
+      continue;
+    }
+    const base = readSingleMosaicEffect(effect).region;
+    const center = evaluateMosaicTrack(track, sourceFrameAt(item, localFrame), identity);
+    const region = center ? normalizeMosaic({ ...base, ...center }) : base;
+    const mapped = mosaicRegionToStage(region, { width: track.sourceWidth, height: track.sourceHeight }, stage, fit);
+    if (!mapped) {
+      changed = true;
+      continue;
+    }
+    if (mapped.centerX !== Number(effect.overrides?.center_x ?? .5)
+      || mapped.centerY !== Number(effect.overrides?.center_y ?? .5)
+      || mapped.width !== Number(effect.overrides?.width_ratio ?? .35)
+      || mapped.height !== Number(effect.overrides?.height_ratio ?? .35)) {
+      changed = true;
+      next.push({
+        ...effect,
+        overrides: {
+          ...effect.overrides,
+          center_x: mapped.centerX,
+          center_y: mapped.centerY,
+          width_ratio: mapped.width,
+          height_ratio: mapped.height,
+        },
+      });
+    } else {
+      next.push(effect);
+    }
+  }
+  return changed ? next : effects;
 }
 export function setMosaicTrack(effects: readonly ClipEffect[], effectId: string, value: unknown): ClipEffect[] | null {
   const mosaic = readMosaic(effects);
@@ -179,6 +204,240 @@ export function setMosaicMode(effects: readonly ClipEffect[], mode: MosaicMode, 
   const strength = readMosaic(effects).region.strength;
   return setMosaicRegion(effects, { ...DEFAULT_MOSAIC, strength,
     ...(mode === 'full' ? { width: 1, height: 1 } : {}) }, newId);
+}
+
+export type MosaicStyle = 'gaussian' | 'pixel';
+export type MosaicAssetId = typeof GAUSSIAN_MOSAIC_ID | typeof LOCAL_MOSAIC_ID | typeof FULL_MOSAIC_ID;
+export interface ClipMosaicEntry {
+  id: string;
+  index: number;
+  assetId: MosaicAssetId;
+  style: MosaicStyle;
+  mode: 'local' | 'full';
+  /** Top-down UI coordinates (centerY: 0 = top, 1 = bottom). */
+  region: MosaicRegion;
+  blockSize: number;
+  tracked: boolean;
+}
+
+const STAGGERED_MOSAIC_CENTERS: ReadonlyArray<readonly [number, number]> = [
+  [0.5, 0.5],
+  [0.58, 0.56],
+  [0.42, 0.44],
+  [0.58, 0.44],
+  [0.42, 0.56],
+];
+
+const clampBlockSize = (value: unknown, mode: 'local' | 'full'): number => {
+  const min = mode === 'full' ? 2 : 1;
+  const max = mode === 'full' ? 80 : 200;
+  const fallback = mode === 'full' ? 12 : 20;
+  return Math.round(scalar(value, fallback, min, max));
+};
+
+function readSingleMosaicEffect(effect: ClipEffect): Omit<ClipMosaicEntry, 'index' | 'tracked'> {
+  const values = effect.overrides ?? {};
+  if (effect.assetId === FULL_MOSAIC_ID) {
+    return {
+      id: effect.id,
+      assetId: FULL_MOSAIC_ID,
+      style: 'pixel',
+      mode: 'full',
+      region: { ...DEFAULT_MOSAIC, centerX: .5, centerY: .5, width: 1, height: 1, feather: 0 },
+      blockSize: clampBlockSize(values.blockSize, 'full'),
+    };
+  }
+  if (effect.assetId === LOCAL_MOSAIC_ID) {
+    const shaderCenterY = scalar(values.center_y, .3, 0, 1);
+    const region = normalizeMosaic({
+      centerX: Number(values.center_x ?? .5),
+      centerY: 1 - shaderCenterY,
+      width: Number(values.width_ratio ?? .2),
+      height: Number(values.height_ratio ?? .2),
+      strength: DEFAULT_MOSAIC.strength,
+      feather: Number(values.feather ?? 4),
+    });
+    const full = region.centerX === .5 && region.centerY === .5 && region.width === 1 && region.height === 1 && region.feather === 0;
+    return {
+      id: effect.id,
+      assetId: LOCAL_MOSAIC_ID,
+      style: 'pixel',
+      mode: full ? 'full' : 'local',
+      region,
+      blockSize: clampBlockSize(values.block_size, 'local'),
+    };
+  }
+  const region = normalizeMosaic({
+    centerX: Number(values.center_x ?? .5),
+    centerY: Number(values.center_y ?? .5),
+    width: Number(values.width_ratio ?? .35),
+    height: Number(values.height_ratio ?? .35),
+    strength: Number(values.strength ?? 70),
+    feather: Number(values.feather ?? 0),
+  });
+  const full = region.centerX === .5 && region.centerY === .5 && region.width === 1 && region.height === 1 && region.feather === 0;
+  return {
+    id: effect.id,
+    assetId: GAUSSIAN_MOSAIC_ID,
+    style: 'gaussian',
+    mode: full ? 'full' : 'local',
+    region,
+    blockSize: 20,
+  };
+}
+
+function buildMosaicEffect(
+  id: string,
+  style: MosaicStyle,
+  mode: 'local' | 'full',
+  region: MosaicRegion,
+  blockSize: number,
+  previous?: ClipEffect,
+  preserveTrack = false,
+): ClipEffect {
+  const normalized = normalizeMosaic(region);
+  const previousOverrides = previous?.overrides ?? {};
+  if (style === 'pixel' && mode === 'full') {
+    return {
+      id,
+      assetId: FULL_MOSAIC_ID,
+      overrides: { blockSize: clampBlockSize(blockSize, 'full') },
+    };
+  }
+  if (style === 'pixel') {
+    return {
+      id,
+      assetId: LOCAL_MOSAIC_ID,
+      overrides: {
+        center_x: normalized.centerX,
+        center_y: Number((1 - normalized.centerY).toFixed(4)),
+        width_ratio: normalized.width,
+        height_ratio: normalized.height,
+        block_size: clampBlockSize(blockSize, 'local'),
+        feather: normalized.feather,
+      },
+    };
+  }
+  const gaussianRegion = mode === 'full'
+    ? { ...normalized, centerX: .5, centerY: .5, width: 1, height: 1, feather: 0 }
+    : normalized;
+  return {
+    id,
+    assetId: GAUSSIAN_MOSAIC_ID,
+    overrides: {
+      ...(previous?.assetId === GAUSSIAN_MOSAIC_ID ? previousOverrides : {}),
+      center_x: gaussianRegion.centerX,
+      center_y: gaussianRegion.centerY,
+      width_ratio: gaussianRegion.width,
+      height_ratio: gaussianRegion.height,
+      strength: gaussianRegion.strength,
+      feather: gaussianRegion.feather,
+    },
+    ...(preserveTrack && mode === 'local' && previous?.mosaicTrack ? { mosaicTrack: previous.mosaicTrack } : {}),
+  };
+}
+
+export function mosaicTrackForEffect(
+  item: TimelineItem,
+  effectId: string,
+): ClipEffectMosaicTrack | null {
+  const effect = item.effects?.find((entry) => entry.id === effectId);
+  if (!effect || effect.assetId !== GAUSSIAN_MOSAIC_ID) return null;
+  if (readSingleMosaicEffect(effect).mode !== 'local') return null;
+  const track = normalizeMosaicTrack(effect.mosaicTrack);
+  return track?.sourceIdentity === mosaicSourceIdentity(item) ? track : null;
+}
+
+export function listClipMosaics(
+  target: TimelineItem | readonly ClipEffect[],
+  localFrame?: number,
+): ClipMosaicEntry[] {
+  const item = Array.isArray(target) ? null : (target as TimelineItem);
+  const effects = Array.isArray(target) ? target : (item?.effects ?? []);
+  const identity = item ? mosaicSourceIdentity(item) : null;
+  let index = 0;
+  const entries: ClipMosaicEntry[] = [];
+  for (const effect of effects) {
+    if (!isMosaicEffect(effect)) continue;
+    index += 1;
+    const base = readSingleMosaicEffect(effect);
+    const tracked = Boolean(item && base.assetId === GAUSSIAN_MOSAIC_ID && base.mode === 'local' && mosaicTrackForEffect(item, effect.id));
+    let region = base.region;
+    if (tracked && item && localFrame !== undefined) {
+      const center = evaluateMosaicTrack(effect.mosaicTrack, sourceFrameAt(item, localFrame), identity);
+      if (center) region = normalizeMosaic({ ...region, ...center });
+    }
+    entries.push({ ...base, index, region, tracked });
+  }
+  return entries;
+}
+
+export function addClipMosaic(
+  effects: readonly ClipEffect[],
+  id: string,
+  options: { style?: MosaicStyle; mode?: 'local' | 'full'; assetId?: string } = {},
+): ClipEffect[] {
+  const existingCount = effects.filter(isMosaicEffect).length;
+  const [centerX, centerY] = STAGGERED_MOSAIC_CENTERS[existingCount % STAGGERED_MOSAIC_CENTERS.length]!;
+  if (options.assetId === FULL_MOSAIC_ID || (options.style === 'pixel' && options.mode === 'full')) {
+    return [...effects, buildMosaicEffect(id, 'pixel', 'full', DEFAULT_MOSAIC, 12)];
+  }
+  if (options.assetId === LOCAL_MOSAIC_ID || options.style === 'pixel') {
+    return [...effects, buildMosaicEffect(id, 'pixel', 'local', { ...DEFAULT_MOSAIC, centerX, centerY, width: .2, height: .2, feather: 4 }, 20)];
+  }
+  const mode = options.mode ?? 'local';
+  const region = mode === 'full' ? DEFAULT_MOSAIC : { ...DEFAULT_MOSAIC, centerX, centerY };
+  return [...effects, buildMosaicEffect(id, 'gaussian', mode, region, 20)];
+}
+
+export function updateClipMosaicById(
+  effects: readonly ClipEffect[],
+  effectId: string,
+  patch: {
+    style?: MosaicStyle;
+    mode?: 'local' | 'full';
+    region?: Partial<MosaicRegion>;
+    blockSize?: number;
+    preserveTrack?: boolean;
+  },
+): ClipEffect[] {
+  return effects.map((effect) => {
+    if (effect.id !== effectId || !isMosaicEffect(effect)) return effect;
+    const current = readSingleMosaicEffect(effect);
+    const nextStyle = patch.style ?? current.style;
+    const nextMode = patch.mode ?? current.mode;
+    let nextRegion = normalizeMosaic({ ...current.region, ...patch.region });
+    if (current.mode === 'full' && nextMode === 'local' && !patch.region) {
+      nextRegion = normalizeMosaic({
+        ...DEFAULT_MOSAIC,
+        strength: nextRegion.strength,
+        ...(nextStyle === 'pixel' ? { width: .2, height: .2, feather: 4 } : {}),
+      });
+    }
+    const nextBlockSize = patch.blockSize ?? current.blockSize;
+    return buildMosaicEffect(effect.id, nextStyle, nextMode, nextRegion, nextBlockSize, effect, patch.preserveTrack ?? false);
+  });
+}
+
+export function removeClipMosaicById(effects: readonly ClipEffect[], effectId: string): ClipEffect[] {
+  return effects.filter((effect) => effect.id !== effectId);
+}
+
+export function clearClipMosaicTrackById(
+  item: TimelineItem,
+  effectId: string,
+  localFrame: number,
+  fit: AspectFit,
+  canvas: { width: number; height: number },
+): ClipEffect[] {
+  const entry = listClipMosaics(item, localFrame).find((candidate) => candidate.id === effectId);
+  if (!entry) return item.effects ?? [];
+  const track = mosaicTrackForEffect(item, effectId);
+  if (!track) return updateClipMosaicById(item.effects ?? [], effectId, { region: entry.region });
+  const source = { width: track.sourceWidth, height: track.sourceHeight };
+  const stage = visibleVisualFrameRect(canvas, { width: item.width ?? canvas.width, height: item.height ?? canvas.height }, fit);
+  const mapped = mosaicRegionToStage(entry.region, source, stage, fit === 'contain' ? 'cover' : fit) ?? entry.region;
+  return updateClipMosaicById(item.effects ?? [], effectId, { region: mapped, preserveTrack: false });
 }
 
 /** Privacy effects must never reveal the unprocessed source as a fallback. */

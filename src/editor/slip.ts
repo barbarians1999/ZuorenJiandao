@@ -1,5 +1,3 @@
-import { editedStreamFrames, itemEditOpts } from '../transcript/edit';
-import { hasOperationalTranscript } from '../transcript/types';
 import {
   sourceFramesToTimelineFrames,
   sourceWindowForTimelineRange,
@@ -29,7 +27,7 @@ export interface SlipPlan {
   requestedDeltaInFrames: number;
   appliedDeltaInFrames: number;
   srcInFrame: number;
-  sourceDomain: 'media' | 'edited-stream';
+  sourceDomain: 'media';
   sourceWindow: SourceFrameWindow;
   minDeltaInFrames: number;
   maxDeltaInFrames: number;
@@ -78,33 +76,17 @@ export function planSlip(
   if (!item.src) {
     return failure(itemId, 'source-unavailable', 'clip has no source media');
   }
-  const wordDriven = item.kind === 'audio' && hasOperationalTranscript(item);
-  let totalSourceFrames: number;
-  let sourceSpan: number;
-  if (wordDriven) {
-    totalSourceFrames = editedStreamFrames(
-      item.transcript!,
-      new Set(item.deletedWordIdx ?? []),
-      state.fps,
-      itemEditOpts(item),
-    );
-    sourceSpan = item.durationInFrames;
-    if (!(totalSourceFrames > 0) || !(sourceSpan > 0)) {
-      return failure(itemId, 'no-source-handles', 'clip has no usable edited transcript stream');
-    }
-  } else {
-    const asset = state.assets?.find((candidate) => candidate.src === item.src);
-    if (!asset || !(asset.durationInFrames > 0)) {
-      return failure(itemId, 'source-unavailable', 'source duration is unavailable');
-    }
-    totalSourceFrames = asset.durationInFrames;
-    const zeroBasedWindow = sourceWindowForTimelineRange(
-      { ...item, srcInFrame: 0 },
-      0,
-      item.durationInFrames,
-    );
-    sourceSpan = zeroBasedWindow.endFrame - zeroBasedWindow.startFrame;
+  const asset = state.assets?.find((candidate) => candidate.src === item.src);
+  if (!asset || !(asset.durationInFrames > 0)) {
+    return failure(itemId, 'source-unavailable', 'source duration is unavailable');
   }
+  const totalSourceFrames = asset.durationInFrames;
+  const zeroBasedWindow = sourceWindowForTimelineRange(
+    { ...item, srcInFrame: 0 },
+    0,
+    item.durationInFrames,
+  );
+  const sourceSpan = zeroBasedWindow.endFrame - zeroBasedWindow.startFrame;
 
   const maxSrcInFrame = Math.max(0, totalSourceFrames - sourceSpan);
   const currentSrcInFrame = Math.max(0, item.srcInFrame ?? 0);
@@ -116,28 +98,18 @@ export function planSlip(
     return failure(itemId, 'invalid-delta', 'slip needs a finite deltaInFrames');
   }
   const requested = requestedDeltaInFrames;
-  const requestedSourceDelta = wordDriven
-    ? requested
-    : timelineFramesToSourceFrames(item, requested);
+  const requestedSourceDelta = timelineFramesToSourceFrames(item, requested);
   const srcInFrame = Math.max(0, Math.min(maxSrcInFrame, currentSrcInFrame + requestedSourceDelta));
   const appliedSourceDelta = srcInFrame - currentSrcInFrame;
-  const appliedDeltaInFrames = wordDriven
-    ? appliedSourceDelta
-    : sourceFramesToTimelineFrames(item, appliedSourceDelta);
-  const sourceWindow = wordDriven
-    ? { startFrame: srcInFrame, endFrame: srcInFrame + sourceSpan }
-    : sourceWindowForTimelineRange(
-        { ...item, srcInFrame },
-        0,
-        item.durationInFrames,
-      );
-  const minDeltaInFrames = wordDriven
-    ? -currentSrcInFrame
-    : sourceFramesToTimelineFrames(item, -currentSrcInFrame);
+  const appliedDeltaInFrames = sourceFramesToTimelineFrames(item, appliedSourceDelta);
+  const sourceWindow = sourceWindowForTimelineRange(
+    { ...item, srcInFrame },
+    0,
+    item.durationInFrames,
+  );
+  const minDeltaInFrames = sourceFramesToTimelineFrames(item, -currentSrcInFrame);
   const maxSourceDelta = maxSrcInFrame - currentSrcInFrame;
-  const maxDeltaInFrames = wordDriven
-    ? maxSourceDelta
-    : sourceFramesToTimelineFrames(item, maxSourceDelta);
+  const maxDeltaInFrames = sourceFramesToTimelineFrames(item, maxSourceDelta);
 
   return {
     ok: true,
@@ -145,7 +117,7 @@ export function planSlip(
     requestedDeltaInFrames: requested,
     appliedDeltaInFrames,
     srcInFrame,
-    sourceDomain: wordDriven ? 'edited-stream' : 'media',
+    sourceDomain: 'media',
     sourceWindow,
     minDeltaInFrames,
     maxDeltaInFrames,
@@ -162,17 +134,11 @@ export function slipPreview(
   if (!plan.ok) return null;
   const item = state.items.find((candidate) => candidate.id === itemId);
   if (!item?.src || (item.kind !== 'video' && item.kind !== 'audio')) return null;
-  const wordDriven = item.kind === 'audio' && hasOperationalTranscript(item);
-  const visibleWindow = wordDriven
-    ? {
-        startFrame: plan.srcInFrame,
-        endFrame: plan.srcInFrame + Math.max(0, item.durationInFrames - 1),
-      }
-    : sourceWindowForTimelineRange(
-        { ...item, srcInFrame: plan.srcInFrame },
-        0,
-        Math.max(0, item.durationInFrames - 1),
-      );
+  const visibleWindow = sourceWindowForTimelineRange(
+    { ...item, srcInFrame: plan.srcInFrame },
+    0,
+    Math.max(0, item.durationInFrames - 1),
+  );
   return {
     itemId: item.id,
     itemName: item.name,

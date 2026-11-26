@@ -101,9 +101,10 @@ function multiLaneBoundaries(set: CaptionSet, state: TimelineState, wordsPerPage
     const maxLines = set.perSource?.[entry.id]?.maxLines;
     const per = maxLines ? Math.max(1, (wordsPerPage ?? 6) * maxLines) : wordsPerPage;
     const pages = paginate(words, set.pacing, per);
-    for (const page of pages) boundaries.add(page.start);
-    const last = pages.at(-1);
-    if (last) boundaries.add(last.end + LAST_PAGE_LINGER_MS);
+    for (const page of pages) {
+      boundaries.add(page.start);
+      boundaries.add(page.end);
+    }
   }
   return [...boundaries].sort((a, b) => a - b);
 }

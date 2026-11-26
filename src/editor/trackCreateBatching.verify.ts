@@ -8,6 +8,10 @@ import { projectReduce } from './reduce';
 import type { AnyAction, ProjectDispatch } from './reduce';
 import { isHistoryControlAction } from './reduce';
 import type { MediaAsset, ProjectDoc } from './types';
+import { canTrackAcceptItemKind, isDedicatedEffectItemKind } from './types';
+import { planClipPasteResult } from './clipPaste';
+import { moveSelectionToNewTrack } from '../components/timeline/newTrackMove';
+import { readFileSync } from 'node:fs';
 import { BACKGROUND_MUSIC_INITIAL_VOLUME } from '../media/placementPurpose';
 
 const isProjectAction = (action: Parameters<ProjectDispatch>[0]): action is AnyAction => (
@@ -85,12 +89,44 @@ const audioAsset: MediaAsset = {
     'no track needed → a plain add, unchanged from before');
 }
 
-// ── 纯色片段:已有视频轨时不触发建轨 ────────────────────────────────────────
+// ── 纯色片段:无特效轨时自动创建特效轨，已有特效轨时复用 ────────────────────
 {
-  const { commands, dispatched } = harness(videoOnlyDoc());
-  commands.addSolidItem({});
+  const { commands, dispatched, doc } = harness(videoOnlyDoc());
+  commands.addSolidItem({ startFrame: 0, durationInFrames: 30 });
   assert.equal(dispatched.length, 1);
-  assert.equal(dispatched[0]!.type, 'add', 'existing video track → plain add');
+  assert.equal(dispatched[0]!.type, 'batch', 'missing effect track creates track and adds solid in one batch');
+  const actions = (dispatched[0] as Extract<AnyAction, { type: 'batch' }>).actions;
+  assert.ok(actions.some((a) => a.type === 'track.create' && a.track.visualRole === 'effect'));
+  const timeline = doc().timelines[0]!;
+  assert.equal(timeline.tracks?.[timeline.items[0]!.track]?.visualRole, 'effect');
+
+  commands.addSolidItem({ startFrame: 60, durationInFrames: 30 });
+  assert.equal(dispatched.length, 2);
+  assert.equal(dispatched[1]!.type, 'add', 'existing non-overlapping effect track → plain add');
+
+  // Dedicated effect items cannot land on plain video tracks even if explicitly passed.
+  assert.equal(canTrackAcceptItemKind(timeline, 'solid', 'track_v1'), false);
+  assert.equal(canTrackAcceptItemKind(timeline, 'mosaic', 'track_v1'), false);
+  assert.equal(canTrackAcceptItemKind(timeline, 'motion-graphic', 'track_v1'), false);
+  assert.equal(isDedicatedEffectItemKind('gif'), false);
+  commands.addMotionGraphic({
+    id: 'mg-1', name: 'mg-1', category: 'test', code: 'return null;', props: {}, fps: 30, propSchema: [], thumb: null,
+    width: 1920, height: 1080, durationInFrames: 30,
+  }, { startFrame: 120, track: 'track_v1' });
+  const afterMg = doc().timelines[0]!;
+  const mgItem = afterMg.items.find((item) => item.kind === 'motion-graphic')!;
+  assert.notEqual(mgItem.track, 'track_v1', 'motion-graphic never lands on plain video track');
+  assert.equal(afterMg.tracks?.[mgItem.track]?.visualRole, 'effect');
+
+  // Dragging/pasting effect items preserves visualRole='effect'.
+  const movedToNew = moveSelectionToNewTrack(afterMg, [mgItem.id], 0, 'new_effect_track', 'top');
+  assert.equal(movedToNew.tracks?.new_effect_track?.visualRole, 'effect');
+  const pasted = planClipPasteResult(videoOnlyDoc().timelines[0]!, [mgItem], undefined, 0, (p) => `${p}_p`);
+  const pastedMg = pasted.state.items.find((item) => item.kind === 'motion-graphic')!;
+  assert.equal(pasted.state.tracks?.[pastedMg.track]?.visualRole, 'effect');
+
+  const dropSource = readFileSync(new URL('../components/timeline/libraryDropActions.ts', import.meta.url), 'utf8');
+  assert.match(dropSource, /isEffectTrack\(state, trackId\) && !state\.tracks\?\.\[trackId\]\?\.locked \? trackId : undefined/);
 }
 
 console.log('trackCreateBatching.verify: ok');

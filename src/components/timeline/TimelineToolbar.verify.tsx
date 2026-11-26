@@ -70,4 +70,38 @@ assert.match(controller, /if \(!hoverPreviewEnabledRef.current\) \{ clearHoverPr
 const actions = readFileSync(new URL('../../shortcuts/useEditorActions.ts', import.meta.url), 'utf8');
 assert.doesNotMatch(actions, /activeEditorState\(deps.docRef.current\)/, 'editing actions must use live transient selection');
 assert.match(actions, /const state = deps.stateRef.current/);
-console.log('TimelineToolbar.verify: distinct controls, persisted preview setting, legacy no-op render, directional linkage defaults, live selection wiring OK');
+const textOnlyMarkup = markup({
+  ...initial,
+  items: [{
+    id: 'txt-1',
+    kind: 'text',
+    name: 'Title',
+    startFrame: 0,
+    durationInFrames: 90,
+    track: 'main',
+    props: { text: '标题' },
+  }],
+});
+assert.match(
+  textOnlyMarkup,
+  /<button[^>]*class="cc-caption-toggle[^"]*"[^>]*data-tip="字幕显示（暂无字幕轨）"[^>]*disabled=""/,
+  'text clips without a caption track do not enable the caption toggle',
+);
+const withCaptionTrack = markup({
+  ...initial,
+  tracks: {
+    main: { kind: 'video' },
+    C1: { kind: 'caption', captions: { enabled: true, template: 'plain', pacing: 'phrase' } },
+  },
+  trackOrder: ['C1', 'main'],
+});
+assert.match(
+  withCaptionTrack,
+  /<button[^>]*class="cc-caption-toggle[^"]*"[^>]*data-tip="字幕显示（仅控制字幕轨，不影响画面文字）"/,
+  'caption track enables the caption toggle with decoupled label',
+);
+assert.doesNotMatch(
+  withCaptionTrack,
+  /<button[^>]*class="cc-caption-toggle[^"]*"[^>]*disabled=""/,
+);
+console.log('TimelineToolbar.verify: distinct controls, persisted preview setting, legacy no-op render, directional linkage defaults, decoupled caption toggle, live selection wiring OK');

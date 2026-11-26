@@ -16,14 +16,23 @@ const state: TimelineState = {
   },
   items: [
     {
-      id: 'clip-audio', track: 'audio-main', startFrame: 60, durationInFrames: 60,
+      id: 'clip-audio', track: 'audio-main', startFrame: 60, durationInFrames: 6,
       name: 'take one', kind: 'audio', src: '/media/uploads/a.wav',
       transcript: [
         { text: 'Hello', start: 0, end: 200, speaker: 'A' },
         { text: 'skip', start: 220, end: 350, speaker: 'A' },
         { text: 'world', start: 400, end: 700, speaker: 'A' },
       ],
-      deletedWordIdx: [1],
+    },
+    {
+      id: 'sub-audio-2', track: 'audio-main', startFrame: 66, durationInFrames: 9,
+      name: 'take one', kind: 'audio', src: '/media/uploads/a.wav',
+      srcInFrame: 12,
+      transcript: [
+        { text: 'Hello', start: 0, end: 200, speaker: 'A' },
+        { text: 'skip', start: 220, end: 350, speaker: 'A' },
+        { text: 'world', start: 400, end: 700, speaker: 'A' },
+      ],
     },
     {
       id: 'clip-video', track: 'video-main', startFrame: 150, durationInFrames: 30,
@@ -31,6 +40,17 @@ const state: TimelineState = {
       transcript: [{ text: '第二段', start: 0, end: 500, speaker: 'B' }],
     },
   ],
+  foldGroups: [{
+    id: 'fg-audio',
+    track: 'audio-main',
+    itemIds: ['clip-audio', 'sub-audio-2'],
+    collapsed: true,
+    sourceTranscript: [
+      { text: 'Hello', start: 0, end: 200, speaker: 'A' },
+      { text: 'skip', start: 220, end: 350, speaker: 'A' },
+      { text: 'world', start: 400, end: 700, speaker: 'A' },
+    ],
+  }],
 };
 const ctx = {
   getState: () => state,

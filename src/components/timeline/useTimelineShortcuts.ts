@@ -28,6 +28,7 @@ import type { EditMode } from './timelineUtil';
 import {
   nextFastForwardRate,
   nextShuttleRate,
+  resolvePlayPausePlan,
   setShuttlePlaybackRate,
   setShuttleState,
   shuttleTick,
@@ -55,6 +56,7 @@ interface ShortcutDeps {
   total: number;
   seekFrame: (frame: number) => void;
   paintPlayhead: (frame: number, forceTc?: boolean) => void;
+  cancelPendingScrubSeek?: () => void;
   editMode: EditMode;
   setEditMode: (m: EditMode) => void;
   selectedCaptions: CaptionSelectionRef[];
@@ -76,7 +78,7 @@ interface ShortcutDeps {
 export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | null; zoneOut: number | null } {
   const {
     shortcutApiRef, state, commands, playerRef, playheadRef, total,
-    seekFrame, paintPlayhead, editMode, setEditMode, selectedCaptions, setSnapping, fitToView, zoomBy,
+    seekFrame, paintPlayhead, cancelPendingScrubSeek, editMode, setEditMode, selectedCaptions, setSnapping, fitToView, zoomBy,
     bladeSelected, setEditMarker, fxClip, setFxClip, copySelectedCaptions, pasteCaptionClipboard,
     onSelectCaptionRange,
   } = deps;
@@ -100,16 +102,37 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
 
   const hasTimelineItems = state.items.length > 0;
   useEffect(() => {
-    const player = playerRef.current;
-    if (!player) return undefined;
-    const onStop = () => {
-      if (shuttleRateRef.current > 0) stopShuttle();
+    let attachedPlayer: PlayerRef | null = null;
+    let detachPlayer: (() => void) | null = null;
+    const attach = (player: PlayerRef) => {
+      const onStop = () => {
+        if (shuttleRateRef.current > 0) stopShuttle();
+      };
+      player.addEventListener('pause', onStop);
+      player.addEventListener('ended', onStop);
+      return () => {
+        player.removeEventListener('pause', onStop);
+        player.removeEventListener('ended', onStop);
+      };
     };
-    player.addEventListener('pause', onStop);
-    player.addEventListener('ended', onStop);
+    const syncPlayer = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      const player = playerRef.current;
+      if (player === attachedPlayer) return;
+      detachPlayer?.();
+      attachedPlayer = player;
+      detachPlayer = player ? attach(player) : null;
+    };
+    const onVisibilityChange = () => {
+      if (!document.hidden) syncPlayer();
+    };
+    syncPlayer();
+    const watchdog = window.setInterval(syncPlayer, 150);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      player.removeEventListener('pause', onStop);
-      player.removeEventListener('ended', onStop);
+      window.clearInterval(watchdog);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      detachPlayer?.();
     };
   }, [playerRef, stopShuttle, hasTimelineItems]);
 
@@ -118,11 +141,12 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
       clearInterval(shuttleTimerRef.current);
       shuttleTimerRef.current = null;
     }
+    cancelPendingScrubSeek?.();
     shuttleRateRef.current = nextMag;
     setShuttlePlaybackRate(nextMag);
     setShuttleState(nextMag);
     if ((playerRef.current?.getCurrentFrame() ?? playheadRef.current) >= total - 1) {
-      playerRef.current?.seekTo(0);
+      seekFrame(0);
     }
     playerRef.current?.play();
   };
@@ -199,13 +223,34 @@ export function useTimelineShortcuts(deps: ShortcutDeps): { zoneIn: number | nul
       getPlayhead: () => playheadRef.current,
       seekTo: (frame) => seekFrame(frame),
       playPause: () => {
-        if (shuttleRateRef.current !== 0) {
-          stopShuttle();
-          playerRef.current?.pause();
+        const player = playerRef.current;
+        let isPlayerPlaying = false;
+        try { isPlayerPlaying = !!player?.isPlaying?.(); } catch { isPlayerPlaying = false; }
+        let playerFrame: number | null = null;
+        try {
+          const current = player?.getCurrentFrame?.();
+          if (typeof current === 'number' && Number.isFinite(current)) playerFrame = current;
+        } catch { playerFrame = null; }
+        const plan = resolvePlayPausePlan({
+          isPlayerPlaying,
+          shuttleRate: shuttleRateRef.current,
+          playerFrame,
+          playheadFrame: playheadRef.current,
+          totalFrames: total,
+        });
+        stopShuttle();
+        cancelPendingScrubSeek?.();
+        if (plan.action === 'pause') {
+          player?.pause();
           return;
         }
-        stopShuttle();
-        playerRef.current?.toggle();
+        if (plan.seekToFrame === 0) {
+          seekFrame(0);
+        } else if (plan.seekToFrame !== null) {
+          player?.seekTo(plan.seekToFrame);
+          paintPlayhead(plan.seekToFrame, true);
+        }
+        player?.play();
       },
       isPlaying: () => {
         try { return shuttleRateRef.current !== 0 || !!playerRef.current?.isPlaying?.(); } catch { return false; }

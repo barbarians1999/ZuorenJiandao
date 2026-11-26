@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { theme, themeAlpha } from '../../theme';
 import type { EditorCommands } from '../../editor/store';
-import { removeItemsFromState, selectableItemIdsOnTrackSide } from '../../editor/multiSelect';
-import { setLinkGroup, unlinkItems, groupedItemIds, groupTimelineItems, ungroupTimelineItems } from '../../editor/linkGroups';
+import { removeItemsFromState, selectableItemIdsOnTrackSide, expandSelectionItemIds } from '../../editor/multiSelect';
+import { setLinkGroup, unlinkItems, groupTimelineItems, ungroupTimelineItems } from '../../editor/linkGroups';
+import { foldGroupForItem } from '../../editor/foldGroups';
 import { attachToMainClip, mainTrackId, planMagneticDelete } from '../../editor/magneticTimeline';
 import { planExpandSubdraft, planIndependentSubdraft, type SubdraftOperation } from '../../editor/subdraftOperations';
 import { canMulticamItem, runMulticamSync } from '../../multicam/sync';
@@ -13,7 +14,9 @@ import { useT } from '../../i18n/locale';
 import { canSplitTimelineItemAtFrame } from '../../editor/splitEligibility';
 import { sceneDetectionUnavailable } from '../../scene-detection/apply';
 import { detachAudio, detachAudioUnavailable } from '../../editor/detachAudio';
+import { canAdjustItemSpeed, fillToNextFailureMessage, planFillToNextTrackClip } from '../../editor/speedDuration';
 import { useShortcutHint } from '../../shortcuts/useShortcutHint';
+import { showAppToast } from '../../ui/appToast';
 
 // speed presets for the variable speed submenu
 const SPEED_PRESETS = [0.25, 0.5, 1, 1.5, 2, 4] as const;
@@ -82,7 +85,7 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
     commands.selectItems(result.itemIds);
   };
   // Right-click on a multi-selected clip → batch ops on the whole set (NLE convention).
-  const batchIds = groupedItemIds(timeline, selectedIds.includes(item.id) && selectedIds.length > 1 ? selectedIds : [item.id]);
+  const batchIds = expandSelectionItemIds(timeline, selectedIds.includes(item.id) && selectedIds.length > 1 ? selectedIds : [item.id]);
   const batchN = batchIds.length;
   const selectedVideos = timeline.items.filter(clip => batchIds.includes(clip.id) && clip.kind === 'video');
   const detachCount = selectedVideos.filter(clip => !clip.audioDetached).length;
@@ -105,6 +108,12 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
   const linkedGroup = timeline.linkGroups?.find((group) => group.mode === 'linked' && group.itemIds.includes(item.id));
   const syncLockGroup = timeline.linkGroups?.find((group) => group.mode === 'sync-lock' && group.itemIds.includes(item.id));
   const ordinaryGroup = timeline.linkGroups?.some((group) => group.mode === 'group' && group.itemIds.some((id) => batchIds.includes(id)));
+  const foldGroup = foldGroupForItem(timeline, item.id);
+  const multiFoldGroup = foldGroup && foldGroup.itemIds.length >= 2 ? foldGroup : undefined;
+  const hasLegacyReview = Boolean(
+    item.legacyTimingReview
+    || (multiFoldGroup && multiFoldGroup.itemIds.some((id) => Boolean(timeline.items.find((c) => c.id === id)?.legacyTimingReview))),
+  );
   const attachable = attachToMainClip({ ...timeline, interaction: { ...timeline.interaction,
     linkage: true, linkedKinds: ['text', 'video', 'image', 'audio', 'other'],
   } }, { ...item, mainClipId: undefined });
@@ -210,7 +219,8 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
   const inside = canSplitTimelineItemAtFrame(item, playhead, !!timeline.tracks?.[item.track]?.locked);
   const isVisual = item.kind !== 'audio';
   const isDom = item.kind === 'motion-graphic' || item.kind === 'text'; // DOM clips → alpha MG export
-  const canSpeed = item.kind === 'video' || item.kind === 'audio' || item.kind === 'sequence';
+  const canSpeed = canAdjustItemSpeed(item);
+  const fillPlan = canSpeed ? planFillToNextTrackClip(timeline, item.id) : null;
   const sceneDetectionDisabledReason = sceneDetectionUnavailable(timeline, item);
   const canDetectScenes = !sceneDetectionDisabledReason;
   const canRelink = !timeline.tracks?.[item.track]?.locked && !!item.src && ['video', 'audio', 'image', 'gif', 'svg'].includes(item.kind);
@@ -288,6 +298,25 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
         onClick={run(() => commands.applyState(groupTimelineItems(timeline, batchIds, crypto.randomUUID())))} />
       <Item label={t('取消组合')} icon="unlock" shortcut={shortcut('ungroup')} disabled={!ordinaryGroup}
         onClick={run(() => commands.applyState(ungroupTimelineItems(timeline, batchIds)))} />
+      {multiFoldGroup && <>
+        <Item
+          label={multiFoldGroup.collapsed ? t('展开折叠片段（{n} 段）', { n: multiFoldGroup.itemIds.length }) : t('折叠碎片片段（{n} 段）', { n: multiFoldGroup.itemIds.length })}
+          icon={multiFoldGroup.collapsed ? 'next' : 'prev'}
+          onClick={run(() => commands.toggleFoldGroup(multiFoldGroup.id))}
+        />
+        <Item
+          label={t('解散折叠片段组')}
+          icon="unlock"
+          onClick={run(() => commands.dissolveFoldGroup(multiFoldGroup.id))}
+        />
+      </>}
+      {hasLegacyReview && (
+        <Item
+          label={t('确认切点无误（移除待确认标记）')}
+          icon="check"
+          onClick={run(() => commands.dismissLegacyTimingReview(item.id))}
+        />
+      )}
       {item.track !== mainTrackId(timeline) && <Item
         label={item.mainClipId ? t('取消跟随主片段') : t('绑定到下方主片段')}
         icon={item.mainClipId ? 'unlock' : 'users'}
@@ -338,18 +367,47 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
       <Item label={!matchesSpeedPreset(rate, 1) ? t('变速（{rate}×）', { rate: displayedRate }) : t('变速')} icon="clock" chevron disabled={!canSpeed}
         onClick={canSpeed ? () => setShowSpeed((v) => !v) : undefined} />
       {showSpeed && canSpeed && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '2px 9px 6px 35px' }}>
-          {SPEED_PRESETS.map((s) => {
-            const active = matchesSpeedPreset(rate, s);
-            return (
-              <button key={s} onClick={run(() => commands.setItemSpeed(item.id, s))}
-                style={{
-                  cursor: 'pointer', fontSize: 11, padding: '3px 8px', borderRadius: 5,
-                  border: `0.5px solid ${active ? theme.accent : theme.border}`,
-                  background: active ? theme.accent : 'none', color: active ? theme.onAccent : theme.text,
-                }}>{s}×</button>
-            );
-          })}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '2px 9px 6px 35px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {SPEED_PRESETS.map((s) => {
+              const active = matchesSpeedPreset(rate, s);
+              return (
+                <button key={s} onClick={run(() => commands.setItemSpeed(item.id, s))}
+                  style={{
+                    cursor: 'pointer', fontSize: 11, padding: '3px 8px', borderRadius: 5,
+                    border: `0.5px solid ${active ? theme.accent : theme.border}`,
+                    background: active ? theme.accent : 'none', color: active ? theme.onAccent : theme.text,
+                  }}>{s}×</button>
+              );
+            })}
+          </div>
+          {fillPlan && (
+            <button
+              type="button"
+              disabled={!fillPlan.ok}
+              title={!fillPlan.ok ? t(fillToNextFailureMessage(fillPlan.reason, fillPlan.trackKind)) : undefined}
+              onClick={run(() => {
+                if (!fillPlan.ok) return;
+                commands.setItemSpeed(item.id, fillPlan.rate);
+                if (fillPlan.remainingGapFrames > 0) {
+                  showAppToast(t('已按最慢 0.10× 变速延长，仍有空隙未能完全填满'));
+                }
+              })}
+              style={{
+                cursor: fillPlan.ok ? 'pointer' : 'not-allowed',
+                opacity: fillPlan.ok ? 1 : 0.45,
+                fontSize: 11,
+                padding: '4px 8px',
+                borderRadius: 5,
+                border: `0.5px solid ${theme.border}`,
+                background: 'none',
+                color: theme.text,
+                textAlign: 'left',
+              }}
+            >
+              {fillPlan.trackKind !== 'audio' ? t('填充至后一视频单元') : t('填充至同轨后一片段')}
+            </button>
+          )}
         </div>
       )}
       <Sep />

@@ -1,5 +1,20 @@
 import assert from 'node:assert/strict';
-import { DEFAULT_MOSAIC, GAUSSIAN_MOSAIC_ID, hasPrivacyMosaic, mosaicPresentation, normalizeMosaic, readMosaic, setMosaicMode, setMosaicRegion } from './mosaic';
+import {
+  DEFAULT_MOSAIC,
+  FULL_MOSAIC_ID,
+  GAUSSIAN_MOSAIC_ID,
+  LOCAL_MOSAIC_ID,
+  addClipMosaic,
+  hasPrivacyMosaic,
+  listClipMosaics,
+  mosaicPresentation,
+  normalizeMosaic,
+  readMosaic,
+  removeClipMosaicById,
+  setMosaicMode,
+  setMosaicRegion,
+  updateClipMosaicById,
+} from './mosaic';
 import { reduce, historyReduce, type History } from './reduce';
 import { compositionPlan } from './compositionPlan';
 import { docFromTimeline, migrateProjectDoc } from '../persist/projectStore';
@@ -58,4 +73,46 @@ const light = compositionPlan(transitionState, { mode: 'player', selectedItemId:
 assert.equal(light.staticPreviewStatuses[0]?.fallbackReason, 'privacy-transition');
 const clear = { ...transitionState, items: state.items };
 assert.equal(compositionPlan(clear).glWindows.length, 1, 'Unprotected transition behavior stays unchanged');
-console.log('mosaic.verify: Gaussian controls, legacy compatibility, privacy states, history, split, persistence and composition passed');
+
+// Multi-mosaic unified operations (list / add / switch style & mode / Y-axis conversion / remove)
+let multiEffects = addClipMosaic([], 'm1');
+multiEffects = addClipMosaic(multiEffects, 'm2');
+const list = listClipMosaics(multiEffects);
+assert.equal(list.length, 2);
+assert.equal(list[0]?.id, 'm1');
+assert.equal(list[1]?.id, 'm2');
+assert.notDeepEqual(
+  [list[0]?.region.centerX, list[0]?.region.centerY],
+  [list[1]?.region.centerX, list[1]?.region.centerY],
+  '新增第二个马赛克时默认位置应略微错开以便区分',
+);
+
+// Switching m2 to pixel local mosaic must map top-down UI centerY (e.g. 0.2) <-> bottom-up shader center_y (0.8)
+multiEffects = updateClipMosaicById(multiEffects, 'm2', {
+  style: 'pixel',
+  mode: 'local',
+  region: { centerX: 0.4, centerY: 0.2, width: 0.25, height: 0.2 },
+  blockSize: 28,
+});
+const rawM2 = multiEffects.find((fx) => fx.id === 'm2')!;
+assert.equal(rawM2.assetId, LOCAL_MOSAIC_ID);
+assert.equal(rawM2.overrides?.center_y, 0.8, 'local-mosaic shader uses bottom-up UV center_y');
+assert.equal(rawM2.overrides?.block_size, 28);
+const listedM2 = listClipMosaics(multiEffects).find((m) => m.id === 'm2')!;
+assert.ok(Math.abs(listedM2.region.centerY - 0.2) < 1e-4, 'UI readback restores top-down centerY');
+assert.equal(listedM2.style, 'pixel');
+assert.equal(listedM2.mode, 'local');
+
+// Switching m2 to pixel full-screen uses builtin:fx-pixelate
+multiEffects = updateClipMosaicById(multiEffects, 'm2', { mode: 'full', blockSize: 16 });
+assert.equal(multiEffects.find((fx) => fx.id === 'm2')?.assetId, FULL_MOSAIC_ID);
+assert.equal(listClipMosaics(multiEffects).find((m) => m.id === 'm2')?.mode, 'full');
+
+// Removing m1 leaves m2 intact as index 1
+multiEffects = removeClipMosaicById(multiEffects, 'm1');
+const afterRemove = listClipMosaics(multiEffects);
+assert.equal(afterRemove.length, 1);
+assert.equal(afterRemove[0]?.id, 'm2');
+assert.equal(afterRemove[0]?.index, 1);
+
+console.log('mosaic.verify: Gaussian controls, multi-mosaic, legacy compatibility, privacy states, history, split, persistence and composition passed');

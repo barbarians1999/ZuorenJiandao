@@ -45,6 +45,7 @@ interface CaptionPreviewEditorProps {
   state: TimelineState;
   captions: CaptionsData;
   playerRef: RefObject<PlayerRef | null>;
+  playing?: boolean;
   onUpdateCaptions: (patch: Partial<CaptionsData>) => void;
   onLivePreview?: (patch: Partial<CaptionsData> | null) => void;
   onActiveTargetChange?: (key: string | null) => void;
@@ -73,7 +74,7 @@ interface DragRef {
   moved: boolean;
 }
 
-export function CaptionPreviewEditor({ trackId, state, captions, playerRef, onUpdateCaptions, onLivePreview, onActiveTargetChange, onSelectCaption, activeSelection, autoEditLaneId, onAutoEditHandled }: CaptionPreviewEditorProps) {
+export function CaptionPreviewEditor({ trackId, state, captions, playerRef, playing = false, onUpdateCaptions, onLivePreview, onActiveTargetChange, onSelectCaption, activeSelection, autoEditLaneId, onAutoEditHandled }: CaptionPreviewEditorProps) {
   const t = useT();
   const rootRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -102,6 +103,8 @@ export function CaptionPreviewEditor({ trackId, state, captions, playerRef, onUp
     return () => ro.disconnect();
   }, []);
 
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
   // Follow the playhead (Player frameupdate)
   useEffect(() => {
     const player = playerRef.current;
@@ -110,25 +113,32 @@ export function CaptionPreviewEditor({ trackId, state, captions, playerRef, onUp
     let raf = 0, pendingFrame = player.getCurrentFrame();
     const flush = () => { raf = 0; setFrame(pendingFrame); };
     const onPause = () => {
-      if (raf) cancelAnimationFrame(raf);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
       pendingFrame = player.getCurrentFrame();
       flush();
     };
     const onFrame = (e: { detail: { frame: number } }) => {
       pendingFrame = e.detail.frame;
-      if (!player.isPlaying()) { if (raf) cancelAnimationFrame(raf); flush(); return; }
+      if (playingRef.current && player.isPlaying()) return;
+      if (!player.isPlaying()) { if (raf) { cancelAnimationFrame(raf); raf = 0; } flush(); return; }
       // Player emits frameupdate from a React effect; defer playback UI updates outside that effect chain.
       if (!raf) raf = requestAnimationFrame(flush);
     };
     player.addEventListener('frameupdate', onFrame);
     player.addEventListener('pause', onPause);
+    player.addEventListener('seeked', onPause);
     return () => {
       if (raf) cancelAnimationFrame(raf);
       player.removeEventListener('frameupdate', onFrame);
       player.removeEventListener('pause', onPause);
+      player.removeEventListener('seeked', onPause);
     };
   }, [playerRef]);
+  useEffect(() => {
+    if (!playing && playerRef.current) setFrame(playerRef.current.getCurrentFrame());
+  }, [playing, playerRef]);
 
+  const overlaySleeping = playing && !editing && !drag && !widthDrag;
   // Always build flat cues when enabled so multi-lane auto tracks still get a
   // preview hitbox (manual lanes are preferred inside findCaptionPreviewTarget).
   const rows = useMemo(
@@ -137,8 +147,8 @@ export function CaptionPreviewEditor({ trackId, state, captions, playerRef, onUp
   );
   const ms = (frame / state.fps) * 1000;
   const target = useMemo(
-    () => findCaptionPreviewTarget(captions, state.items, state.fps, ms, rows),
-    [captions, state.items, state.fps, ms, rows],
+    () => (overlaySleeping ? null : findCaptionPreviewTarget(captions, state.items, state.fps, ms, rows)),
+    [overlaySleeping, captions, state.items, state.fps, ms, rows],
   );
   const cue = target?.cue;
   const targetSelectionKey = target ? captionSelectionKey(captionSelectionRef(trackId, target)) : null;
@@ -196,14 +206,18 @@ export function CaptionPreviewEditor({ trackId, state, captions, playerRef, onUp
     return () => window.removeEventListener('pointerdown', onDown, true);
   }, [captions, draft, editing, onLivePreview, onUpdateCaptions, pop, selected, target]);
 
+  const onActiveTargetChangeRef = useRef(onActiveTargetChange);
+  onActiveTargetChangeRef.current = onActiveTargetChange;
+  const onLivePreviewRef = useRef(onLivePreview);
+  onLivePreviewRef.current = onLivePreview;
   const hiddenKey = target && (selected || editing || drag !== null || widthDrag !== null) ? target.key : null;
   useEffect(() => {
-    onActiveTargetChange?.(hiddenKey);
-  }, [hiddenKey, onActiveTargetChange]);
+    onActiveTargetChangeRef.current?.(hiddenKey);
+  }, [hiddenKey]);
   useEffect(() => () => {
-    onActiveTargetChange?.(null);
-    onLivePreview?.(null);
-  }, [onActiveTargetChange, onLivePreview]);
+    onActiveTargetChangeRef.current?.(null);
+    onLivePreviewRef.current?.(null);
+  }, []);
 
   useLayoutEffect(() => {
     if (!selected || editing || drag !== null || !target || !cue || !box) {
@@ -229,6 +243,7 @@ export function CaptionPreviewEditor({ trackId, state, captions, playerRef, onUp
     cue,
   ]);
 
+  if (overlaySleeping) return null;
   if (!target || !cue || !box) {
     return <div ref={rootRef} data-caption-selection-owner="preview-caption" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
   }

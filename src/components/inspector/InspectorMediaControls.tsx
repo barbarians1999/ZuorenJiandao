@@ -11,6 +11,14 @@ import type { FadePatch } from './InspectorTypes';
 import { PreviewFidelityStatus } from './PreviewFidelityStatus';
 import { resolveTextStyle } from '../../editor/textStyles';
 import {
+  canAdjustItemSpeed,
+  fillToNextFailureMessage,
+  formatSpeedSeconds,
+  planSpeedForTargetSeconds,
+  speedDurationBounds,
+  type BatchFillToNextPlan,
+} from '../../editor/speedDuration';
+import {
   formatFontSizeScale,
   TEXT_DESIGN_PX_DEFAULT,
   TEXT_SCALE_MAX,
@@ -104,11 +112,119 @@ export function IsolateVoiceControl({
   );
 }
 
-export function SpeedControl({ item, mixed, onChange }: { item: TimelineItem; mixed?: boolean; onChange: (rate: number) => void }) {
+export function SpeedControl({
+  item,
+  mixed,
+  onChange,
+  fps = 30,
+  selectedItems,
+  onDurationChange,
+  fillToNextPlan,
+  onFillToNext,
+}: {
+  item: TimelineItem;
+  mixed?: boolean;
+  onChange: (rate: number) => void;
+  fps?: number;
+  selectedItems?: readonly TimelineItem[];
+  onDurationChange?: (targetSeconds: number) => void;
+  fillToNextPlan?: BatchFillToNextPlan | null;
+  onFillToNext?: () => void;
+}) {
   const t = useT();
+  const selection = selectedItems?.length ? selectedItems : [item];
+  const isMulti = selection.length > 1;
+  const canSpeed = selection.every(canAdjustItemSpeed);
   const rate = item.playbackRate ?? 1;
+  const safeFps = Math.max(1, fps);
+  const currentDurationFrames = item.durationInFrames;
+  const durationMixed = isMulti && selection.some((entry) => entry.durationInFrames !== currentDurationFrames);
+  const formattedCurrentSeconds = formatSpeedSeconds(currentDurationFrames / safeFps);
+  const syncKey = `${item.id}:${durationMixed ? '1' : '0'}:${formattedCurrentSeconds}`;
+  const defaultDraft = durationMixed ? '' : formattedCurrentSeconds;
+  const [draftState, setDraftState] = useState<{ key: string; value: string }>(() => ({
+    key: syncKey,
+    value: defaultDraft,
+  }));
+  const durationDraft = draftState.key === syncKey ? draftState.value : defaultDraft;
+  const setDurationDraft = (value: string) => setDraftState({ key: syncKey, value });
+
+  const parsedSeconds = Number(durationDraft.trim());
+  const validDraft = durationDraft.trim().length > 0 && Number.isFinite(parsedSeconds) && parsedSeconds > 0;
+  const bounds = !isMulti ? speedDurationBounds(item, safeFps) : null;
+  const previewPlan = !isMulti && validDraft ? planSpeedForTargetSeconds(item, parsedSeconds, safeFps) : null;
+  const draftChanged = durationDraft.trim().length > 0
+    && (durationMixed || Math.abs(parsedSeconds - currentDurationFrames / safeFps) >= 0.005);
+  const canApplyDuration = canSpeed && !!onDurationChange && validDraft;
+
+  const applyDuration = () => {
+    if (!canApplyDuration) return;
+    onDurationChange(parsedSeconds);
+    if (!isMulti && previewPlan && previewPlan.resultingFrames === currentDurationFrames) {
+      setDurationDraft(formatSpeedSeconds(previewPlan.resultingFrames / safeFps));
+    }
+  };
+
+  const singleFillPlan = !isMulti ? fillToNextPlan?.plans[0] : undefined;
+  const eligibleCount = fillToNextPlan?.eligible.length ?? 0;
+  const totalCount = fillToNextPlan?.total ?? selection.length;
+  const isVideoTrack = (fillToNextPlan?.primaryTrackKind ?? 'video') !== 'audio';
+  const canFill = canSpeed && !!onFillToNext && eligibleCount > 0;
+  const fillButtonLabel = isMulti && eligibleCount > 0 && eligibleCount < totalCount
+    ? (isVideoTrack
+        ? t('填充至后一视频单元（{eligible}/{total}）', { eligible: eligibleCount, total: totalCount })
+        : t('填充至同轨后一片段（{eligible}/{total}）', { eligible: eligibleCount, total: totalCount }))
+    : (isVideoTrack ? t('填充至后一视频单元') : t('填充至同轨后一片段'));
+
+  const durationHint = (() => {
+    if (!canSpeed) return t('当前片段已启用逐字编辑或不支持变速');
+    if (isMulti) return t('将把已选 {n} 个片段统一变速为目标时长', { n: selection.length });
+    if (draftChanged && previewPlan) {
+      if (previewPlan.clamped) {
+        return t('超出 0.1×–8× 范围，将按 {rate}× 调整为 {sec} 秒', {
+          rate: compactNumber(previewPlan.rate),
+          sec: formatSpeedSeconds(previewPlan.resultingFrames / safeFps),
+        });
+      }
+      return t('将变速为 {rate}×', { rate: compactNumber(previewPlan.rate) });
+    }
+    if (bounds) {
+      return t('当前 {current} 秒 · 可调 {min}–{max} 秒', {
+        current: formatSpeedSeconds(bounds.currentSeconds),
+        min: formatSpeedSeconds(bounds.minSeconds),
+        max: formatSpeedSeconds(bounds.maxSeconds),
+      });
+    }
+    return null;
+  })();
+
+  const fillHint = (() => {
+    if (!isMulti && singleFillPlan) {
+      if (singleFillPlan.ok) {
+        if (singleFillPlan.remainingGapFrames > 0) {
+          return t('将按最慢 0.10× 拉长至 {result} 秒（仍余 {rem} 秒空隙）', {
+            result: formatSpeedSeconds(singleFillPlan.resultingFrames / safeFps),
+            rem: formatSpeedSeconds(singleFillPlan.remainingGapFrames / safeFps),
+          });
+        }
+        return t('补齐 {gap} 秒空隙 → {target} 秒（{rate}×）', {
+          gap: formatSpeedSeconds(singleFillPlan.gapFrames / safeFps),
+          target: formatSpeedSeconds(singleFillPlan.resultingFrames / safeFps),
+          rate: compactNumber(singleFillPlan.rate),
+        });
+      }
+      return t(fillToNextFailureMessage(singleFillPlan.reason, singleFillPlan.trackKind));
+    }
+    if (isMulti) {
+      return eligibleCount > 0
+        ? t('将为其中 {n} 个有空隙的片段变速填满至后一片段', { n: eligibleCount })
+        : t('所选片段后方均无可填充空隙');
+    }
+    return null;
+  })();
+
   return (
-    <div>
+    <div className="cc-insp-stack">
       <SliderRow
         label={t('变速')}
         val={rate}
@@ -117,20 +233,23 @@ export function SpeedControl({ item, mixed, onChange }: { item: TimelineItem; mi
         max={4}
         step={0.05}
         fmt={`${rate.toFixed(2)}×`}
+        disabled={!canSpeed}
+        disabledReason={!canSpeed ? t('当前片段已启用逐字编辑或不支持变速') : undefined}
         onReset={() => onChange(1)}
-        resetDisabled={!mixed && Math.abs(rate - 1) < 1e-6}
+        resetDisabled={!canSpeed || (!mixed && Math.abs(rate - 1) < 1e-6)}
         onChange={onChange}
       />
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
         {SPEED_PRESETS.map((s) => (
           <button
             key={s}
             type="button"
             className="cc-insp-btn"
+            disabled={!canSpeed}
             style={{
               fontSize: 10,
               padding: '2px 6px',
-              opacity: Math.abs(rate - s) < 0.01 ? 1 : 0.7,
+              opacity: !canSpeed ? 0.45 : Math.abs(rate - s) < 0.01 ? 1 : 0.7,
               fontWeight: Math.abs(rate - s) < 0.01 ? 700 : 400,
             }}
             onClick={() => onChange(s)}
@@ -139,6 +258,72 @@ export function SpeedControl({ item, mixed, onChange }: { item: TimelineItem; mi
           </button>
         ))}
       </div>
+      {onDurationChange && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 8, marginTop: 4, borderTop: '0.5px solid var(--cc-border)' }}>
+          <div className="cc-insp-row">
+            <label className="cc-insp-label" htmlFor={`speed-duration-${item.id}`}>{t('变速成')}</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+              <input
+                id={`speed-duration-${item.id}`}
+                data-testid="inspector-speed-duration-input"
+                className="cc-insp-number"
+                type="number"
+                min={0.05}
+                step={0.1}
+                disabled={!canSpeed}
+                value={durationDraft}
+                placeholder={durationMixed ? '—' : undefined}
+                aria-label={t('目标时长（秒）')}
+                style={{ width: 68, flex: '0 0 auto' }}
+                onChange={(event) => setDurationDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    applyDuration();
+                  }
+                }}
+              />
+              <span className="cc-insp-muted" style={{ fontSize: 11 }}>{t('秒')}</span>
+              <button
+                type="button"
+                data-testid="inspector-speed-duration-apply"
+                className="cc-insp-btn"
+                disabled={!canApplyDuration}
+                style={{ marginLeft: 'auto', fontSize: 11 }}
+                onClick={applyDuration}
+              >
+                {t('应用')}
+              </button>
+            </div>
+          </div>
+          {durationHint && (
+            <div className="cc-insp-muted" style={{ fontSize: 10.5, lineHeight: 1.4 }}>
+              {durationHint}
+            </div>
+          )}
+        </div>
+      )}
+      {onFillToNext && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, paddingTop: 8, marginTop: 2, borderTop: '0.5px solid var(--cc-border)' }}>
+          <button
+            type="button"
+            data-testid="inspector-speed-fill-next"
+            className="cc-insp-btn"
+            disabled={!canFill}
+            style={{ width: '100%', justifyContent: 'center', fontSize: 11.5 }}
+            onClick={onFillToNext}
+          >
+            <Icon name="rateStretch" size={12} />
+            {fillButtonLabel}
+          </button>
+          {fillHint && (
+            <div className="cc-insp-muted" style={{ fontSize: 10.5, lineHeight: 1.4 }}>
+              {fillHint}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -203,7 +388,7 @@ export function TextControl({ item, mixed, onPropChange }: { item: TimelineItem;
         <FontPicker value={typeof p.fontFamily === 'string' ? p.fontFamily : 'sans-serif'}
           targetKey={item.id}
           fontAssetId={typeof p.fontAssetId === 'string' ? p.fontAssetId : undefined}
-          sampleText={style.text} mixed={mixed?.('fontFamily') || mixed?.('fontAssetId')}
+          mixed={mixed?.('fontFamily') || mixed?.('fontAssetId')}
           onChange={(choice) => { onPropChange('fontFamily', choice.fontFamily); onPropChange('fontAssetId', choice.fontAssetId); }} />
       </div>
       <SliderRow

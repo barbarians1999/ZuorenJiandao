@@ -94,6 +94,31 @@ function drawFit(ctx: CanvasRenderingContext2D, source: CanvasImageSource, fit: 
   ctx.drawImage(source, (W - dw) / 2, (H - dh) / 2, dw, dh);
 }
 
+export function shouldShowClipFxCanvas({
+  hasRendered,
+  privacyFailure,
+  protectedSource,
+  isRendering,
+  renderedKey,
+  renderKey,
+  renderedSurfaceKey,
+  surfaceKey,
+}: {
+  hasRendered: boolean;
+  privacyFailure: boolean;
+  protectedSource: boolean;
+  isRendering: boolean;
+  renderedKey: string | null;
+  renderKey: string;
+  renderedSurfaceKey: string | null;
+  surfaceKey: string;
+}): boolean {
+  if (!hasRendered || privacyFailure) return false;
+  if (!protectedSource) return true;
+  if (isRendering) return renderedKey === renderKey;
+  return renderedKey === renderKey || renderedSurfaceKey === surfaceKey;
+}
+
 export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewStatus }: ClipFxProps) {
   const frame = useCurrentFrame() + frameOffset;
   const { fps } = useVideoConfig();
@@ -108,6 +133,7 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
   const stagedRenderKeyRef = useRef<string | null>(null);
   const hasRenderedRef = useRef(false);
   const renderedKeyRef = useRef<string | null>(null);
+  const renderedSurfaceKeyRef = useRef<string | null>(null);
   const [hasRendered, setHasRendered] = useState(false);
   const [privacyFailure, setPrivacyFailure] = useState(false);
   const trimBefore = sourceFrameAt(item, frameOffset);
@@ -130,6 +156,10 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
     () => active.map(({ def }) => `${def.id}:${def.frag}`).join('\u0000'),
     [active],
   );
+  const surfaceKey = useMemo(
+    () => JSON.stringify([item.src ?? '', renderW, renderH, definitionKey]),
+    [item.src, renderW, renderH, definitionKey],
+  );
   // Shader parameter changes do not require another decoded video frame.
   // A paused MediaVideo does not emit onVideoFrame again just for a slider.
   const mediaKey = useMemo(
@@ -140,14 +170,20 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
     () => JSON.stringify([mediaKey, active.map(({ fx }) => [fx.id, fx.overrides])]),
     [mediaKey, active],
   );
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
+  const mediaKeyRef = useRef(mediaKey);
+  mediaKeyRef.current = mediaKey;
+  const renderLatestRef = useRef<() => void>(() => {});
   const onVideoFrame = useCallback(
     (source: CanvasImageSource) => {
       const ctx = staging.getContext('2d');
       if (!ctx) return;
-      drawFit(ctx, source, fit);
-      stagedRenderKeyRef.current = mediaKey;
+      drawFit(ctx, source, fitRef.current);
+      stagedRenderKeyRef.current = mediaKeyRef.current;
+      renderLatestRef.current();
     },
-    [fit, mediaKey, staging],
+    [staging],
   );
 
   useEffect(() => {
@@ -193,9 +229,20 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
       finish();
       return () => finish();
     }
+    let cancelled = false;
     let waitingReported = false;
+    const keepVisibleDuringPlayback = !isRendering && shouldShowClipFxCanvas({
+      hasRendered: hasRenderedRef.current,
+      privacyFailure: false,
+      protectedSource,
+      isRendering,
+      renderedKey: renderedKeyRef.current,
+      renderKey,
+      renderedSurfaceKey: renderedSurfaceKeyRef.current,
+      surfaceKey,
+    });
     const reportWaiting = () => {
-      if (waitingReported) return;
+      if (keepVisibleDuringPlayback || waitingReported) return;
       waitingReported = true;
       report('fallback', 'media-loading');
     };
@@ -203,6 +250,11 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
     // LUT is an intentional pass-through with intensity=0 in fxPasses().
     for (const { def } of active) if (def.cube) void ensureCube(def.cube);
     const tick = () => {
+      if (cancelled) return;
+      if (renderedKeyRef.current === renderKey) {
+        finish();
+        return;
+      }
       const decodedVideo = item.kind !== 'image';
       const mediaReady = decodedVideo
         ? stagedRenderKeyRef.current === mediaKey
@@ -221,6 +273,7 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
         );
         runtime.renderFxChain(shaderFrame.passes, staging);
         renderedKeyRef.current = renderKey;
+        renderedSurfaceKeyRef.current = surfaceKey;
         // Make the freshly drawn canvas authoritative before unblocking export;
         // React state then preserves the same choice for subsequent renders.
         canvas.style.opacity = '1';
@@ -239,6 +292,7 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
         console.error('[clip-fx]', error);
         if (protectedSource) {
           renderedKeyRef.current = null;
+          renderedSurfaceKeyRef.current = null;
           canvas.style.opacity = '0';
           if (protectionLayerRef.current) protectionLayerRef.current.style.display = 'flex';
           setPrivacyFailure(true);
@@ -247,19 +301,34 @@ export function ClipFx({ item, fit, width, height, frameOffset = 0, onPreviewSta
       }
       finish();
     };
+    renderLatestRef.current = tick;
     tick();
-    return () => { cancelAnimationFrame(raf); finish(); };
-  }, [active, definitionKey, fit, staging, item.id, item.kind, frame, fps, isRendering, mediaKey, renderKey, previewScale, onPreviewStatus, protectedSource]);
+    return () => {
+      cancelled = true;
+      renderLatestRef.current = () => {};
+      cancelAnimationFrame(raf);
+      finish();
+    };
+  }, [active, definitionKey, surfaceKey, fit, staging, item.id, item.kind, frame, fps, isRendering, mediaKey, renderKey, previewScale, onPreviewStatus, protectedSource]);
 
   useEffect(() => () => {
     disposeRuntimeSlot(runtimeRef);
+    renderedSurfaceKeyRef.current = null;
   }, [renderW, renderH, definitionKey]);
 
-  // Once any GL frame has been drawn, keep the canvas visible across seeks:
-  // falling back to the raw source layer would flash the UNFILTERED frame for
-  // the 1-2 frames until the new frame's shader pass is ready. The first
-  // (never-drawn) load still falls back to the honest source while media loads.
-  const showingShaderFrame = hasRendered && (!protectedSource || renderedKeyRef.current === renderKey);
+  // Once any GL frame has been drawn, keep the canvas visible across playback
+  // frame advances on the same surface so redacted video never flashes black
+  // between WebGL paints; export still requires an exact frame key match.
+  const showingShaderFrame = shouldShowClipFxCanvas({
+    hasRendered,
+    privacyFailure,
+    protectedSource,
+    isRendering,
+    renderedKey: renderedKeyRef.current,
+    renderKey,
+    renderedSurfaceKey: renderedSurfaceKeyRef.current,
+    surfaceKey,
+  });
   const presentation = mosaicPresentation({ protectedSource, readyForCurrentFrame: showingShaderFrame });
   if (active.length === 0) return <AbsoluteFill>
     {item.kind === 'image'

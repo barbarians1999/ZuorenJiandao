@@ -1,4 +1,4 @@
-import type { TimelineState } from './types';
+import type { TimelineItem, TimelineState } from './types';
 import { selectedIdsOf } from './types';
 import { fitTimelineItems } from './clipFit';
 import { reconcileTransitions } from './transitionReconcile';
@@ -13,6 +13,13 @@ import { remapSplitTransitionEndpoints, splitTimelineItem } from './reducerOverw
 import { remapSplitTimelineCaptionReferences } from '../captions/reconcileSources';
 import { mainTrackId, planDirectionalChange, planMagneticDelete } from './magneticTimeline';
 import { planRollingTrim } from './rollingTrim';
+import {
+  dissolveFoldGroupState,
+  maintainFoldGroups,
+  splitFoldGroupAtFrame,
+  toggleFoldGroupState,
+  trimFoldGroupEdge,
+} from './foldGroups';
 
 export function reduce(s: TimelineState, a: Action): TimelineState {
   const policy = actionPolicyFor(a.type);
@@ -29,10 +36,20 @@ export function reduce(s: TimelineState, a: Action): TimelineState {
   const guarded = policy.guardOverlaps && introducesTrackOverlap(s, applied)
     ? s
     : applied;
-  const next = guarded !== s && guarded.compositingOrder !== 'tracks'
+  const nextWithComp = guarded !== s && guarded.compositingOrder !== 'tracks'
     && (s.compositingOrder === 'tracks' || s.items.some(item => item.kind === 'mosaic')
       || guarded.items.some(item => item.kind === 'mosaic'))
     ? { ...guarded, compositingOrder: 'tracks' as const } : guarded;
+  const splitMeta = a.type === 'split' ? { splitId: a.id, newId: a.newId } : undefined;
+  const nextFoldGroups = nextWithComp !== s && nextWithComp.items !== s.items
+    && a.type !== 'splitFoldGroup' && a.type !== 'trimFoldGroup'
+    && a.type !== 'toggleWord' && a.type !== 'deleteWords' && a.type !== 'cleanScript'
+    && a.type !== 'setGapCap' && a.type !== 'setTranscriptPlayOrder' && a.type !== 'clearEdits'
+    ? maintainFoldGroups(s, nextWithComp, splitMeta)
+    : nextWithComp.foldGroups;
+  const next = nextFoldGroups === nextWithComp.foldGroups
+    ? nextWithComp
+    : { ...nextWithComp, foldGroups: nextFoldGroups };
   if (!policy.reconcileTransitions || !next.transitions?.length) return next;
   // Reference-stability contract: a no-op (or rejected) action must return the
   // original state, or historyReduce records a phantom undo step and clears redo.
@@ -93,6 +110,50 @@ function applyAction(s: TimelineState, a: Action): TimelineState {
     case 'selectAll': {
       const ids = s.items.map((it) => it.id);
       return { ...s, selectedIds: ids, selectedId: ids[ids.length - 1] ?? null };
+    }
+    case 'toggleFoldGroup':
+      return toggleFoldGroupState(s, a.groupId);
+    case 'dissolveFoldGroup':
+      return dissolveFoldGroupState(s, a.groupId);
+    case 'splitFoldGroup':
+      return splitFoldGroupAtFrame(s, a.groupId, a.atFrame, {
+        leftGroupId: a.leftGroupId,
+        rightGroupId: a.rightGroupId,
+        newClipId: a.newClipId,
+      });
+    case 'trimFoldGroup':
+      return trimFoldGroupEdge(s, a.groupId, a.edge, a.deltaFrames, { ripple: a.ripple });
+    case 'dismissLegacyTimingReview': {
+      const targetIds = a.itemId
+        ? (() => {
+            const fg = s.foldGroups?.find((g) => g.itemIds.includes(a.itemId!));
+            return new Set(fg && fg.collapsed ? fg.itemIds : [a.itemId!]);
+          })()
+        : null;
+      let changed = false;
+      const items: TimelineItem[] = s.items.map((it): TimelineItem => {
+        if (!it.legacyTimingReview) return it;
+        if (targetIds && !targetIds.has(it.id)) return it;
+        changed = true;
+        const { legacyTimingReview: _drop, ...rest } = it;
+        return rest;
+      });
+      const remainingAffected = items
+        .filter((it) => Boolean(it.legacyTimingReview))
+        .map((it) => it.id);
+      const nextReview = remainingAffected.length
+        ? {
+            required: true,
+            summary: `检测到 ${remainingAffected.length} 处旧版文字稿切点需要确认（原始工程存档已自动保留）`,
+            affectedItemIds: remainingAffected,
+          }
+        : undefined;
+      if (!changed && !s.legacyTimingReview) return s;
+      return {
+        ...s,
+        items,
+        legacyTimingReview: nextReview,
+      };
     }
     case 'setFullState':
       return a.state; // atomic commit of a proposal's result (one history step)

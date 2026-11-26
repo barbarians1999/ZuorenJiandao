@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { createTimelineAutoScrollController, edgeScrollDelta, incrementalTimelineDragFrames } from './timelineAutoScroll';
+import {
+  createTimelineAutoScrollController,
+  edgeScrollDelta,
+  incrementalTimelineDragFrames,
+  isPlayheadVisibleForPlaybackFollow,
+  playbackPageScrollLeft,
+} from './timelineAutoScroll';
 
 const viewport = { viewportLeft: 100, viewportRight: 500, headerInset: 212, scrollLeft: 100, maxScrollLeft: 300 };
 assert.ok(edgeScrollDelta({ ...viewport, clientX: 270, elapsedMs: 16 }) < 0,
@@ -62,4 +68,58 @@ assert.equal(currentViewport.scrollLeft, stoppedAt);
 assert.equal(frames.size, 0, 'stop cancels the scheduled frame');
 assert.equal(autoScroll.getActivePointerId(), null);
 
-console.log('timelineAutoScroll.verify: header inset, elapsed-time cap, stationary refresh, bounds, and cancellation passed');
+// Playback page-turn auto-scroll math
+const playbackBase = {
+  pixelsPerFrame: 2,
+  headerWidth: 200,
+  clientWidth: 1000, // usableWidth = 800, rightMargin = 32, leadMargin = 48
+  scrollLeft: 400,
+  maxScrollLeft: 2400,
+};
+assert.equal(
+  playbackPageScrollLeft({ ...playbackBase, frame: 300 }),
+  null,
+  'playhead comfortably inside visible tracks does not scroll',
+);
+assert.equal(
+  playbackPageScrollLeft({ ...playbackBase, frame: 584 }), // 1168 == 400 + 800 - 32
+  1120, // 1168 - 48: jumps so playhead sits near the front of the visible tracks
+  'playhead reaching the right margin triggers page-turn jump placing playhead near front',
+);
+assert.equal(
+  playbackPageScrollLeft({ ...playbackBase, frame: 1500 }), // 3000 - 48 = 2952 -> clamped to 2400
+  2400,
+  'page-turn scroll clamps to maxScrollLeft',
+);
+assert.equal(
+  playbackPageScrollLeft({ ...playbackBase, scrollLeft: 2400, frame: 1500 }),
+  null,
+  'already at maxScrollLeft returns null',
+);
+assert.equal(
+  playbackPageScrollLeft({ ...playbackBase, maxScrollLeft: 0, frame: 1500 }),
+  null,
+  'timeline fitting in viewport does not page-scroll',
+);
+assert.equal(
+  playbackPageScrollLeft({ ...playbackBase, clientWidth: 230, frame: 584 }),
+  null,
+  'narrow viewport returns null',
+);
+assert.equal(
+  playbackPageScrollLeft({ ...playbackBase, frame: 100, revealIfBeforeLeft: false }),
+  null,
+  'mid-playback does not yank back if playhead is left of scrollLeft without revealIfBeforeLeft',
+);
+assert.equal(
+  playbackPageScrollLeft({ ...playbackBase, frame: 100, revealIfBeforeLeft: true }),
+  152, // 200 - 48
+  'playback start or loop wrap brings off-screen left playhead back into view',
+);
+
+assert.equal(isPlayheadVisibleForPlaybackFollow({ ...playbackBase, frame: 100 }), 'before');
+assert.equal(isPlayheadVisibleForPlaybackFollow({ ...playbackBase, frame: 300 }), 'inside');
+assert.equal(isPlayheadVisibleForPlaybackFollow({ ...playbackBase, frame: 584 }), 'near-end');
+assert.equal(isPlayheadVisibleForPlaybackFollow({ ...playbackBase, frame: 700 }), 'after');
+
+console.log('timelineAutoScroll.verify: header inset, elapsed-time cap, stationary refresh, bounds, playback page-turn, and cancellation passed');

@@ -4,7 +4,7 @@ import { compositionPlan } from './compositionPlan';
 import { mainTrackId } from './magneticTimeline';
 import { resolveTimelineRenderPlan, sequenceGraphError } from './sequenceGraph';
 import { sourceFrameAt } from './sourceLimit';
-import { activeTimeline, captionTrackEntries, timelineTrackIds, trackKind, type Marker, type ProjectDoc, type Timeline, type TimelineItem } from './types';
+import { activeTimeline, timelineTrackIds, trackKind, type Marker, type ProjectDoc, type Timeline, type TimelineItem } from './types';
 
 type IdFactory = (prefix: string) => string;
 export type SubdraftOperation = { ok: true; doc: ProjectDoc; itemIds: string[]; timelineId?: string }
@@ -71,9 +71,6 @@ function wrapperEffects(item: TimelineItem): boolean {
     || !!item.filters?.blur;
 }
 
-const captionsOff = (timeline: Timeline) => timeline.captionsHidden === true
-  || (timeline.captionsHidden === undefined && captionTrackEntries(timeline).length > 0
-    && captionTrackEntries(timeline).every((entry) => !entry.captions?.enabled));
 const captions = (timeline: Timeline) => [timeline.captions, ...Object.values(timeline.tracks ?? {}).map((track) => track?.captions)].filter(Boolean);
 const routing = (timeline: Timeline) => Object.values(timeline.tracks ?? {}).some((track) =>
   track?.soloed || track?.role || (track?.audioRouting?.gainDb ?? 0) !== 0 || track?.audioRouting?.duckDepthDb != null);
@@ -116,9 +113,6 @@ export function planExpandSubdraft(doc: ProjectDoc, itemId: string, uid: IdFacto
   const clipped = new Set(kept.filter((entry) => entry.startFrame < from || entry.startFrame + entry.durationInFrames > to).map((entry) => entry.id));
   if (kept.some((entry) => clipped.has(entry.id) && (animated(entry) || hasOperationalTranscript(entry)
     || ['motion-graphic', 'gif', 'svg'].includes(entry.kind)))) return fail('裁切边界碰到了带动画、动态素材或文字剪辑的片段，请调整子草稿裁切范围后再展开。');
-  if (kept.some((entry) => entry.kind === 'text' || entry.kind === 'motion-graphic') && captionsOff(parent) !== captionsOff(child)) {
-    return fail('两个时间线的文字显示开关不同，请先统一开关，再展开。');
-  }
   const keptIds = new Set(kept.map((entry) => entry.id));
   if (child.linkGroups?.some((group) => group.mode !== 'group'
     && group.itemIds.some((id) => keptIds.has(id)) && group.itemIds.some((id) => !keptIds.has(id)))) return fail('裁切范围切断了音画链接或同步锁定组合，请将完整组合纳入后再展开。');
@@ -246,7 +240,6 @@ export function planExpandSubdraft(doc: ProjectDoc, itemId: string, uid: IdFacto
   if (kept.some((entry, index) => isBackgroundFillActive(child, entry) !== isBackgroundFillActive(nextParent, items[index]!))) {
     return fail('展开会改变底层画面的背景填充，请先关闭背景填充，或将子草稿放回主轨。');
   }
-  if (captionsOff(nextParent) !== captionsOff(parent)) return fail('展开会改变当前文字显示开关，请先明确开启或关闭文字显示，再展开。');
   const next = { ...doc, timelines: doc.timelines.map((timeline) => timeline.id === parent.id ? nextParent : timeline) };
   const error = sequenceGraphError(next);
   return error ? fail(error.message) : { ok: true, doc: next, itemIds: items.map((entry) => entry.id) };

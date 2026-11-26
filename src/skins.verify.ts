@@ -88,6 +88,14 @@ for (const s of SKINS) {
   gate('textStrong/hover', contrast(t.textStrong, t.hover), 4.5);
   gate('audioFxBadge/panelGold10', contrast(t.text, mixHex(t.gold, t.panel, 0.1)), 4.5);
   gate('headingInk/headingBg', contrast(t.headingInk, t.headingBg), 4.5);
+  gate('trackVideoInk/trackVideo', contrast(t.trackVideoInk, t.trackVideo), 4.5);
+  gate('trackAudioInk/trackAudioA1', contrast(t.trackAudioInk, t.trackAudioA1), 4.5);
+  gate('trackAudioInk/trackAudioA2', contrast(t.trackAudioInk, t.trackAudioA2), 4.5);
+  gate('trackCaptionInk/trackCaption', contrast(t.trackCaptionInk, t.trackCaption), 4.5);
+  gate('clipInk/clipVideo', contrast(t.clipInk, t.clipVideo), 4.5);
+  gate('clipInk/clipAudio', contrast(t.clipInk, t.clipAudio), 4.5);
+  gate('clipInk/clipMg', contrast(t.clipInk, t.clipMg), 4.5);
+  gate('clipInk/clipText', contrast(t.clipInk, t.clipText), 4.5);
 }
 
 // ── CSS generation ──
@@ -98,8 +106,10 @@ for (const s of SKINS) {
   assert.ok(css.includes(`html[data-cc-skin='${s.id}']`), `${s.id} 覆盖块`);
 }
 assert.ok(css.includes('--cc-on-accent:'), 'on-accent 变量输出');
+assert.ok(css.includes('--cc-accent-soft:'), 'accent-soft 变量输出');
 assert.ok(css.includes('--cc-shadow-rgb:'), 'shadow-rgb 变量输出');
-assert.ok(css.includes('body { background: var(--cc-bg)'), 'body 跟随皮肤');
+assert.ok(css.includes('html, body { color-scheme: var(--cc-color-scheme); }'), 'color-scheme 跟随皮肤');
+assert.ok(css.includes('body { background: var(--cc-bg); }'), 'body 跟随皮肤');
 
 // ── Family + Mode helper ──
 assert.equal(findSkinByFamilyAndMode('constructivism', 'light').id, 'constructivism-light');
@@ -129,15 +139,18 @@ assert.equal(getSkin(), 'constructivism-light', '旧构成主义日间 ID 迁移
 applySkin('liquid-glass-dark');
 assert.equal(dataset.ccSkin, undefined, '默认皮肤不写 data-cc-skin 属性');
 assert.equal(dataset.ccSkinFamily, 'liquid-glass', '默认皮肤也写入 data-cc-skin-family');
+assert.equal(dataset.ccSkinMode, 'dark', '默认皮肤写入 data-cc-skin-mode');
 
 applySkin('constructivism-dark');
 assert.equal(getSkin(), 'constructivism-dark', '构成主义夜间皮肤持久化');
 assert.equal(dataset.ccSkin, 'constructivism-dark', '构成主义夜间皮肤应用到文档');
 assert.equal(dataset.ccSkinFamily, 'constructivism', '构成主义家族标记同步更新');
+assert.equal(dataset.ccSkinMode, 'dark', '构成主义夜间模式标记同步更新');
 
 applySkin('minimalism-light');
 assert.equal(getSkin(), 'minimalism-light', '极简主义日间选择持久化');
 assert.equal(dataset.ccSkin, 'minimalism-light', '极简主义日间应用到文档');
 assert.equal(dataset.ccSkinFamily, 'minimalism', '极简主义家族标记同步更新');
+assert.equal(dataset.ccSkinMode, 'light', '极简主义日间模式标记同步更新');
 
 process.stdout.write(`skins.verify: ok (${SKINS.length} skins, 4 families, 对比度门全过)\n`);

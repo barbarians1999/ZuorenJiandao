@@ -37,23 +37,21 @@ export function InspectorSlipControl({ item, plan, onSlip }: InspectorSlipContro
       return;
     }
     setNotice(result.clamped
-      ? t(result.sourceDomain === 'edited-stream' ? '已到达编辑词流边界' : '已到达源素材边界')
+      ? t('已到达源素材边界')
       : null);
   };
 
   const sourceFrame = (value: number) => value.toFixed(Number.isInteger(value) ? 0 : 2);
   const canEarlier = plan.minDeltaInFrames < -1e-6;
   const canLater = plan.maxDeltaInFrames > 1e-6;
-  const sourceStep = plan.sourceDomain === 'edited-stream'
-    ? 1
-    : Math.max(0.01, item.playbackRate ?? 1);
+  const sourceStep = Math.max(0.01, item.playbackRate ?? 1);
   const sourceOutFrame = Math.max(plan.sourceWindow.startFrame, plan.sourceWindow.endFrame - sourceStep);
-  const displayedRate = plan.sourceDomain === 'edited-stream' ? 1 : (item.playbackRate ?? 1);
+  const displayedRate = item.playbackRate ?? 1;
 
   return (
     <div className="cc-insp-stack">
       <div className="cc-insp-row">
-        <span className="cc-insp-label">{t(plan.sourceDomain === 'edited-stream' ? '编辑词流区间' : '源区间')}</span>
+        <span className="cc-insp-label">{t('源区间')}</span>
         <span className="cc-insp-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
           {sourceFrame(plan.sourceWindow.startFrame)}–{sourceFrame(sourceOutFrame)}f
         </span>

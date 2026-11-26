@@ -32,7 +32,7 @@ const closeBtnStyle: CSSProperties = {
   width: 30, height: 30, border: 'none', borderRadius: 999, background: theme.panelAlt,
   color: theme.textDim, cursor: 'pointer', display: 'grid', placeItems: 'center', padding: 0,
 };
-const McpGuideDialog = lazy(() => loadMcpGuideDialog().then((module) => ({ default: module.McpGuideDialog })));
+const McpGuideContent = lazy(() => loadMcpGuideDialog().then((module) => ({ default: module.McpGuideContent })));
 type SettingsSnapshot = { models?: Record<string, string>; dataDir?: string; mediaDir?: string; restartRequired?: boolean };
 
 function AboutSettings() {
@@ -73,7 +73,6 @@ function AboutSettings() {
 export function SettingsDialog({ onClose, initialVendor }: { onClose: () => void; initialVendor?: string }) {
   const t = useT();
   const [autoApproveExternal, setAutoApproveExternal] = useExternalAutoApprove();
-  const [showGuide, setShowGuide] = useState(false);
   const [page, setPage] = useState(initialVendor?.includes('music') ? '本地工具' : '常规');
   const [snapshot, setSnapshot] = useState<SettingsSnapshot>({});
   const [values, setValues] = useState<Record<string, string>>({});
@@ -95,7 +94,7 @@ export function SettingsDialog({ onClose, initialVendor }: { onClose: () => void
     return () => { alive = false; };
   }, []);
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => { if (event.key === 'Escape' && !showGuide) close(); };
+    const handler = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   });
@@ -123,7 +122,6 @@ export function SettingsDialog({ onClose, initialVendor }: { onClose: () => void
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }
   };
-  if (showGuide) return <Suspense fallback={<div role="status">{t('加载中…')}</div>}><McpGuideDialog onClose={() => setShowGuide(false)} /></Suspense>;
   const dialog = (
     <div className="cc-settings-backdrop" role="presentation" onMouseDown={close} style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'grid', placeItems: 'center', padding: '48px 16px 24px', background: themeAlpha.shadow(0.55) }}>
       <section className="cc-settings-readable" role="dialog" aria-modal="true" aria-label={t('设置')} onMouseDown={(event) => event.stopPropagation()} style={{ width: 'min(820px, 94vw)', maxHeight: 'calc(100vh - 72px)', display: 'flex', flexDirection: 'column', borderRadius: 18, border: '1px solid transparent', background: theme.panel, color: theme.text, fontSize: 15, boxShadow: `0 20px 56px ${themeAlpha.shadow(0.65)}`, overflow: 'hidden' }}>
@@ -196,8 +194,7 @@ export function SettingsDialog({ onClose, initialVendor }: { onClose: () => void
             <LocalModelPackPane packIds={['rhythm-lite']} />
             <SemanticModelPackPane />
           </div>}
-          {page === '外部控制' && <section style={{ display: 'grid', gap: 16 }}>
-            <p style={{ margin: 0 }}>{t('在 Codex 中下达剪辑命令，通过 MCP 操作当前工程。软件本身不运行聊天模型，也无需填写 AI API 密钥。')}</p>
+          {page === '外部控制' && <section style={{ display: 'grid', gap: 14 }}>
             <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '12px 14px', borderRadius: 12, background: theme.panelAlt, border: `1px solid ${theme.border}`, cursor: 'pointer' }}>
               <span style={{ display: 'grid', gap: 3 }}>
                 <strong style={{ fontSize: 14 }}>{t('自动允许所有外部操作（免反复确认）')}</strong>
@@ -214,9 +211,9 @@ export function SettingsDialog({ onClose, initialVendor }: { onClose: () => void
                 aria-label={t('自动允许所有外部操作')}
               />
             </label>
-            <div>
-              <button className="cc-settings-btn" style={buttonStyle} onClick={() => setShowGuide(true)}>{t('打开外部控制连接指南')}</button>
-            </div>
+            <Suspense fallback={<div role="status" style={{ color: theme.textMuted, fontSize: 13 }}>{t('正在读取外部客户端状态…')}</div>}>
+              <McpGuideContent showAutoApprove={false} />
+            </Suspense>
           </section>}
           {page === '关于' && <AboutSettings />}
         </div>

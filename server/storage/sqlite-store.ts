@@ -43,6 +43,7 @@ let databaseHadKvTableAtOpen = false;
 let migrationTail: Promise<void> = Promise.resolve();
 let processPhase: SQLiteMigrationPhase = 'legacy';
 let migrationError: string | undefined;
+let sidecarSynchronized = false;
 
 type MigrationBarrierRelease = () => void | Promise<void>;
 type MigrationBarrier = () => void | MigrationBarrierRelease | Promise<void | MigrationBarrierRelease>;
@@ -76,7 +77,7 @@ function openDatabase(): DatabaseSync {
   databaseHadKvTableAtOpen = existingKvTable?.name === 'kv';
   db.exec(`
     PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = FULL;
+    PRAGMA synchronous = NORMAL;
     CREATE TABLE IF NOT EXISTS kv (
       k TEXT PRIMARY KEY,
       v TEXT NOT NULL
@@ -102,6 +103,7 @@ function authoritativeReceipt(): ImportReceipt | null {
 export function sqliteStoreEnabled(): boolean {
   const env = process.env[SQLITE_STORE_ENV];
   if (env !== undefined && env !== '1') return false;
+  if (processPhase === 'complete' && database !== null) return true;
   const receipt = authoritativeReceipt();
   return receipt !== null && receipt.phase >= RECEIPT_PHASE;
 }
@@ -139,6 +141,7 @@ async function migrateUnderLease(): Promise<ImportSummary> {
       throw new Error('SQLite migration completed without a phase-2 authoritative receipt');
     }
     processPhase = 'complete';
+    sidecarSynchronized = true;
     return summary;
   } catch (error) {
     processPhase = 'failed';
@@ -182,6 +185,7 @@ export function initializeSqliteProjectStore(): Promise<SQLiteMigrationStatus> {
       processPhase = 'complete';
       migrationError = undefined;
       synchronizeImportReceiptSidecar(openDatabase(), runtimeProfile());
+      sidecarSynchronized = true;
       return sqliteMigrationStatus();
     }
     // Existing DB = interrupted/incomplete migration, including phase 1.
@@ -198,6 +202,12 @@ export function initializeSqliteProjectStore(): Promise<SQLiteMigrationStatus> {
     }
     return sqliteMigrationStatus();
   });
+}
+
+/** Fast-path startup readiness check once SQLite + sidecar are verified. */
+export async function ensureSqliteStoreReady(): Promise<void> {
+  if (sqliteStoreEnabled() && sidecarSynchronized) return;
+  await initializeSqliteProjectStore();
 }
 
 export interface CleanupResult {
@@ -293,6 +303,7 @@ export function resetSqliteStoreForTests(): void {
   migrationTail = Promise.resolve();
   processPhase = 'legacy';
   migrationError = undefined;
+  sidecarSynchronized = false;
 }
 
 const encode = (value: unknown): string => JSON.stringify(value);
@@ -351,6 +362,19 @@ export async function sqliteReadEntry(key: string): Promise<StoredEntryValue> {
     | { v: string }
     | undefined;
   return row ? { found: true, value: decode(row.v) } : { found: false };
+}
+
+/** Lightweight existence check without JSON.parse. */
+export function sqliteHasEntry(key: string): boolean {
+  return openDatabase().prepare('SELECT 1 FROM kv WHERE k = ? LIMIT 1').get(key) !== undefined;
+}
+
+/** Raw JSON string read without JSON.parse (for hash/cache checks). */
+export function sqliteReadRawEntry(key: string): string | null {
+  const row = openDatabase().prepare('SELECT v FROM kv WHERE k = ?').get(key) as
+    | { v: string }
+    | undefined;
+  return row ? row.v : null;
 }
 
 /** Single key write (equivalent of writeStoredEntry). */

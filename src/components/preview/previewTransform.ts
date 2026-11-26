@@ -44,6 +44,7 @@ export interface PreviewRect extends PreviewPoint, PreviewSize {}
 
 /** Edge of the selection box (local axes after rotation). */
 export type PreviewScaleEdge = 'n' | 's' | 'e' | 'w';
+export type PreviewResizeHandle = PreviewScaleEdge | 'nw' | 'ne' | 'se' | 'sw';
 
 export interface EffectivePreviewTransform {
   x: number;
@@ -459,14 +460,14 @@ export function edgeResizeClipMask(
 }
 
 /**
- * Resize a composition mosaic item's region from an edge handle without touching `transform.crop`.
+ * Resize a composition mosaic item's region from an edge or corner handle without touching `transform.crop`.
  */
-export function edgeResizeCompositionMosaic(
+export function resizeCompositionMosaic(
   state: Pick<TimelineState, 'width' | 'height'>,
   transform: EffectivePreviewTransform,
   startMosaic: CompositionMosaic,
   currentPoint: PreviewPoint,
-  edge: PreviewScaleEdge,
+  handle: PreviewResizeHandle,
 ): CompositionMosaic {
   if (state.width <= 0 || state.height <= 0) return startMosaic;
   const local = inverseTransform(state, currentPoint, transform);
@@ -477,16 +478,19 @@ export function edgeResizeCompositionMosaic(
   let right = clampUnit(startMosaic.centerX + startMosaic.width / 2);
   let top = clampUnit(startMosaic.centerY - startMosaic.height / 2);
   let bottom = clampUnit(startMosaic.centerY + startMosaic.height / 2);
-  if (edge === 'e') {
+  if (handle.includes('e')) {
     right = clampUnit(nx, Math.min(1, left + minSpan), 1);
     if (right - left < minSpan) left = Math.max(0, right - minSpan);
-  } else if (edge === 'w') {
+  }
+  if (handle.includes('w')) {
     left = clampUnit(nx, 0, Math.max(0, right - minSpan));
     if (right - left < minSpan) right = Math.min(1, left + minSpan);
-  } else if (edge === 's') {
+  }
+  if (handle.includes('s')) {
     bottom = clampUnit(ny, Math.min(1, top + minSpan), 1);
     if (bottom - top < minSpan) top = Math.max(0, bottom - minSpan);
-  } else {
+  }
+  if (handle.includes('n')) {
     top = clampUnit(ny, 0, Math.max(0, bottom - minSpan));
     if (bottom - top < minSpan) bottom = Math.min(1, top + minSpan);
   }
@@ -499,6 +503,19 @@ export function edgeResizeCompositionMosaic(
     width,
     height,
   };
+}
+
+/**
+ * Resize a composition mosaic item's region from an edge handle without touching `transform.crop`.
+ */
+export function edgeResizeCompositionMosaic(
+  state: Pick<TimelineState, 'width' | 'height'>,
+  transform: EffectivePreviewTransform,
+  startMosaic: CompositionMosaic,
+  currentPoint: PreviewPoint,
+  edge: PreviewScaleEdge,
+): CompositionMosaic {
+  return resizeCompositionMosaic(state, transform, startMosaic, currentPoint, edge);
 }
 
 /** @deprecated Prefer edgeCropPreviewTransform — edge handles crop, they do not stretch. */

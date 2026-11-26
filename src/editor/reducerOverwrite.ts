@@ -8,7 +8,7 @@ import { unlinkItems } from './linkGroups';
 import { reconcileTimelineCaptionReferences, remapSplitTimelineCaptionReferences } from '../captions/reconcileSources';
 import { reconcileTransitions } from './transitionReconcile';
 import { hasOperationalTranscript } from '../transcript/types';
-import { splitClipTranscript } from '../transcript/edit';
+import { partitionClipTranscriptAtSourceFrame } from '../transcript/edit';
 import { retimePatchForItem, type OverwriteLaneAction } from './reducerTimelineHelpers';
 
 export function splitTimelineItem(
@@ -19,13 +19,8 @@ export function splitTimelineItem(
 ): [TimelineItem, TimelineItem] {
   const cut = atFrame - item.startFrame;
   const sourceWindow = sourceWindowForTimelineRange(item, 0, cut);
-  // Word-driven audio partitions its already-edited word stream in visible timeline time.
-  const wordDriven = item.kind === 'audio' && hasOperationalTranscript(item);
-  const transcriptCut = wordDriven
-    ? sourceWindowForTimelineRange({ ...item, playbackRate: 1 }, 0, cut).endFrame
-    : sourceWindow.endFrame;
   const transcriptParts = hasOperationalTranscript(item)
-    ? splitClipTranscript(item, s.fps, transcriptCut)
+    ? partitionClipTranscriptAtSourceFrame(item, s.fps, sourceWindow.endFrame)
     : null;
   const keyframeParts = item.keyframes ? splitItemKeyframes(item.keyframes, cut) : null;
   const left: TimelineItem = {
@@ -35,10 +30,7 @@ export function splitTimelineItem(
     fadeOutFrames: undefined,
     ...(transcriptParts ? {
       transcript: transcriptParts.left.transcript,
-      deletedWordIdx: transcriptParts.left.deletedWordIdx,
       variants: transcriptParts.left.variants,
-      gapCapsMs: transcriptParts.left.gapCapsMs,
-      transcriptPlayOrder: undefined,
     } : {}),
     ...(keyframeParts ? { keyframes: keyframeParts[0] } : {}),
   };
@@ -48,14 +40,11 @@ export function splitTimelineItem(
     id: newId,
     startFrame: atFrame,
     durationInFrames: item.durationInFrames - cut,
-    srcInFrame: wordDriven && transcriptParts ? 0 : sourceWindow.endFrame,
+    srcInFrame: sourceWindow.endFrame,
     fadeInFrames: undefined,
     ...(transcriptParts ? {
       transcript: transcriptParts.right.transcript,
-      deletedWordIdx: transcriptParts.right.deletedWordIdx,
       variants: transcriptParts.right.variants,
-      gapCapsMs: transcriptParts.right.gapCapsMs,
-      transcriptPlayOrder: undefined,
     } : {}),
     ...(keyframeParts ? { keyframes: keyframeParts[1] } : {}),
   };

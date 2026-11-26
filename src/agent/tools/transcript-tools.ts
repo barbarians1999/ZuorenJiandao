@@ -4,6 +4,7 @@ import { defaultTrackId, resolveTrackId, trackAlias, type TimelineItem, type Tra
 import { transcribePath, TranscriptionError } from '../../transcript/provider';
 import { hasOperationalTranscript, isTranscriptionProviderId } from '../../transcript/types';
 import { fillerIndices } from '../../transcript/edit';
+import { resolveTranscriptUnit, resolveTranscriptUnitsForItems } from '../../transcript/trackEditCompiler';
 import { createVariant, findVariantByLang, upsertVariant } from '../../transcript/variants';
 import { buildSilenceGapCaps, parseCleanOnly, parseSilenceRule, type SilenceRule } from '../../transcript/clean';
 import type { Action } from '../../editor/reduce';
@@ -41,14 +42,15 @@ interface ListedGap {
   afterText: string;
 }
 
-/** Gaps between consecutive kept words (same rules as UI Gap rows). */
-function listGapsOnClip(it: TimelineItem, minGapSeconds = 0.25): ListedGap[] {
-  const words = it.transcript ?? [];
+/** Gaps between consecutive kept words on a logical unit. */
+function listGapsOnClip(state: Parameters<typeof resolveTranscriptUnit>[0], it: TimelineItem, minGapSeconds = 0.25): ListedGap[] {
+  const unit = resolveTranscriptUnit(state, it.id);
+  const words = unit?.canonicalWords ?? it.transcript ?? [];
   if (words.length < 2) return [];
-  const del = new Set(it.deletedWordIdx ?? []);
+  const del = unit?.deletedSet ?? new Set<number>();
   const kept = words.map((w, i) => ({ w, i })).filter((x) => !del.has(x.i));
   const minMs = Math.max(0, minGapSeconds * 1000);
-  const caps = it.gapCapsMs ?? {};
+  const caps = unit?.gapCapsMs ?? {};
   const out: ListedGap[] = [];
   for (let k = 1; k < kept.length; k++) {
     const prev = kept[k - 1]!;
@@ -73,14 +75,14 @@ function listGapsOnClip(it: TimelineItem, minGapSeconds = 0.25): ListedGap[] {
 }
 
 function resolveAfterWordIndex(
-  it: TimelineItem,
+  words: readonly { text: string }[],
   args: Args,
   gaps: ListedGap[],
 ): { afterWordIndex: number } | { error: string } {
   if (typeof args.afterWordIndex === 'number' && Number.isFinite(args.afterWordIndex)) {
     const i = Math.round(args.afterWordIndex);
-    if (i <= 0 || i >= (it.transcript?.length ?? 0)) {
-      return { error: `afterWordIndex ${i} out of range (1..${(it.transcript?.length ?? 1) - 1})` };
+    if (i <= 0 || i >= words.length) {
+      return { error: `afterWordIndex ${i} out of range (1..${Math.max(1, words.length - 1)})` };
     }
     return { afterWordIndex: i };
   }
@@ -90,9 +92,8 @@ function resolveAfterWordIndex(
     return { afterWordIndex: g.afterWordIndex };
   }
   if (typeof args.afterText === 'string' && args.afterText.trim()) {
-    const m = findPhrase(it.transcript!, args.afterText);
+    const m = findPhrase(words as Parameters<typeof findPhrase>[0], args.afterText);
     if (!m) return { error: `afterText not found: ${args.afterText}` };
-    // gap is immediately before the first word of the match
     if (m.start <= 0) return { error: 'afterText matches the start of the transcript; no gap before it' };
     return { afterWordIndex: m.start };
   }
@@ -128,19 +129,23 @@ async function manageTranscript(args: Args, ctx: AgentContext, track: TrackId, a
     }
   }
 
-  if (!hasOperationalTranscript(it)) return { error: `item ${it.id} has no current transcript; call transcribe_track first` };
+  const unit = resolveTranscriptUnit(ctx.getState(), it.id);
+  if (!unit && !hasOperationalTranscript(it)) return { error: `item ${it.id} has no current transcript; call transcribe_track first` };
+  const canonicalWords = unit?.canonicalWords ?? it.transcript!;
+  const canonicalVariants = unit?.sourceVariants ?? it.variants;
+  const anchorId = unit?.anchorItemId ?? it.id;
 
   if (action === 'clear_edits') {
-    const deletedWords = (it.deletedWordIdx ?? []).length;
-    const gapOverrides = Object.keys(it.gapCapsMs ?? {}).length;
-    const hadSilenceCap = it.silenceFrames !== undefined;
-    const hadPlayOrder = Array.isArray(it.transcriptPlayOrder) && it.transcriptPlayOrder.length > 0;
-    ctx.commands.clearEdits(it.id);
-    const after = ctx.getState().items.find((x) => x.id === it.id);
+    const deletedWords = unit?.deletedWordIdx.length ?? 0;
+    const gapOverrides = Object.keys(unit?.gapCapsMs ?? {}).length;
+    const hadSilenceCap = false;
+    const hadPlayOrder = Boolean(unit?.playOrder?.length);
+    ctx.commands.clearEdits(anchorId);
+    const after = ctx.getState().items.find((x) => x.id === anchorId);
     return {
       ok: true,
       action,
-      itemId: it.id,
+      itemId: anchorId,
       restored: {
         deletedWords,
         gapOverrides,
@@ -148,52 +153,53 @@ async function manageTranscript(args: Args, ctx: AgentContext, track: TrackId, a
         playOrder: hadPlayOrder,
       },
       durationInFrames: after?.durationInFrames ?? null,
-      note: 'Restored raw transcript edits (deleted words, silence/gap caps, play order). ASR word text and speaker labels are unchanged.',
+      note: 'Restored raw transcript edits on the track (deleted words, silence/gap caps, play order). ASR word text and speaker labels are unchanged.',
     };
   }
 
   if (action === 'set_play_order') {
     if (args.clearPlayOrder === true || args.playOrder === null) {
-      ctx.commands.setTranscriptPlayOrder(it.id, null);
-      const after = ctx.getState().items.find((x) => x.id === it.id);
+      ctx.commands.setTranscriptPlayOrder(anchorId, null);
+      const afterUnit = resolveTranscriptUnit(ctx.getState(), anchorId);
+      const totalDur = afterUnit?.clips.reduce((s, c) => s + c.durationInFrames, 0) ?? null;
       return {
         ok: true,
         action,
-        itemId: it.id,
+        itemId: anchorId,
         playOrder: null,
-        durationInFrames: after?.durationInFrames ?? null,
+        durationInFrames: totalDur,
         note: 'Chronological word order restored.',
       };
     }
     if (!Array.isArray(args.playOrder)) {
       return { error: 'set_play_order needs playOrder:[wordIndex,…] or clearPlayOrder:true' };
     }
-    const n = it.transcript.length;
+    const n = canonicalWords.length;
     const cleaned = args.playOrder
       .map((v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : NaN))
       .filter((i) => Number.isInteger(i) && i >= 0 && i < n);
     if (!cleaned.length) return { error: `playOrder must list word indices in 0..${n - 1}` };
-    ctx.commands.setTranscriptPlayOrder(it.id, cleaned);
-    const after = ctx.getState().items.find((x) => x.id === it.id);
+    ctx.commands.setTranscriptPlayOrder(anchorId, cleaned);
+    const afterUnit = resolveTranscriptUnit(ctx.getState(), anchorId);
+    const totalDur = afterUnit?.clips.reduce((s, c) => s + c.durationInFrames, 0) ?? null;
     return {
       ok: true,
       action,
-      itemId: it.id,
-      playOrder: after?.transcriptPlayOrder ?? cleaned,
-      durationInFrames: after?.durationInFrames ?? null,
+      itemId: anchorId,
+      playOrder: afterUnit?.playOrder ?? cleaned,
+      durationInFrames: totalDur,
     };
   }
 
   if (action === 'fix') {
-    // fix supports ASR word correction or speaker rename/merge, routed by fields.
     if (typeof args.from === 'string' || typeof args.to === 'string') {
       const from = args.from, to = args.to;
       if (typeof from !== 'string' || !from.trim()) return { error: 'speaker fix needs from (the existing speaker label)' };
       if (typeof to !== 'string' || !to.trim()) return { error: 'speaker fix needs to (the new speaker name; an existing label merges the two)' };
-      const wordsChanged = it.transcript.filter((w) => w.speaker === from).length;
+      const wordsChanged = canonicalWords.filter((w) => w.speaker === from).length;
       if (wordsChanged === 0) return { error: `no word labeled speaker "${from}" in item ${it.id}` };
-      ctx.commands.renameSpeaker(it.id, from, to); // Only .speaker changes.
-      return { ok: true, action, kind: 'speaker', itemId: it.id, from, to, wordsChanged };
+      ctx.commands.renameSpeaker(anchorId, from, to);
+      return { ok: true, action, kind: 'speaker', itemId: anchorId, from, to, wordsChanged };
     }
     const text = args.text;
     if (typeof text !== 'string' || !text.trim()) return { error: 'word fix needs text (the corrected word); or pass from/to for a speaker fix' };
@@ -201,46 +207,44 @@ async function manageTranscript(args: Args, ctx: AgentContext, track: TrackId, a
     if (typeof args.wordIndex === 'number') wordIndex = args.wordIndex;
     else if (typeof args.find === 'string' && args.find.trim()) {
       const findStr = args.find;
-      wordIndex = it.transcript.findIndex((w) => w.text === findStr);
-      if (wordIndex < 0) { const target = normalize(findStr); wordIndex = it.transcript.findIndex((w) => normalize(w.text) === target); }
+      wordIndex = canonicalWords.findIndex((w) => w.text === findStr);
+      if (wordIndex < 0) { const target = normalize(findStr); wordIndex = canonicalWords.findIndex((w) => normalize(w.text) === target); }
       if (wordIndex < 0) return { error: `word not found: ${findStr}` };
     } else return { error: 'provide wordIndex or find to locate the word' };
-    const word = it.transcript[wordIndex];
-    if (!word) return { error: `wordIndex ${wordIndex} out of range (0..${it.transcript.length - 1})` };
-    ctx.commands.fixTranscriptWord(it.id, wordIndex, text); // Only .text changes.
-    return { ok: true, action, kind: 'word', itemId: it.id, wordIndex, from: word.text, to: text };
+    const word = canonicalWords[wordIndex];
+    if (!word) return { error: `wordIndex ${wordIndex} out of range (0..${canonicalWords.length - 1})` };
+    ctx.commands.fixTranscriptWord(anchorId, wordIndex, text);
+    return { ok: true, action, kind: 'word', itemId: anchorId, wordIndex, from: word.text, to: text };
   }
 
   if (action === 'translation_list') {
-    const variants = it.variants ?? [];
-    return { ok: true, action, itemId: it.id, original: { words: it.transcript.length }, variants: variants.map((v) => ({ id: v.id, lang: v.lang, kind: v.kind, words: v.words.length })) };
+    const variants = canonicalVariants ?? [];
+    return { ok: true, action, itemId: anchorId, original: { words: canonicalWords.length }, variants: variants.map((v) => ({ id: v.id, lang: v.lang, kind: v.kind, words: v.words.length })) };
   }
   if (action === 'translation_read') {
     const lang = String(args.lang ?? args.targetLanguage ?? '').trim();
     if (!lang) return { error: 'translation_read needs lang / targetLanguage (which variant to read)' };
-    const v = it.variants ? findVariantByLang(it.variants, lang, 'translation') : undefined;
+    const v = canonicalVariants ? findVariantByLang(canonicalVariants, lang, 'translation') : undefined;
     if (!v) return { error: `no "${lang}" translation variant on item ${it.id}; create it with translation_create / translation_ensure first` };
-    return { ok: true, action, itemId: it.id, lang: v.lang, variantId: v.id, words: v.words.length, text: v.words.map((w) => w.text).join(' ').slice(0, 400) };
+    return { ok: true, action, itemId: anchorId, lang: v.lang, variantId: v.id, words: v.words.length, text: v.words.map((w) => w.text).join(' ').slice(0, 400) };
   }
 
-  // translation_create (always (re)translate + overwrite) / translation_ensure (idempotent: reuse if present).
   if (action === 'translation_create' || action === 'translation_ensure') {
     const lang = String(args.lang ?? '').trim();
     if (!lang) return { error: `${action} needs lang (target language, e.g. "English")` };
-    const existing = findVariantByLang(it.variants, lang, 'translation');
+    const existing = findVariantByLang(canonicalVariants, lang, 'translation');
     if (existing && action === 'translation_ensure') {
-      return { ok: true, action, itemId: it.id, variantId: existing.id, lang: existing.lang, words: existing.words.length, reused: true };
+      return { ok: true, action, itemId: anchorId, variantId: existing.id, lang: existing.lang, words: existing.words.length, reused: true };
     }
     try {
-      // Each variant word is keyed by source index i; timing always comes from resolveVariantText.
       const texts = args.texts;
-      if (!Array.isArray(texts) || texts.length !== it.transcript.length || !texts.every((text) => typeof text === 'string')) {
+      if (!Array.isArray(texts) || texts.length !== canonicalWords.length || !texts.every((text) => typeof text === 'string')) {
         return { error: 'Supply texts with one translated string per source word. Translation is performed externally in Codex, not in the editor.' };
       }
       const words = texts.map((text, i) => ({ i, text }));
-      const variant = createVariant({ lang, kind: 'translation', words, id: existing?.id }); // reuse id → overwrite
-      ctx.commands.setItemVariants(it.id, upsertVariant(it.variants, variant));
-      return { ok: true, action, itemId: it.id, variantId: variant.id, lang: variant.lang, words: variant.words.length, reused: false };
+      const variant = createVariant({ lang, kind: 'translation', words, id: existing?.id });
+      ctx.commands.setItemVariants(anchorId, upsertVariant(canonicalVariants, variant));
+      return { ok: true, action, itemId: anchorId, variantId: variant.id, lang: variant.lang, words: variant.words.length, reused: false };
     } catch (e) {
       return { error: `translation failed: ${e instanceof Error ? e.message : String(e)}` };
     }
@@ -301,13 +305,12 @@ export async function execTranscriptTool(name: string, args: Args, ctx: AgentCon
       // Parameter surface (asset/fuzzy/includeWordTimestamps/limit) + full project search: transcript-find.ts.
       return execFindTranscript(args, ctx);
     case 'clean_script': {
-      // Whole-track batch: clean every
-      // transcribed clip on the track, not just the first. itemId narrows to one clip.
       const targetId = typeof args.itemId === 'string' ? args.itemId : '';
-      const clips = targetId
+      const rawClips = targetId
         ? state.items.filter((x) => (x.id === targetId || x.id.startsWith(targetId)) && hasOperationalTranscript(x))
         : state.items.filter((x) => x.track === track && hasOperationalTranscript(x));
-      if (!clips.length) return { error: targetId ? `no transcribed item ${targetId}` : `no transcript on ${alias}; call transcribe_track first` };
+      const units = resolveTranscriptUnitsForItems(state, rawClips);
+      if (!units.length) return { error: targetId ? `no transcribed item ${targetId}` : `no transcript on ${alias}; call transcribe_track first` };
       const fps = state.fps;
       const usesTypedArgs = args.only != null || args.silence != null || args.longSilence != null;
       let selection: { fillers: boolean; silence: boolean };
@@ -333,37 +336,35 @@ export async function execTranscriptTool(name: string, args: Args, ctx: AgentCon
       const removeFillers = selection.fillers;
       let fillersRemoved = 0;
       const actions: Action[] = [];
-      for (const it of clips) {
-        const fillers = removeFillers ? fillerIndices(it.transcript!) : [];
-        fillersRemoved += fillers.filter((index) => !(it.deletedWordIdx ?? []).includes(index)).length;
+      for (const unit of units) {
+        const fillers = removeFillers ? fillerIndices(unit.canonicalWords) : [];
+        fillersRemoved += fillers.filter((index) => !unit.deletedSet.has(index)).length;
         if (selection.silence && silenceRule) {
           actions.push({
             type: 'cleanScript',
-            id: it.id,
+            id: unit.anchorItemId,
             removeFillers,
-            gapCapsMs: buildSilenceGapCaps(it.transcript!, silenceRule, {
-              silenceFrames: it.silenceFrames,
-              gapCapsMs: it.gapCapsMs,
+            gapCapsMs: buildSilenceGapCaps(unit.canonicalWords, silenceRule, {
+              gapCapsMs: unit.gapCapsMs,
               fps,
             }),
             replaceGapCaps: true,
             cutPadFrames,
           });
         } else if (!usesTypedArgs) {
-          actions.push({ type: 'cleanScript', id: it.id, silenceFrames, removeFillers, cutPadFrames });
+          actions.push({ type: 'cleanScript', id: unit.anchorItemId, silenceFrames, removeFillers, cutPadFrames });
         } else if (cutPadFrames !== undefined) {
-          // When only changing the breathing port, keep the existing compression settings of the clip as they are, so they won't be cleared by cleanScript.
-          actions.push({ type: 'cleanScript', id: it.id, removeFillers, cutPadFrames, silenceFrames: it.silenceFrames });
+          actions.push({ type: 'cleanScript', id: unit.anchorItemId, removeFillers, cutPadFrames });
         } else if (fillers.length) {
-          actions.push({ type: 'deleteWords', id: it.id, idxs: fillers });
+          actions.push({ type: 'deleteWords', id: unit.anchorItemId, idxs: fillers });
         }
       }
       ctx.commands.batch(actions, 'Clean script');
       return {
         ok: true,
         track: alias,
-        clips: clips.length,
-        itemIds: clips.map((clip) => clip.id),
+        clips: units.length,
+        itemIds: units.map((unit) => unit.anchorItemId),
         only: usesTypedArgs ? Object.entries(selection).filter(([, enabled]) => enabled).map(([key]) => key).join(',') : null,
         silenceRule: silenceRule ?? null,
         maxPauseSeconds: (args.maxPauseSeconds as number) ?? null,
@@ -373,16 +374,19 @@ export async function execTranscriptTool(name: string, args: Args, ctx: AgentCon
     case 'edit_gap': {
       const action = String(args.action ?? '');
       const it = resolveClip(ctx, track, args.itemId, true);
-      if (!hasOperationalTranscript(it)) {
+      const unit = it ? resolveTranscriptUnit(state, it.id) : null;
+      if (!it || (!unit && !hasOperationalTranscript(it))) {
         return { error: args.itemId ? `no transcribed item ${String(args.itemId)}` : `no transcript on ${alias}; call transcribe_track first` };
       }
+      const words = unit?.canonicalWords ?? it.transcript!;
+      const anchorId = unit?.anchorItemId ?? it.id;
       const minGap = typeof args.minGapSeconds === 'number' ? args.minGapSeconds : 0.25;
-      const gaps = listGapsOnClip(it, minGap);
+      const gaps = listGapsOnClip(state, it, minGap);
 
       if (action === 'list') {
         return {
           ok: true,
-          itemId: it.id,
+          itemId: anchorId,
           track: trackAlias(ctx.getState(), it.track),
           name: it.name,
           gapCount: gaps.length,
@@ -391,36 +395,36 @@ export async function execTranscriptTool(name: string, args: Args, ctx: AgentCon
         };
       }
 
-      const loc = resolveAfterWordIndex(it, args, gaps);
+      const loc = resolveAfterWordIndex(words, args, gaps);
       if ('error' in loc) return loc;
       const afterWordIndex = loc.afterWordIndex;
-      const prevWord = it.transcript[afterWordIndex - 1];
-      const nextWord = it.transcript[afterWordIndex];
+      const prevWord = words[afterWordIndex - 1];
+      const nextWord = words[afterWordIndex];
       const rawSec = prevWord && nextWord
         ? Math.max(0, (nextWord.start - prevWord.end) / 1000)
         : null;
 
       if (action === 'delete') {
-        ctx.commands.setGapCap(it.id, afterWordIndex, 0);
+        ctx.commands.setGapCap(anchorId, afterWordIndex, 0);
         return {
           ok: true,
           action: 'delete',
-          itemId: it.id,
+          itemId: anchorId,
           afterWordIndex,
           gapSecondsBefore: rawSec,
           appliedSeconds: 0,
-          note: 'Gap silence removed; clip re-timed via gapCapsMs.',
+          note: 'Gap silence removed; timeline track clips trimmed/split.',
         };
       }
       if (action === 'restore') {
-        ctx.commands.setGapCap(it.id, afterWordIndex, null);
+        ctx.commands.setGapCap(anchorId, afterWordIndex, null);
         return {
           ok: true,
           action: 'restore',
-          itemId: it.id,
+          itemId: anchorId,
           afterWordIndex,
           gapSeconds: rawSec,
-          note: 'Per-gap override cleared; original pause restored (unless clean_script global cap still applies).',
+          note: 'Pause restored to source gap duration on track.',
         };
       }
       if (action === 'cap') {
@@ -428,11 +432,11 @@ export async function execTranscriptTool(name: string, args: Args, ctx: AgentCon
           return { error: 'cap requires maxSeconds ≥ 0 (e.g. 0.2)' };
         }
         const maxMs = Math.round(args.maxSeconds * 1000);
-        ctx.commands.setGapCap(it.id, afterWordIndex, maxMs);
+        ctx.commands.setGapCap(anchorId, afterWordIndex, maxMs);
         return {
           ok: true,
           action: 'cap',
-          itemId: it.id,
+          itemId: anchorId,
           afterWordIndex,
           gapSecondsBefore: rawSec,
           appliedSeconds: Math.min(rawSec ?? args.maxSeconds, args.maxSeconds),
@@ -443,13 +447,16 @@ export async function execTranscriptTool(name: string, args: Args, ctx: AgentCon
     }
     case 'delete_text': {
       const it = trackClip(ctx, track, true);
-      if (!hasOperationalTranscript(it)) return { error: `no current transcript on ${alias}; call transcribe_track first` };
-      const m = findPhrase(it.transcript, String(args.query ?? ''));
+      const unit = it ? resolveTranscriptUnit(state, it.id) : null;
+      if (!it || (!unit && !hasOperationalTranscript(it))) return { error: `no current transcript on ${alias}; call transcribe_track first` };
+      const words = unit?.canonicalWords ?? it.transcript!;
+      const anchorId = unit?.anchorItemId ?? it.id;
+      const m = findPhrase(words, String(args.query ?? ''));
       if (!m) return { deleted: false, query: args.query, note: 'phrase not found' };
       const idxs = Array.from({ length: m.count }, (_, k) => m.start + k);
-      const text = it.transcript.slice(m.start, m.start + m.count).map((w) => w.text).join(' ');
-      ctx.commands.deleteWords(it.id, idxs);
-      return { ok: true, itemId: it.id, deletedWords: m.count, text };
+      const text = words.slice(m.start, m.start + m.count).map((w) => w.text).join(' ');
+      ctx.commands.deleteWords(anchorId, idxs);
+      return { ok: true, itemId: anchorId, deletedWords: m.count, text };
     }
     case 'manage_transcript':
       return manageTranscript(args, ctx, track, alias);

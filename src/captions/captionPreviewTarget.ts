@@ -1,13 +1,11 @@
 import type { TimelineItem } from '../editor/types';
 import type { CaptionStyle, CaptionStyleOverride } from './styles';
 import { buildCues, cueTextPatch, type CueRow } from './captionCues';
-import { hasCaptionCueStartedAt } from './captionPages';
+import { hasCaptionCueEndedAt, hasCaptionCueStartedAt } from './captionPages';
 import { buildLaneGroups } from './lanes';
 import { isManualCaptionEntry, removeManualCue, updateManualCue } from './manualCaptions';
 import { effectivePreset } from './renderStyles';
 import type { CaptionLayout, CaptionsData } from './types';
-
-const LINGER_MS = 1_500;
 
 interface PreviewCue {
   id?: string;
@@ -53,8 +51,7 @@ function activeCueIndex(rows: CueRow[], ms: number, fps: number): number {
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const prevEnd = index > 0 ? rows[index - 1]!.end : undefined;
     if (!hasCaptionCueStartedAt(rows[index]!.start, ms, fps, prevEnd)) continue;
-    const next = rows[index + 1];
-    return next || ms < rows[index]!.end + LINGER_MS ? index : -1;
+    if (!hasCaptionCueEndedAt(rows[index]!.start, rows[index]!.end, ms, fps)) return index;
   }
   return -1;
 }

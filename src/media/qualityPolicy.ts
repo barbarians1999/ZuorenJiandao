@@ -44,8 +44,9 @@ function readPreviewSourceInitial(): PreviewSourceMode {
     const raw = localStorage.getItem(PREVIEW_SOURCE_KEY);
     if (raw === 'auto' || raw === 'original' || raw === 'proxy') return raw;
   } catch { /* private mode */ }
-  // Keep existing projects on their original media unless the user opts in.
-  return 'original';
+  // Default to auto: heavy/long-GOP/high-bitrate sources get fast-seek proxies under balanced mode,
+  // while clean sources stay untouched and Master mode or explicit user choices remain respected.
+  return 'auto';
 }
 
 function emit(): void {

@@ -46,13 +46,41 @@ function ownershipCompatibility(entry: StoredEntryValue, projectId: string): 'ab
 }
 
 
+const MAX_PROJECT_REVISION_CACHE = 8;
+const projectRevisionCache = new Map<string, { raw: string; doc: ProjectDoc; revision: string }>();
+
+function cacheProjectRevision(projectId: string, raw: string, doc: ProjectDoc, revision: string): void {
+  projectRevisionCache.delete(projectId);
+  projectRevisionCache.set(projectId, { raw, doc, revision });
+  if (projectRevisionCache.size > MAX_PROJECT_REVISION_CACHE) {
+    const oldest = projectRevisionCache.keys().next().value;
+    if (oldest !== undefined) projectRevisionCache.delete(oldest);
+  }
+}
+
 async function storedProject(
   store: LockedProjectStore,
   projectId: string,
 ): Promise<{ doc: ProjectDoc; revision: string } | null> {
-  const entry = await store.readEntry(`project:${projectId}`);
+  const key = `project:${projectId}`;
+  const raw = store.readRawEntry ? await store.readRawEntry(key) : null;
+  if (raw !== null) {
+    const cached = projectRevisionCache.get(projectId);
+    if (cached && cached.raw === raw) {
+      projectRevisionCache.delete(projectId);
+      projectRevisionCache.set(projectId, cached);
+      return { doc: cached.doc, revision: cached.revision };
+    }
+  }
+  const entry = await store.readEntry(key);
   const doc = entry.found ? normalizedProject(entry.value) : null;
-  return doc ? { doc, revision: revisionOf(doc) } : null;
+  if (!doc) {
+    projectRevisionCache.delete(projectId);
+    return null;
+  }
+  const revision = revisionOf(doc);
+  if (raw !== null) cacheProjectRevision(projectId, raw, doc, revision);
+  return { doc, revision };
 }
 
 export async function claimBrowserProjectOwnership(

@@ -1,4 +1,5 @@
 import type { TimelineState } from '../editor/types';
+import { hasPotentialClipAudio } from '../../shared/timeline-media-schedule.mjs';
 
 /**
  * Remotion requires this value to stay immutable for the mounted Player.
@@ -11,7 +12,7 @@ export const PREVIEW_SHARED_AUDIO_TAGS = 32;
 export function previewAudioTagCount(state: TimelineState): number {
   const events: Array<{ frame: number; delta: 1 | -1 }> = [];
   for (const item of state.items) {
-    if ((item.kind !== 'audio' && item.kind !== 'video') || !item.src || item.volume === 0) continue;
+    if (!hasPotentialClipAudio(item)) continue;
     const track = state.tracks?.[item.track];
     if (track?.hidden || track?.muted) continue;
     events.push({ frame: item.startFrame, delta: 1 });

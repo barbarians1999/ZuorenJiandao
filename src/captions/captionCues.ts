@@ -34,15 +34,31 @@ export function fmtCueMs(ms: number): string {
   return `${String(minutes).padStart(2, '0')}:${(seconds - minutes * 60).toFixed(1).padStart(4, '0')}`;
 }
 
-/** Renders a paged recalculation of SingleStreamCaptions, but retains the override keys for each visible word.*/
-export function buildCues(captions: CaptionsData, items: TimelineItem[], fps: number): CueRow[] {
+const cuesMemo = new WeakMap<TimelineItem[], WeakMap<CaptionsData, Map<number, CueRow[]>>>();
+
+function computeCues(captions: CaptionsData, items: TimelineItem[], fps: number): CueRow[] {
+  const manualIndexByEntry = new Map<CaptionSourceEntry, Map<string, number>>();
+  const lookupManualIndex = (entry: CaptionSourceEntry, pageWord: TranscriptWord | undefined): number => {
+    const words = entry.words;
+    if (!words || !pageWord) return -1;
+    if (pageWord.id) {
+      let byId = manualIndexByEntry.get(entry);
+      if (!byId) {
+        byId = new Map();
+        for (let i = 0; i < words.length; i += 1) {
+          const wordId = words[i]?.id;
+          if (wordId && !byId.has(wordId)) byId.set(wordId, i);
+        }
+        manualIndexByEntry.set(entry, byId);
+      }
+      return byId.get(pageWord.id) ?? -1;
+    }
+    return words.findIndex((word) => word.start === pageWord.start && word.end === pageWord.end && word.text === pageWord.text);
+  };
   return buildCaptionPages(captions, items, fps).map((identity) => {
     const pageWord = identity.page.words[0];
-    const manualIndex = identity.manual && identity.entry?.words
-      ? identity.entry.words.findIndex((word) => pageWord && (
-        pageWord.id ? word.id === pageWord.id
-          : word.start === pageWord.start && word.end === pageWord.end && word.text === pageWord.text
-      ))
+    const manualIndex = identity.manual && identity.entry
+      ? lookupManualIndex(identity.entry, pageWord)
       : -1;
     return {
       id: identity.id,
@@ -63,6 +79,26 @@ export function buildCues(captions: CaptionsData, items: TimelineItem[], fps: nu
       fontOverride: identity.fontOverride,
     };
   });
+}
+
+/** Renders a paged recalculation of SingleStreamCaptions, but retains the override keys for each visible word.*/
+export function buildCues(captions: CaptionsData, items: TimelineItem[], fps: number): CueRow[] {
+  let byCaptions = cuesMemo.get(items);
+  if (!byCaptions) {
+    byCaptions = new WeakMap();
+    cuesMemo.set(items, byCaptions);
+  }
+  let byFps = byCaptions.get(captions);
+  if (!byFps) {
+    byFps = new Map();
+    byCaptions.set(captions, byFps);
+  }
+  let rows = byFps.get(fps);
+  if (!rows) {
+    rows = computeCues(captions, items, fps);
+    byFps.set(fps, rows);
+  }
+  return rows;
 }
 
 /** Translate the text changes in sentence k into wordOverrides patches.*/

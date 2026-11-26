@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { PlayerRef } from '@remotion/player';
+import { revisionOf } from '../agent/external-edit-session';
 import { useT } from '../i18n/locale';
 import { acknowledgeSavedCaptionDrafts } from '../captions/captionDraftRecovery';
 import {
   flushProjectSaves,
   hasPendingProjectSaves,
   hasProjectSaveFailure,
+  reloadProjectForEditing,
   saveProject,
 } from '../persist/projectStore';
 import { showAppToast } from '../ui/appToast';
@@ -25,6 +27,7 @@ interface EditorProjectPersistenceOptions {
   playerRef: MutableRef<PlayerRef | null>;
   flushBeforeLeaveRef: MutableRef<() => Promise<boolean>>;
   onHome: () => void;
+  onApplySyncedDoc?: (doc: ProjectDoc) => void;
 }
 
 interface EditorSaveControls {
@@ -36,19 +39,54 @@ interface EditorSaveControls {
 const projectSaveStore = { saveProject, flushProjectSaves, hasPendingProjectSaves, hasProjectSaveFailure };
 export type ProjectSaveStore = typeof projectSaveStore;
 
-export function useEditorAutosave(projectId: string, doc: ProjectDoc, store: ProjectSaveStore = projectSaveStore): EditorSaveControls & { flushBeforeLeave: () => Promise<boolean> } {
+export function useEditorAutosave(
+  projectId: string,
+  doc: ProjectDoc,
+  store: ProjectSaveStore = projectSaveStore,
+  playerRef?: MutableRef<PlayerRef | null>,
+): EditorSaveControls & { flushBeforeLeave: () => Promise<boolean>; discardPending: () => void } {
   const t = useT();
   const queue = useMemo(() => new ProjectAutosaveQueue(projectId, store.saveProject,
     (savedDoc) => acknowledgeSavedCaptionDrafts(projectId, savedDoc),
     (loadedDoc) => acknowledgeSavedCaptionDrafts(projectId, loadedDoc)), [projectId, store]);
   const feedback = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
   const saveFailureShownRef = useRef(false);
+  const firstPendingEditAtRef = useRef<number | null>(null);
   const retryInFlightRef = useMemo(() => ({ current: null as Promise<boolean> | null }), [queue]);
   useEffect(() => {
     if (!queue.observe(doc)) return undefined;
-    const timer = setTimeout(() => { void queue.enqueue(); }, 500);
-    return () => clearTimeout(timer);
-  }, [doc, queue]);
+    if (firstPendingEditAtRef.current === null) firstPendingEditAtRef.current = Date.now();
+    let pauseTimer: ReturnType<typeof setTimeout> | undefined;
+    let capTimer: ReturnType<typeof setTimeout> | undefined;
+    let pausedPlayer: PlayerRef | null = null;
+    const enqueueNow = () => {
+      firstPendingEditAtRef.current = null;
+      void queue.enqueue();
+    };
+    const onPause = () => {
+      clearTimeout(pauseTimer);
+      pauseTimer = setTimeout(enqueueNow, 250);
+    };
+    const timer = setTimeout(() => {
+      const player = playerRef?.current ?? null;
+      let isPlaying = false;
+      try { isPlaying = Boolean(player?.isPlaying?.()); } catch { isPlaying = false; }
+      const ageMs = firstPendingEditAtRef.current !== null ? Date.now() - firstPendingEditAtRef.current : 0;
+      if (isPlaying && player && ageMs < 10_000) {
+        pausedPlayer = player;
+        player.addEventListener('pause', onPause);
+        capTimer = setTimeout(enqueueNow, Math.max(250, 10_000 - ageMs));
+        return;
+      }
+      enqueueNow();
+    }, 1200);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(pauseTimer);
+      clearTimeout(capTimer);
+      if (pausedPlayer) pausedPlayer.removeEventListener('pause', onPause);
+    };
+  }, [doc, queue, playerRef]);
   useEffect(() => {
     if (feedback.status === 'error' && !saveFailureShownRef.current) {
       showAppToast(t('工程保存失败，请点击顶部“重试保存”。内容仍保留在当前窗口，保存成功前请勿关闭。'), { error: true });
@@ -76,7 +114,8 @@ export function useEditorAutosave(projectId: string, doc: ProjectDoc, store: Pro
     return true;
   }, [retrySave, t]);
   useBrowserSaveGuards(projectId, queue, store);
-  return { flushBeforeLeave, saveStatus: feedback.status, saveError: feedback.error, retrySave };
+  const discardPending = useCallback(() => { queue.discardPending(); }, [queue]);
+  return { flushBeforeLeave, discardPending, saveStatus: feedback.status, saveError: feedback.error, retrySave };
 }
 
 function useBrowserSaveGuards(projectId: string, queue: ProjectAutosaveQueue, store: ProjectSaveStore): void {
@@ -104,11 +143,17 @@ function useBrowserSaveGuards(projectId: string, queue: ProjectAutosaveQueue, st
 export function useEditorProjectPersistence({
   projectId,
   doc,
+  docRef,
+  playerRef,
   flushBeforeLeaveRef,
   onHome,
-}: EditorProjectPersistenceOptions): EditorSaveControls & { handleHome: () => Promise<void> } {
-  const { flushBeforeLeave, ...saveControls } = useEditorAutosave(projectId, doc);
+  onApplySyncedDoc,
+}: EditorProjectPersistenceOptions): EditorSaveControls & { handleHome: () => Promise<void>; syncProject: () => Promise<void>; syncingProject: boolean } {
+  const t = useT();
+  const { flushBeforeLeave, discardPending, ...saveControls } = useEditorAutosave(projectId, doc, projectSaveStore, playerRef);
   flushBeforeLeaveRef.current = flushBeforeLeave;
+  const [syncingProject, setSyncingProject] = useState(false);
+  const syncInFlightRef = useRef(false);
   // usePlayheadPaint owns per-timeline resume. A second seek here used to
   // overwrite the restored position with zero after every subdraft switch.
 
@@ -116,5 +161,35 @@ export function useEditorProjectPersistence({
     if (await flushBeforeLeave()) onHome();
   }, [flushBeforeLeave, onHome]);
 
-  return { handleHome, ...saveControls };
+  const syncProject = useCallback(async (): Promise<void> => {
+    if (syncInFlightRef.current) return;
+    syncInFlightRef.current = true;
+    setSyncingProject(true);
+    try {
+      if (saveControls.saveStatus === 'saving') {
+        await saveControls.retrySave();
+      }
+      const result = await reloadProjectForEditing(projectId);
+      if (result.status === 'unreadable') {
+        showAppToast(t('同步工程失败：暂时无法读取本机工程数据，当前编辑内容已保留'), { error: true });
+        return;
+      }
+      if (result.status === 'missing') {
+        showAppToast(t('同步工程失败：未找到已保存的工程记录，当前编辑内容已保留'), { error: true });
+        return;
+      }
+      if (revisionOf(result.doc) === revisionOf(docRef.current) && saveControls.saveStatus !== 'error') {
+        showAppToast(t('工程已是最新版本'));
+        return;
+      }
+      discardPending();
+      onApplySyncedDoc?.(result.doc);
+      showAppToast(t('已同步最新工程'));
+    } finally {
+      syncInFlightRef.current = false;
+      setSyncingProject(false);
+    }
+  }, [discardPending, docRef, onApplySyncedDoc, projectId, saveControls, t]);
+
+  return { handleHome, syncProject, syncingProject, ...saveControls };
 }

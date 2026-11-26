@@ -40,6 +40,7 @@ export interface EditorWorkspaceViewProps {
   onResetLibrarySize: ComponentProps<typeof Divider>['onReset'];
   previewPanel: ComponentProps<typeof PreviewPanel>;
   inspectorPanel: ComponentProps<typeof InspectorPanel> | null;
+  mosaicFocusRequest?: { itemId: string; effectId: string; nonce: number } | null;
   onResizeTimeline: ComponentProps<typeof Divider>['onResize'];
   onResizeTimelineStart: ComponentProps<typeof Divider>['onResizeStart'];
   onResizeTimelineCancel: ComponentProps<typeof Divider>['onResizeCancel'];
@@ -135,7 +136,8 @@ function renderPreview(props: EditorWorkspaceViewProps, rightPanel: ReturnType<t
           onClose: () => rightPanel.setMode('inspector'), pasteTranscriptRequest: rightPanel.pasteRequest,
           captionActivationRequest: rightPanel.captionActivationRequest }}
         textVisible={rightPanel.mode === 'text'}
-        onRightModeChange={rightPanel.setMode} />
+        onRightModeChange={rightPanel.setMode}
+        mosaicFocusRequest={props.mosaicFocusRequest} />
       <ExternalControlHost {...props.externalControl} />
     </div>
   );
@@ -143,6 +145,19 @@ function renderPreview(props: EditorWorkspaceViewProps, rightPanel: ReturnType<t
 
 function renderTimeline(props: EditorWorkspaceViewProps, rightPanel: ReturnType<typeof useRightPanelRouting>, onScrubActiveChange: (active: boolean) => void) {
   const openCaptions = () => { rightPanel.setPage('字幕'); rightPanel.setMode('text'); };
+  const review = props.timeline.state.legacyTimingReview;
+  const affectedItems = review?.required
+    ? props.timeline.state.items
+        .filter((it) => review.affectedItemIds.includes(it.id))
+        .sort((a, b) => a.startFrame - b.startFrame)
+    : [];
+  const jumpToNextReviewItem = () => {
+    if (!affectedItems.length) return;
+    const curIdx = affectedItems.findIndex((it) => it.id === props.timeline.state.selectedId);
+    const next = affectedItems[(curIdx + 1) % affectedItems.length] ?? affectedItems[0]!;
+    props.timeline.commands.selectItem(next.id);
+    props.previewPanel.onSeek?.(next.startFrame);
+  };
   return (
     <div
       className="cc-editor-timeline-column"
@@ -151,6 +166,15 @@ function renderTimeline(props: EditorWorkspaceViewProps, rightPanel: ReturnType<
         if (props.previewPanel.previewAsset) props.previewPanel.onClosePreviewAsset?.();
       }}
     >
+      {review?.required && affectedItems.length > 0 && (
+        <div className="cc-legacy-review-banner" role="status">
+          <span>⚠ {review.summary}</span>
+          <div className="cc-legacy-review-actions">
+            <button type="button" onClick={jumpToNextReviewItem}>定位下一处待确认切点（{affectedItems.length}）</button>
+            <button type="button" onClick={() => props.timeline.commands.dismissLegacyTimingReview()}>全部确认无误</button>
+          </div>
+        </div>
+      )}
       <Timeline {...props.timeline} onScrubActiveChange={(active) => {
         if (active && props.previewPanel.previewAsset) props.previewPanel.onClosePreviewAsset?.();
         onScrubActiveChange(active);
@@ -181,7 +205,7 @@ export function EditorWorkspaceView(props: EditorWorkspaceViewProps) {
         overflow: 'hidden',
         background: theme.bg,
         color: theme.text,
-        fontFamily: 'Geist, system-ui, -apple-system, sans-serif',
+        fontFamily: 'var(--cc-ui-font)',
       }}
     >
       <TopBar {...props.topBar} />
@@ -195,11 +219,11 @@ export function EditorWorkspaceView(props: EditorWorkspaceViewProps) {
         {props.shortcutsDialog && <ShortcutsDialog {...props.shortcutsDialog} />}
       </Suspense>
       {renderLibrary(props, rightPanel)}
-      <div style={{ gridColumn: 2, gridRow: 2 }}>
+      <div style={{ gridColumn: 2, gridRow: 2, position: 'relative', zIndex: 25 }}>
         <Divider ariaValue={props.librarySize} ariaValueLabel="媒体库宽度" onResize={props.onResizeLibrary} onResizeStart={props.onResizeLibraryStart} onResizeCancel={props.onResizeLibraryCancel} onReset={props.onResetLibrarySize} />
       </div>
       {renderPreview(props, rightPanel, timelineScrubbing)}
-      <div style={{ gridColumn: '1 / -1', gridRow: 3 }}>
+      <div style={{ gridColumn: '1 / -1', gridRow: 3, position: 'relative', zIndex: 25 }}>
         <Divider orientation="horizontal" ariaValue={props.timelineSize} ariaValueLabel="时间线高度" onResize={props.onResizeTimeline} onResizeStart={props.onResizeTimelineStart} onResizeCancel={props.onResizeTimelineCancel} onReset={props.onResetTimelineSize} />
       </div>
       {renderTimeline(props, rightPanel, setTimelineScrubbing)}

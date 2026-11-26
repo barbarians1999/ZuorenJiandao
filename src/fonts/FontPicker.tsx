@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { DesktopFontFace, FontChoice } from '../../shared/desktop-fonts';
 import { fontAssetMetadata } from '../../shared/desktop-fonts';
@@ -6,7 +6,7 @@ import { useT } from '../i18n/locale';
 import { useFontLibrary } from './FontLibraryProvider';
 import { ensureAssetFont } from './assetFonts';
 import { ensureFont } from './googleFonts';
-import { loadFontSample } from './fontSample';
+import { getCachedFontSample, loadFontSample } from './fontSample';
 import { filterFontEntries, fontPickerEntries, nextFontRecent, readFontPreference, writeFontPreference,
   type FontPickerEntry, type FontPickerTab } from './fontPickerModel';
 import './font-picker.css';
@@ -16,10 +16,17 @@ const TABS: readonly { id: FontPickerTab; label: string }[] = [
   { id: 'favorite', label: '收藏' }, { id: 'recent', label: '最近' }, { id: 'more', label: '更多字体' },
 ];
 
-function FontSample({ entry, text }: { entry: FontPickerEntry; text: string }) {
+const FIXED_FONT_SAMPLE = '字体预览 · 影视字幕 Aa 123';
+
+const FontSample = memo(function FontSample({ entry, text }: { entry: FontPickerEntry; text: string }) {
   const ref = useRef<HTMLSpanElement>(null);
-  const [state, setState] = useState<{ family?: string; error?: string }>({});
+  const [state, setState] = useState<{ family?: string; error?: string }>(() => getCachedFontSample(entry) ?? {});
   useEffect(() => {
+    const cached = getCachedFontSample(entry);
+    if (cached) {
+      setState((prev) => (prev.family === cached.family && !prev.error ? prev : { family: cached.family }));
+      return undefined;
+    }
     let active = true;
     const load = () => {
       void loadFontSample(entry).then((sample) => { if (active) setState({ family: sample.family }); },
@@ -37,9 +44,9 @@ function FontSample({ entry, text }: { entry: FontPickerEntry; text: string }) {
     aria-label={state.error ? '字体预览失败' : undefined}>
     {state.error ? '预览失败' : state.family ? text : '加载字样…'}
   </span>;
-}
+});
 
-export function FontPicker({ value, fontAssetId, sampleText = '章节标题 · 字体预览', mixed = false, targetKey = '', onChange }: {
+export function FontPicker({ value, fontAssetId, sampleText: _sampleText, mixed = false, targetKey = '', onChange }: {
   value: string;
   fontAssetId?: string | null;
   sampleText?: string;
@@ -64,7 +71,6 @@ export function FontPicker({ value, fontAssetId, sampleText = '章节标题 · �
   const visible = useMemo(() => filterFontEntries(entries, tab, query, favorites, recent), [entries, tab, query, favorites, recent]);
   const current = fontAssetId ? entries.find((entry) => entry.asset?.id === fontAssetId) : entries.find((entry) => entry.family === value && !entry.asset && !entry.face);
   const label = current?.label ?? value;
-  const sample = sampleText.trim().slice(0, 24) || '章节标题 · 字体预览';
   const loadSystem = async (refresh = false) => {
     if (!desktop || loading || (systemLoaded && !refresh)) return;
     setLoading(true); setError(null); setFailedEntry(null);
@@ -178,7 +184,7 @@ export function FontPicker({ value, fontAssetId, sampleText = '章节标题 · �
           return <div className={`cc-font-row${selected ? ' selected' : ''}`} key={entry.key}>
             <button type="button" role="option" aria-selected={selected} disabled={busy} className="cc-font-apply" onClick={() => void choose(entry)}>
               <span className="cc-font-name">{entry.label}{entry.source === 'google' && <small>{t('联网字体')}</small>}{entry.face && <small>{entry.face.weight}{entry.face.style === 'italic' ? ' · 斜体' : ''}</small>}</span>
-              <FontSample entry={entry} text={sample} />
+              <FontSample entry={entry} text={FIXED_FONT_SAMPLE} />
             </button>
             <button type="button" className="cc-font-star" aria-label={t(favorites.includes(entry.key) ? '取消收藏字体' : '收藏字体')}
               aria-pressed={favorites.includes(entry.key)} disabled={busy} onClick={() => toggleFavorite(entry.key)}>{favorites.includes(entry.key) ? '★' : '☆'}</button>

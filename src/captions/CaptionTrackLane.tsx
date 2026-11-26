@@ -1,7 +1,7 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { memo, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { buildCaptionPages } from './captionPages';
-import { timelineTrackIds, trackKind, type TimelineState, type TrackId } from '../editor/types';
-import type { CaptionPage, CaptionsData } from './types';
+import { timelineTrackIds, trackKind, type TimelineItem, type TimelineState, type TrackId } from '../editor/types';
+import { joinCaptionWords, type CaptionPage, type CaptionsData } from './types';
 import { theme, themeAlpha } from '../theme';
 import { useT } from '../i18n/locale';
 import { areCaptionCuesAdjacent, resizedManualCueTiming, rolledAdjacentManualCuesTiming, type ManualCueEdge } from './manualCaptions';
@@ -17,8 +17,8 @@ import {
   appendCaptionClipboardToTrack, createCaptionTimelineClipboard, type CaptionTimelineClipboard,
 } from './captionTimelineClipboard';
 import { droppedFiles, hasExternalFiles } from '../media/externalFileDrop';
-import type { EditMode } from '../components/timeline/timelineUtil';
-import { manualCueTargets, resolveDisplayRollSpans, useCaptionTrim, useDisplayCueTrim, useCaptionRollTrim, displayCueTrimRange, useCaptionMove, useCaptionSelectionMove, type CaptionRollPair, type DisplayCueTrimTarget, type ManualCueTarget, type CaptionCueMove } from './useCaptionCueGestures';
+import { framePointInWindow, intersectFrameRange, type EditMode, type TimelineFrameWindow } from '../components/timeline/timelineUtil';
+import { canDisplayRoll, manualCueTargets, resolveDisplayRollSpans, useCaptionTrim, useDisplayCueTrim, useCaptionRollTrim, displayCueTrimRange, useCaptionMove, useCaptionSelectionMove, type CaptionRollPair, type DisplayCueTrimTarget, type ManualCueTarget, type CaptionCueMove } from './useCaptionCueGestures';
 
 function cueText(words: Array<{ text: string }>): string {
   return words.map((word) => word.text.trim()).filter(Boolean).join(' ');
@@ -148,8 +148,8 @@ function CaptionCueBlock({
   );
 }
 
-export function CaptionTrackLane({
-  state, captions, trackId, playheadFrame, px, rowHeight, hidden, locked, snapping, trackFromClientY,
+export const CaptionTrackLane = memo(function CaptionTrackLane({
+  state, captions, trackId, playheadFrame, px, rowHeight, hidden, locked, snapping, visibleWindow, trackFromClientY,
   editMode = 'selection', pickMode = false, onStartMarquee,
   selectedCaptions: controlledSelectedCaptions, selectedItemIds = [], selectionMovePreview = null,
   onSelectCaption, onActivateCaptionWorkspace, onSelectionMovePreview = () => {}, onLiveCaptionsPreview, onLiveSelectionMovePreview, onMoveTimelineSelection = () => {},
@@ -158,7 +158,7 @@ export function CaptionTrackLane({
   onDropExternalFiles, frameFromClientX, onTrackContextMenu,
 }: {
   state: TimelineState; captions: CaptionsData | null; trackId: TrackId; playheadFrame: number; px: number;
-  hidden: boolean; locked: boolean; snapping: boolean; rowHeight: number; trackFromClientY: (clientY: number) => TrackId;
+  hidden: boolean; locked: boolean; snapping: boolean; rowHeight: number; visibleWindow?: TimelineFrameWindow; trackFromClientY: (clientY: number) => TrackId;
   editMode?: EditMode; pickMode?: boolean; onStartMarquee?: (event: React.PointerEvent) => void;
   selectedCaptions?: CaptionSelectionRef[];
   selectedItemIds?: readonly string[];
@@ -219,8 +219,24 @@ export function CaptionTrackLane({
     window.addEventListener('pointerdown', closeMenu);
     return () => window.removeEventListener('pointerdown', closeMenu);
   }, [menu]);
-  const pages = captions ? buildCaptionPages(captions, state.items, state.fps) : [];
-  const targets = manualCueTargets(captions);
+  const pages = useMemo(
+    () => (captions ? buildCaptionPages(captions, state.items, state.fps) : []),
+    [captions, state.items, state.fps],
+  );
+  const targets = useMemo(() => manualCueTargets(captions), [captions]);
+  const itemsById = useMemo(() => {
+    const map = new Map<string, TimelineItem>();
+    for (const item of state.items) map.set(item.id, item);
+    return map;
+  }, [state.items]);
+  const selectedKeySet = useMemo(() => {
+    const keys = new Set<string>();
+    for (const selection of selectedCaptions) {
+      const key = captionSelectionKey(selection);
+      if (key) keys.add(key);
+    }
+    return keys;
+  }, [selectedCaptions]);
   const trim = useCaptionTrim({ state, captions, trackId, playheadFrame, px, snapping, locked, onUpdate, onLivePreview: onLiveCaptionsPreview });
   const displayTrim = useDisplayCueTrim({ state, trackId, playheadFrame, px, snapping, locked, onUpdate, onLivePreview: onLiveCaptionsPreview,
     onProblem: setTimelineEditMessage });
@@ -303,6 +319,40 @@ export function CaptionTrackLane({
     onUpdate(patch);
     closeMenu();
   };
+  const rows = useMemo(() => pages.map((identity, index) => {
+    const page = identity.page;
+    let target = page.words.length === 1 && page.words[0]?.id ? targets.get(page.words[0].id) : undefined;
+    if (!target && identity.manual && identity.entry?.words && page.words.length === 1) {
+      const cueWord = page.words[0]!;
+      const fallbackIndex = identity.entry.words.findIndex(
+        (word) => word.start === cueWord.start && word.end === cueWord.end && word.text === cueWord.text,
+      );
+      if (fallbackIndex >= 0) {
+        target = { laneId: identity.entry.id, index: fallbackIndex, words: identity.entry.words };
+      }
+    }
+    const cueId = target ? page.words[0]?.id : undefined;
+    const source = !identity.manual && identity.entry
+      ? itemsById.get(identity.entry.itemId) : undefined;
+    const displayTarget = !identity.manual && identity.entry && identity.sourceSpans?.length && source
+      ? {
+          laneId: identity.entry.id,
+          editId: identity.displayCueEditId,
+          partId: identity.displayCuePartId,
+          key: identity.id,
+          text: joinCaptionWords(page.words),
+          source,
+          sourceSpans: identity.sourceSpans,
+        } satisfies DisplayCueTrimTarget
+      : undefined;
+    const selectionRef = target && cueId
+      ? { trackId, kind: 'manual' as const, laneId: target.laneId, cueId }
+      : { trackId, kind: 'single' as const, pageId: identity.id };
+    const selectionKey = captionSelectionKey(selectionRef);
+    const selected = selectionKey ? selectedKeySet.has(selectionKey) : false;
+    const key = target ? `${target.laneId}:${target.words[target.index]?.id ?? target.index}` : `${page.start}:${index}`;
+    return { identity, index, key, page, target, displayTarget, selectionRef, selected };
+  }), [itemsById, pages, selectedKeySet, targets, trackId]);
   return (
     <div className="cc-caption-track-lane" data-caption-selection-region="timeline" style={{
       background: locked ? `color-mix(in srgb, ${theme.bg} 70%, ${themeAlpha.shadow(1)})` : theme.bg,
@@ -337,25 +387,6 @@ export function CaptionTrackLane({
       }}>
       {timelineEditMessage && <div role="alert" className="cc-caption-track-edit-error">{t(timelineEditMessage)}</div>}
       {(() => {
-        const rows = pages.map((identity, index) => {
-          const page = identity.page;
-          const target = page.words.length === 1 && page.words[0]?.id ? targets.get(page.words[0].id) : undefined;
-          const cueId = target ? page.words[0]?.id : undefined;
-          const source = identity.displayCueEditId && identity.entry
-            ? state.items.find((item) => item.id === identity.entry!.itemId) : undefined;
-          const displayTarget = identity.displayCueEditId && identity.displayCuePartId && identity.sourceSpans?.length && source
-            ? { laneId: identity.entry!.id, editId: identity.displayCueEditId, partId: identity.displayCuePartId,
-              key: identity.id, source, sourceSpans: identity.sourceSpans } satisfies DisplayCueTrimTarget
-            : undefined;
-          const selectionRef = target && cueId
-            ? { trackId, kind: 'manual' as const, laneId: target.laneId, cueId }
-            : { trackId, kind: 'single' as const, pageId: identity.id };
-          const selected = selectedCaptions.some(
-            (selection) => captionSelectionKey(selection) === captionSelectionKey(selectionRef),
-          );
-          const key = target ? `${target.laneId}:${target.words[target.index]?.id ?? target.index}` : `${page.start}:${index}`;
-          return { identity, index, key, page, target, displayTarget, selectionRef, selected };
-        });
 
         const hasBatchSelection = selectedCaptions.length > 1
           || (selectedCaptions.length > 0 && selectedItemIds.length > 0);
@@ -396,19 +427,29 @@ export function CaptionTrackLane({
             const leftWidthPx = Math.max(1, Math.round((left.page.end - left.page.start) * state.fps / 1000)) * px;
             const rightWidthPx = Math.max(1, Math.round((right.page.end - right.page.start) * state.fps / 1000)) * px;
             if (leftWidthPx < 32 || rightWidthPx < 32) continue;
+            const boundaryMs = Math.round((left.page.end + right.page.start) / 2);
+            const boundaryFrame = Math.max(0, Math.round(boundaryMs * state.fps / 1000));
             if (left.target && right.target && left.target.laneId === right.target.laneId && right.target.index === left.target.index + 1) {
               const key = `roll:${left.key}:${right.key}`;
+              if (rollTrim.drag?.key !== key) {
+                if (visibleWindow && !framePointInWindow(boundaryFrame, visibleWindow)) continue;
+                if (!rolledAdjacentManualCuesTiming(left.target.words, left.target.index, right.target.index, 0, state.fps)) continue;
+              }
               rollPairs.push({
                 pair: { key, kind: 'manual', leftKey: left.key, rightKey: right.key, left: left.target, right: right.target },
-                boundaryMs: Math.round((left.page.end + right.page.start) / 2),
+                boundaryMs,
               });
               hasRollRight.add(left.key);
               hasRollLeft.add(right.key);
             } else if (left.displayTarget && right.displayTarget && left.displayTarget.laneId === right.displayTarget.laneId) {
               const key = `roll:${left.key}:${right.key}`;
+              if (rollTrim.drag?.key !== key) {
+                if (visibleWindow && !framePointInWindow(boundaryFrame, visibleWindow)) continue;
+                if (!canDisplayRoll(left.displayTarget, right.displayTarget, state.fps)) continue;
+              }
               rollPairs.push({
                 pair: { key, kind: 'display', leftKey: left.key, rightKey: right.key, left: left.displayTarget, right: right.displayTarget },
-                boundaryMs: Math.round((left.page.end + right.page.start) / 2),
+                boundaryMs,
               });
               hasRollRight.add(left.key);
               hasRollLeft.add(right.key);
@@ -443,9 +484,37 @@ export function CaptionTrackLane({
           }
         }
 
+        const pinnedKeys = new Set<string>();
+        if (trim.drag) pinnedKeys.add(trim.drag.key);
+        if (displayTrim.drag) pinnedKeys.add(displayTrim.drag.key);
+        if (move.drag) pinnedKeys.add(move.drag.key);
+        if (rollTrim.drag) {
+          pinnedKeys.add(rollTrim.drag.pair.leftKey);
+          pinnedKeys.add(rollTrim.drag.pair.rightKey);
+        }
+        const keepSelectedPinned = Boolean(selectionMove.drag || selectionMovePreview);
+        const visibleRows = visibleWindow
+          ? rows.filter((row) => {
+              if (pinnedKeys.has(row.key) || (keepSelectedPinned && row.selected)) return true;
+              const startFrame = Math.max(0, Math.round(row.page.start * state.fps / 1000));
+              const durationFrames = Math.max(1, Math.round((row.page.end - row.page.start) * state.fps / 1000));
+              return Boolean(intersectFrameRange(startFrame, durationFrames, visibleWindow));
+            })
+          : rows;
+        const visibleRollPairs = visibleWindow
+          ? rollPairs.filter(({ pair, boundaryMs }) => {
+              if (rollTrim.drag?.key === pair.key) return true;
+              const displayBoundaryMs = rollTrim.drag?.key === pair.key && activeRollBoundaryMs !== null
+                ? activeRollBoundaryMs
+                : boundaryMs;
+              const boundaryFrame = Math.max(0, Math.round(displayBoundaryMs * state.fps / 1000));
+              return framePointInWindow(boundaryFrame, visibleWindow);
+            })
+          : rollPairs;
+
         return (
           <>
-            {rows.map(({ identity, index, key, page, target, displayTarget, selectionRef, selected }) => (
+            {visibleRows.map(({ identity, index, key, page, target, displayTarget, selectionRef, selected }) => (
               <CaptionCueBlock key={identity.id} page={page} index={index} target={target} displayTarget={displayTarget}
                 rollTiming={rollTimingByKey.get(key) ?? null}
                 hasRollLeft={hasRollLeft.has(key)} hasRollRight={hasRollRight.has(key)}
@@ -465,7 +534,7 @@ export function CaptionTrackLane({
                   });
                 }} />
             ))}
-            {rollPairs.map(({ pair, boundaryMs }) => {
+            {visibleRollPairs.map(({ pair, boundaryMs }) => {
               const displayBoundaryMs = rollTrim.drag?.key === pair.key && activeRollBoundaryMs !== null
                 ? activeRollBoundaryMs
                 : boundaryMs;
@@ -502,4 +571,4 @@ export function CaptionTrackLane({
       </div>}
     </div>
   );
-}
+});

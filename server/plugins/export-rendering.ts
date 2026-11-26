@@ -149,14 +149,20 @@ export async function exportRouteCapabilities(body: ExportRequest | null, signal
   const capabilities = await exportCapabilities();
   signal?.throwIfAborted();
   // Preflight never downloads/materializes media or creates output. Unresolved
-  // references retain the existing route and are resolved at export submission.
-  const eligible = !plan.retimeFps && await remotionRender.inspectTimelineDirectExport({
+  // references keep 'pending-media' status until export materialization completes.
+  const inspected = await remotionRender.inspectTimelineExportCapabilities({
     state: plan.state, project: plan.project, timelineId: plan.timelineId, codec: plan.media.codec,
     scale: plan.scale, frameRange: plan.frameRange, signal,
+    allowDirectCut: !plan.retimeFps,
     ffmpegExecutable: ffmpegBin(), ffprobeExecutable: ffprobeBin(),
     resolveMediaSource: resolveDirectMediaSource,
   });
-  return { ...capabilities, ...(eligible ? {
-    directCut: { ...await resolveH264EncoderProfile(ffmpegBin()), renderRoute: eligible },
-  } : {}) };
+  const eligible = !plan.retimeFps ? inspected.renderRoute : null;
+  return {
+    ...capabilities,
+    preflight: inspected.preflight,
+    ...(eligible ? {
+      directCut: { ...await resolveH264EncoderProfile(ffmpegBin()), renderRoute: eligible },
+    } : {}),
+  };
 }

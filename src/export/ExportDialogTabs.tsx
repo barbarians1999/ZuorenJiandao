@@ -111,7 +111,7 @@ function QaSettings({ enabled, busy, qa, onToggle }: QaSettingsProps) {
           <strong>{t('导出后自动质量检查')}</strong>
           <small>{t('检查画面、声音、剪辑点和字幕安全区。')}</small>
         </span>
-        <input type="checkbox" checked={enabled} onChange={(event) => onToggle(event.target.checked)} disabled={busy} />
+        <input className="cc-switch" type="checkbox" role="switch" checked={enabled} onChange={(event) => onToggle(event.target.checked)} disabled={busy} />
       </label>
       {qa && <ExportQaCard qa={qa} />}
     </>
@@ -204,7 +204,7 @@ function XmlTab({ state, nleFormat, includeMg, mgCount, setNleFormat, setInclude
       </Row>
       <label className="cc-export-toggle">
         <span><strong>{t('同时打包动态图层')}</strong><small>{t('额外生成带透明通道的 ProRes 4444 MOV。')}</small></span>
-        <input type="checkbox" checked={includeMg} onChange={(event) => setIncludeMg(event.target.checked)} disabled={mgCount === 0} />
+        <input className="cc-switch" type="checkbox" role="switch" checked={includeMg} onChange={(event) => setIncludeMg(event.target.checked)} disabled={mgCount === 0} />
       </label>
       <p className="cc-export-footnote">{t('导入后，请在剪辑软件中指向原始素材所在文件夹，以重新链接离线片段。')}</p>
     </>

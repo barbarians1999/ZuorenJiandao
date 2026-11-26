@@ -8,6 +8,7 @@ import {
   type MulticamGroup,
   type MulticamSyncEvidence,
   type Timeline,
+  type TimelineFoldGroup,
   type TimelineItem,
   type TimelineLinkGroup,
   type TimelineState,
@@ -349,15 +350,40 @@ function normalizeMulticamGroup(value: unknown): MulticamGroup | null {
   } as MulticamGroup;
 }
 
+function normalizeFoldGroup(value: unknown, itemIds: ReadonlySet<string>, items: readonly TimelineItem[]): TimelineFoldGroup | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Partial<TimelineFoldGroup>;
+  if (typeof raw.id !== 'string' || !raw.id || !Array.isArray(raw.itemIds)) return null;
+  const filtered = [...new Set(raw.itemIds)].filter((id): id is string => typeof id === 'string' && itemIds.has(id));
+  if (filtered.length < 2 && !(Array.isArray(raw.sourceTranscript) && raw.sourceTranscript.length > 0)) return null;
+  if (!filtered.length) return null;
+  const first = items.find((it) => it.id === filtered[0]);
+  return {
+    ...raw,
+    id: raw.id,
+    track: first?.track ?? (typeof raw.track === 'string' ? raw.track : ''),
+    itemIds: filtered,
+    collapsed: filtered.length >= 2 ? raw.collapsed !== false : false,
+  };
+}
+
 /** Drop corrupt/dangling optional professional metadata without changing legacy timelines. */
 export function normalizeTimelineGroups(timeline: Timeline): Timeline {
-  if (timeline.linkGroups === undefined && timeline.multicamGroups === undefined) return timeline;
+  if (timeline.linkGroups === undefined && timeline.multicamGroups === undefined && timeline.foldGroups === undefined && timeline.legacyTimingReview === undefined) return timeline;
   const itemIds = new Set(timeline.items.map((item) => item.id));
   const linkGroups = Array.isArray(timeline.linkGroups)
     ? timeline.linkGroups.filter((group) => isLinkGroup(group, itemIds))
     : undefined;
+  const foldGroups = Array.isArray(timeline.foldGroups)
+    ? timeline.foldGroups.map((group) => normalizeFoldGroup(group, itemIds, timeline.items))
+      .filter((group): group is TimelineFoldGroup => !!group)
+    : undefined;
   const multicamGroups = Array.isArray(timeline.multicamGroups)
     ? timeline.multicamGroups.map(normalizeMulticamGroup).filter((group): group is MulticamGroup => !!group)
+    : undefined;
+  const filteredReviewIds = timeline.legacyTimingReview?.affectedItemIds?.filter((id) => itemIds.has(id)) ?? [];
+  const legacyTimingReview = timeline.legacyTimingReview?.required && filteredReviewIds.length
+    ? { ...timeline.legacyTimingReview, affectedItemIds: filteredReviewIds }
     : undefined;
   const memberships = new Map((multicamGroups ?? []).flatMap((group) =>
     group.angles.map((angle) => [angle.itemId, { groupId: group.id, angleId: angle.id }] as const)));
@@ -373,7 +399,9 @@ export function normalizeTimelineGroups(timeline: Timeline): Timeline {
     ...timeline,
     items,
     ...(timeline.linkGroups === undefined && linkGroups === undefined ? {} : { linkGroups: linkGroups?.length ? linkGroups : undefined }),
+    ...(timeline.foldGroups === undefined && foldGroups === undefined ? {} : { foldGroups: foldGroups?.length ? foldGroups : undefined }),
     ...(timeline.multicamGroups === undefined && multicamGroups === undefined ? {} : { multicamGroups: multicamGroups?.length ? multicamGroups : undefined }),
+    ...(timeline.legacyTimingReview === undefined && legacyTimingReview === undefined ? {} : { legacyTimingReview }),
   };
 }
 
@@ -424,6 +452,9 @@ export function normalizeTimelineTracks(timeline: Timeline): Timeline {
       ...transition,
       trackId: remap.get(transition.trackId) ?? transition.trackId,
     })),
+    ...(clean.foldGroups === undefined ? {} : {
+      foldGroups: clean.foldGroups.map((group) => ({ ...group, track: remap.get(group.track) ?? group.track })),
+    }),
     ...(clean.multicamGroups === undefined ? {} : {
       multicamGroups: clean.multicamGroups.map((group) => ({
         ...group,

@@ -250,7 +250,9 @@ function makeProject(timeline: TimelineState): ProjectDoc {
   assert.equal(canTrackAcceptItemKind(stateWithEffect, 'image', 'E1'), false);
   assert.equal(canTrackAcceptItemKind(stateWithEffect, 'text', 'E1'), false);
   assert.equal(canTrackAcceptItemKind(stateWithEffect, 'solid', 'T1'), false);
-  assert.equal(canTrackAcceptItemKind(stateWithEffect, 'solid', 'V2'), true);
+  assert.equal(canTrackAcceptItemKind(stateWithEffect, 'solid', 'V2'), false);
+  assert.equal(canTrackAcceptItemKind(stateWithEffect, 'mosaic', 'V2'), false);
+  assert.equal(canTrackAcceptItemKind(stateWithEffect, 'motion-graphic', 'V2'), false);
 
   assert.equal(canDropMediaAsset({ kind: 'video' }, 'video', false, true), false);
   assert.equal(canDropMediaAsset({ kind: 'image' }, 'video', false, true), false);
@@ -260,7 +262,7 @@ function makeProject(timeline: TimelineState): ProjectDoc {
   assert.equal(canItemMoveToTrack(stateWithEffect, stateWithEffect.items[0]!, 'E1'), false, 'video cannot move onto effect track');
   assert.equal(canItemMoveToTrack(stateWithEffect, stateWithEffect.items[2]!, 'E1'), false, 'text cannot move onto effect track');
   assert.equal(canItemMoveToTrack(stateWithEffect, stateWithEffect.items[3]!, 'E1'), true, 'stranded solid on text track can move to effect track');
-  assert.equal(canItemMoveToTrack(stateWithEffect, stateWithEffect.items[3]!, 'V2'), true, 'stranded solid on text track can move to video track');
+  assert.equal(canItemMoveToTrack(stateWithEffect, stateWithEffect.items[3]!, 'V2'), false, 'solid cannot move onto plain video track');
   assert.notEqual(trackOrderForHeaderDrop(stateWithEffect, 'E1', 'V2', 'after'), null, 'effect track can reorder below video track');
   assert.notEqual(trackOrderForHeaderDrop(stateWithEffect, 'E1', 'T1', 'before'), null, 'effect track can reorder above text track');
   const effectAnywhereInVisualState: TimelineState = {
@@ -339,6 +341,33 @@ function makeProject(timeline: TimelineState): ProjectDoc {
   );
   const pastedRect = pasted.state.items.find((item) => item.id === 'item-paste')!;
   assert.equal(pasted.state.tracks?.[pastedRect.track]?.visualRole, 'effect');
+
+  // Adding a plain solid or motion graphic when no effect track exists auto-creates an effect track.
+  let noEffectDoc = makeProject(startState);
+  let noEffectHistory = { past: [] as ProjectDoc[], present: noEffectDoc, future: [] as ProjectDoc[] };
+  const noEffectCommands = buildCommands((action) => { noEffectHistory = historyReduce(noEffectHistory, action); }, () => noEffectHistory.present);
+  const solidId = noEffectCommands.addSolidItem({ startFrame: 0, durationInFrames: 30 });
+  const solidItem = noEffectHistory.present.timelines[0]!.items.find((item) => item.id === solidId)!;
+  assert.notEqual(solidItem.track, 'V1');
+  assert.notEqual(solidItem.track, 'T1');
+  assert.equal(noEffectHistory.present.timelines[0]!.tracks?.[solidItem.track]?.visualRole, 'effect');
+
+  noEffectCommands.addMotionGraphic({
+    id: 'mg-test',
+    name: 'mg-test',
+    category: 'test',
+    code: 'return null;',
+    props: {},
+    fps: 30,
+    propSchema: [],
+    thumb: null,
+    width: 1920,
+    height: 1080,
+    durationInFrames: 30,
+  }, { startFrame: 0, track: 'V1' });
+  const mgItem = noEffectHistory.present.timelines[0]!.items.find((item) => item.kind === 'motion-graphic')!;
+  assert.notEqual(mgItem.track, 'V1', 'explicit video track is rejected for motion-graphic');
+  assert.equal(noEffectHistory.present.timelines[0]!.tracks?.[mgItem.track]?.visualRole, 'effect');
 }
 
 console.log('trackConsolidationAndSeparation.verify: ALL PASSED');

@@ -1,7 +1,7 @@
 .cc-dashboard-titlebar {
   height: 64px !important;
   padding-left: 30px !important;
-  box-shadow: none !important;
+  box-shadow: none;
 }
 
 .cc-dashboard-brand { display: inline-flex; flex: 0 0 auto; }

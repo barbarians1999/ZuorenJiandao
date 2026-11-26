@@ -20,7 +20,7 @@ const backdropStyle: CSSProperties = {
   padding: 16,
   background: themeAlpha.shadow(0.6),
   backdropFilter: 'blur(4px)',
-  fontFamily: 'Geist, system-ui, -apple-system, sans-serif',
+  fontFamily: 'var(--cc-ui-font)',
 };
 
 const cardStyle: CSSProperties = {
@@ -139,11 +139,12 @@ export function WindowCloseConfirmModal({
   const t = useT();
   if (!open) return null;
   return (
-    <div role="presentation" onMouseDown={() => onAction('cancel')} style={backdropStyle}>
+    <div role="presentation" className="cc-window-close-backdrop" onMouseDown={() => onAction('cancel')} style={backdropStyle}>
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="cc-close-dialog-title"
+        className="cc-window-close-dialog"
         onMouseDown={(event) => event.stopPropagation()}
         style={cardStyle}
       >
@@ -152,6 +153,7 @@ export function WindowCloseConfirmModal({
           <b style={{ fontSize: 14, color: theme.textStrong }}>{t('关闭左人剪刀')}</b>
           <button
             type="button"
+            className="cc-window-close-x"
             aria-label={t('取消')}
             onClick={() => onAction('cancel')}
             style={closeBtnStyle}
@@ -169,6 +171,7 @@ export function WindowCloseConfirmModal({
           <label style={checkboxLabelStyle}>
             <input
               type="checkbox"
+              className="cc-window-close-checkbox"
               checked={remember}
               onChange={(event) => onRememberChange(event.target.checked)}
               style={{ accentColor: theme.accent, width: 15, height: 15, cursor: 'pointer' }}
@@ -177,13 +180,13 @@ export function WindowCloseConfirmModal({
           </label>
         </div>
         <footer style={footerStyle}>
-          <button type="button" onClick={() => onAction('cancel')} style={ghostBtnStyle}>
+          <button type="button" className="cc-window-close-btn cc-window-close-cancel" onClick={() => onAction('cancel')} style={ghostBtnStyle}>
             {t('取消')}
           </button>
-          <button type="button" onClick={() => onAction('quit')} style={dangerBtnStyle}>
+          <button type="button" className="cc-window-close-btn cc-window-close-danger" onClick={() => onAction('quit')} style={dangerBtnStyle}>
             {t('彻底关闭')}
           </button>
-          <button type="button" autoFocus onClick={() => onAction('background')} style={primaryBtnStyle}>
+          <button type="button" autoFocus className="cc-window-close-btn cc-window-close-primary" onClick={() => onAction('background')} style={primaryBtnStyle}>
             {t('隐藏后台')}
           </button>
         </footer>

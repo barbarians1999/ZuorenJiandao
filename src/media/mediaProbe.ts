@@ -1,3 +1,5 @@
+import { parseGifTiming } from '../../shared/gif-timing.mjs';
+
 export type MediaKind = 'video' | 'image' | 'audio' | 'gif' | 'svg';
 
 export interface MediaMetadata {
@@ -48,22 +50,48 @@ function probeStill(url: string, frames: number, release: () => void): Promise<M
 function probeGif(url: string, fps: number, release: () => void): Promise<MediaMetadata> {
   const fallbackFrames = Math.round(GIF_SECONDS_FALLBACK * fps);
   return new Promise((resolve) => {
-    const video = document.createElement('video');
-    const done = (metadata: MediaMetadata) => { release(); resolve(metadata); };
-    video.preload = 'metadata';
-    video.onloadedmetadata = () => done({
-      durationInFrames: Number.isFinite(video.duration) && video.duration > 0
-        ? Math.max(1, Math.round(video.duration * fps)) : fallbackFrames,
-      width: video.videoWidth || undefined,
-      height: video.videoHeight || undefined,
-    });
-    video.onerror = () => {
-      const image = new Image();
-      image.onload = () => done({ durationInFrames: fallbackFrames, width: image.naturalWidth || undefined, height: image.naturalHeight || undefined });
-      image.onerror = () => done({ durationInFrames: fallbackFrames });
-      image.src = url;
+    let settled = false;
+    const done = (metadata: MediaMetadata) => {
+      if (settled) return;
+      settled = true;
+      release();
+      resolve(metadata);
     };
-    video.src = url;
+    const fallbackDom = () => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.onloadedmetadata = () => done({
+        durationInFrames: Number.isFinite(video.duration) && video.duration > 0
+          ? Math.max(1, Math.round(video.duration * fps)) : fallbackFrames,
+        width: video.videoWidth || undefined,
+        height: video.videoHeight || undefined,
+      });
+      video.onerror = () => {
+        const image = new Image();
+        image.onload = () => done({ durationInFrames: fallbackFrames, width: image.naturalWidth || undefined, height: image.naturalHeight || undefined });
+        image.onerror = () => done({ durationInFrames: fallbackFrames });
+        image.src = url;
+      };
+      video.src = url;
+    };
+    if (typeof fetch === 'function') {
+      fetch(url)
+        .then((res) => (res.ok ? res.arrayBuffer() : Promise.reject(new Error('gif-fetch-failed'))))
+        .then((buf) => {
+          const timing = parseGifTiming(buf);
+          const durationInFrames = timing.frameCount > 1 && timing.totalDurationMs > 0
+            ? Math.max(1, Math.round((timing.totalDurationMs / 1000) * fps))
+            : fallbackFrames;
+          done({
+            durationInFrames,
+            width: timing.width || undefined,
+            height: timing.height || undefined,
+          });
+        })
+        .catch(fallbackDom);
+      return;
+    }
+    fallbackDom();
   });
 }
 

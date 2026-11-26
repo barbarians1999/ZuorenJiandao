@@ -20,6 +20,7 @@ interface TrackContextMenuProps {
   deleteBlockedReason: TrackDeletePlan['blockedReason'];
   onInsert: () => void;
   onTighten: () => void;
+  onCompactTracks?: () => void;
   onSelectAll: () => void;
   onSelectLeft: () => void;
   onSelectRight: () => void;
@@ -31,6 +32,12 @@ interface TrackContextMenuProps {
   onRename: () => void;
   onOpenDuck: (rect: DOMRect) => void;
   onOpenCaptionStyle: (rect: DOMRect) => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onMoveTop?: () => void;
+  onMoveBottom?: () => void;
   onDelete: () => void;
   onClose: () => void;
 }
@@ -71,8 +78,8 @@ function insertMenuItem(kind: TrackKind, t: (text: string) => string): { label: 
 
 export function TrackContextMenu({
   kind, x, y, hidden, muted, soloed, locked, canTighten, hasContents, hasSelectable, hasSelectableLeft, hasSelectableRight, deleteBlockedReason,
-  onInsert, onTighten, onSelectAll, onSelectLeft, onSelectRight, onClear, onToggleHidden, onToggleMuted, onToggleSolo, onToggleLocked,
-  onRename, onOpenDuck, onOpenCaptionStyle, onDelete, onClose,
+  onInsert, onTighten, onCompactTracks, onSelectAll, onSelectLeft, onSelectRight, onClear, onToggleHidden, onToggleMuted, onToggleSolo, onToggleLocked,
+  onRename, onOpenDuck, onOpenCaptionStyle, canMoveUp = false, canMoveDown = false, onMoveUp, onMoveDown, onMoveTop, onMoveBottom, onDelete, onClose,
 }: TrackContextMenuProps) {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
@@ -118,6 +125,7 @@ export function TrackContextMenu({
     >
       <MenuItem label={insert.label} icon={insert.icon} disabled={locked} onClick={run(onInsert)} />
       <MenuItem label={t('闭合缝隙')} icon="magnet" disabled={locked || !canTighten} onClick={run(onTighten)} />
+      {onCompactTracks && <MenuItem label={t('整理轨道')} icon="sort" onClick={run(onCompactTracks)} />}
       <Separator />
       <MenuItem label={t('全选')} icon="check" disabled={!hasSelectable} onClick={run(onSelectAll)} />
       <MenuItem label={t('向左全选')} icon="prev" disabled={locked || !hasSelectableLeft} onClick={run(onSelectLeft)} />
@@ -129,6 +137,15 @@ export function TrackContextMenu({
       {kind !== 'caption' && <MenuItem label={t(soloed ? '取消独奏' : '独奏轨道')} icon="music" checked={soloed} onClick={run(onToggleSolo)} />}
       <MenuItem label={t(locked ? '解锁轨道' : '锁定轨道')} icon={locked ? 'lock' : 'unlock'} checked={locked} onClick={run(onToggleLocked)} />
       <MenuItem label={t('重命名轨道')} icon="pencil" onClick={run(onRename)} />
+      {(onMoveUp || onMoveDown) && (
+        <>
+          <Separator />
+          {onMoveUp && <MenuItem label={t('上移轨道')} icon="chevronUp" disabled={!canMoveUp} onClick={run(onMoveUp)} />}
+          {onMoveDown && <MenuItem label={t('下移轨道')} icon="chevronDown" disabled={!canMoveDown} onClick={run(onMoveDown)} />}
+          {onMoveTop && <MenuItem label={t('移至最上层')} icon="arrowUp" disabled={!canMoveUp} onClick={run(onMoveTop)} />}
+          {onMoveBottom && <MenuItem label={t('移至最下层')} icon="download" disabled={!canMoveDown} onClick={run(onMoveBottom)} />}
+        </>
+      )}
       <Separator />
       {kind === 'caption' ? (
         <>

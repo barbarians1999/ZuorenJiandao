@@ -12,6 +12,8 @@ import {
   allCaptionSelections,
   captionSelectionKey,
   resolveCaptionSelection,
+  resolveFirstCaptionSelection,
+  resolveOrderedCaptionSelections,
   type CaptionSelectOptions,
   type CaptionSelectionRef,
 } from '../captions/captionSelection';
@@ -20,6 +22,7 @@ import { activeTimelineUsedMediaAssetIds, usedMediaAssetIds } from './mediaAsset
 import { selectedInspectorItems } from './inspectorBatch';
 import { sequenceLibraryOptions } from '../library/sequenceOptions';
 import { planSlip, type SlipPreview } from './slip';
+import { planBatchFillToNextTrackClip } from './speedDuration';
 import type { EditorCommands } from './store';
 import type { ProjectDoc, Timeline } from './types';
 import { captionsOnTrack, selectedIdsOf, timelineTrackIds, trackAlias, trackKind } from './types';
@@ -195,18 +198,22 @@ function useSlipSelection(
 }
 
 function useEditorOptions(state: Timeline, doc: ProjectDoc) {
+  const { tracks, trackOrder, items, captions } = state;
   const trackOptions = useMemo(
-    () => timelineTrackIds(state).map((id) => ({
+    () => timelineTrackIds({ tracks, trackOrder, items } as Timeline).map((id) => ({
       id,
-      alias: trackAlias(state, id),
-      name: state.tracks?.[id]?.name,
-      kind: trackKind(state, id),
+      alias: trackAlias({ tracks, trackOrder, items } as Timeline, id),
+      name: tracks?.[id]?.name,
+      kind: trackKind({ tracks } as Timeline, id),
     })),
-    [state],
+    [tracks, trackOrder, items],
   );
-  const captionTracks = trackOptions
-    .filter((option) => option.kind === 'caption')
-    .map((option) => ({ ...option, captions: captionsOnTrack(state, option.id) }));
+  const captionTracks = useMemo(
+    () => trackOptions
+      .filter((option) => option.kind === 'caption')
+      .map((option) => ({ ...option, captions: captionsOnTrack({ tracks, trackOrder, items, captions } as Timeline, option.id) })),
+    [trackOptions, tracks, trackOrder, items, captions],
+  );
   const getSequenceOptions = useCallback(
     () => sequenceLibraryOptions({ timelines: doc.timelines, activeTimelineId: doc.activeTimelineId }),
     [doc.timelines, doc.activeTimelineId],
@@ -241,12 +248,31 @@ export function useEditorSelectionState(
     doc.activeTimelineId,
   );
   const options = useEditorOptions(state, doc);
+  const fillToNextSpeedPlan = useMemo(
+    () => planBatchFillToNextTrackClip(state, selectedIds),
+    [state, selectedIds],
+  );
+
+  const fallbackCaption = useMemo(
+    () => (captions.selectedCaption || selectedItem ? null : resolveFirstCaptionSelection(state)),
+    [captions.selectedCaption, selectedItem, state],
+  );
+  const selectedCaptionFontTargets = useMemo(() => {
+    const selectedCaption = captions.selectedCaption;
+    if (!selectedCaption) return undefined;
+    return resolveOrderedCaptionSelections(state, captions.captionSelections)
+      .filter((selected) => selected.trackId === selectedCaption.trackId)
+      .map((selected) => selected.target);
+  }, [captions.selectedCaption, captions.captionSelections, state]);
 
   return {
     ...captions,
     ...slip,
     ...options,
+    fallbackCaption,
+    fillToNextSpeedPlan,
     reviewRequest,
+    selectedCaptionFontTargets,
     selectedIds,
     selectedItem,
     selectedItems,

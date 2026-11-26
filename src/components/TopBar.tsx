@@ -28,9 +28,11 @@ interface TopBarProps extends ProjectSaveIndicatorProps {
   exportJobCount?: number;
   onHome?: () => void;
   onRename?: (name: string) => void;
+  onSyncProject?: () => void;
+  syncingProject?: boolean;
 }
 
-export function TopBar({ projectName, canUndo, canRedo, saveStatus = 'saved', saveError, onRetrySave, exporting, exportJobCount = 0, onHome, onRename }: TopBarProps) {
+export function TopBar({ projectName, canUndo, canRedo, saveStatus = 'saved', saveError, onRetrySave, exporting, exportJobCount = 0, onHome, onRename, onSyncProject, syncingProject = false }: TopBarProps) {
   const t = useT();
   const isMacDesktop = window.openChatCutDesktop?.platform === 'darwin';
   const isWindowsDesktop = window.openChatCutDesktop?.platform === 'win32';
@@ -77,6 +79,14 @@ export function TopBar({ projectName, canUndo, canRedo, saveStatus = 'saved', sa
       {/* right: undo · redo · shortcuts · history · layout · export · avatar */}
       <TopBarIconButton icon="undo" label={t('撤销')} onClick={() => invokeAction('undo', undefined, 'toolbar')} disabled={!canUndo} />
       <TopBarIconButton icon="redo" label={t('重做')} onClick={() => invokeAction('redo', undefined, 'toolbar')} disabled={!canRedo} />
+      {onSyncProject && (
+        <TopBarIconButton
+          icon="refresh"
+          label={syncingProject ? t('正在同步工程…') : t('同步工程')}
+          onClick={onSyncProject}
+          disabled={syncingProject}
+        />
+      )}
       <span className="cc-editor-settings-entry">
         <TopBarIconButton icon="sliders" label={t('设置')} onClick={() => invokeAction('open-settings', undefined, 'toolbar')} />
       </span>

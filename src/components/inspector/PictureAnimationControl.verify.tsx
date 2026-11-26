@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 import { PICTURE_ANIMATIONS } from '../../editor/clipAnimation';
@@ -30,6 +31,24 @@ assert.match(markup({}, true), /所选片段的动画不同/);
 const titles = markup({ entrance: 'wipe' }, false, 'text');
 for (const { id } of TITLE_ANIMATIONS) assert.match(titles, new RegExp(`data-motion="${id}"`));
 assert.match(titles, /aria-pressed="true"><span[^>]*data-motion="wipe"/);
+
+const [indexCss, skinCss] = await Promise.all([
+  readFile(new URL('../../index.css', import.meta.url), 'utf8'),
+  readFile(new URL('../../skin-themes.css', import.meta.url), 'utf8'),
+]);
+assert.match(
+  indexCss,
+  /\.cc-animation-card\s*\{[^}]*background:\s*transparent;[^}]*border:\s*0;/s,
+  'outer animation card button must be transparent and borderless so labels sit outside the box',
+);
+assert.match(
+  indexCss,
+  /\.cc-animation-card\.selected\s+\.cc-animation-sample\s*\{[^}]*border-color:\s*var\(--cc-accent\);/s,
+  'selected highlight border must sit on the preview box (.cc-animation-sample)',
+);
+assert.doesNotMatch(skinCss, /\.cc-animation-card\b/, 'skin themes must frame .cc-animation-sample instead of .cc-animation-card');
+assert.match(skinCss, /\.cc-animation-sample\b/, 'skin themes must target .cc-animation-sample');
+
 console.log('PictureAnimationControl.verify: independent tabs, one-click cards, seconds, mixed selection and title support passed');
 } finally { await server.close(); }
 

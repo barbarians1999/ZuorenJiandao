@@ -170,10 +170,20 @@ export function compositionPlan(state: TimelineState, {
     extendBefore.set(t.incomingItemId, half);
     extendAfter.set(t.outgoingItemId, t.durationInFrames - half);
     const selected = mode === 'player' && t.incomingItemId === selectedItemId;
+    const trStart = inc ? inc.startFrame - half : 0;
+    const trEnd = trStart + t.durationInFrames;
+    const incTrackIdx = inc ? trackIds.indexOf(inc.track) : -1;
+    const transitionUnderMosaic = usesTrackCompositing && Boolean(inc && incTrackIdx >= 0 && visual.some((m) => (
+      m.kind === 'mosaic'
+      && trackIds.indexOf(m.track) >= 0
+      && trackIds.indexOf(m.track) < incTrackIdx
+      && m.startFrame < trEnd
+      && m.startFrame + m.durationInFrames > trStart
+    )));
     const privacyTransition = GLSL_TRANSITION_TYPES.has(t.type) && (hasPrivacyMosaic(out) || hasPrivacyMosaic(inc));
     const adapter = selectTransitionPreviewAdapter({
       mode: mode === 'player' ? 'player' : 'render',
-      selected: selected || usesTrackCompositing,
+      selected: selected || transitionUnderMosaic,
       type: t.type,
       texturable: texturable(out) && texturable(inc) && !privacyTransition,
       hasShader: t.type !== 'custom-shader' || !!t.customFrag,

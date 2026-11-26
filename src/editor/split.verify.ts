@@ -1,8 +1,7 @@
-// split_item: transcript/deleted/variant/gapCap partition with word/frame alignment + fade
-// placement. Pure splitClipTranscript + reduce 'split' end-to-end. npx tsx src/editor/split.check.ts
+// split_item: transcript/variant partition with continuous source-frame alignment + fade placement.
 import assert from 'node:assert/strict';
 import { reduce } from './reduce';
-import { splitClipTranscript } from '../transcript/edit';
+import { partitionClipTranscriptAtSourceFrame } from '../transcript/edit';
 import type { TimelineItem, TimelineState } from './types';
 import type { TranscriptWord } from '../transcript/types';
 
@@ -15,45 +14,25 @@ const W: TranscriptWord[] = [
   { text: 'd', start: 3000, end: 3900 },
 ];
 
-// ── pure splitClipTranscript ────────────────────────────────────────────────
-assert.equal(splitClipTranscript({}, fps, 45), null, 'no transcript → null');
-assert.equal(splitClipTranscript({ transcript: [] }, fps, 45), null, 'empty transcript → null');
+// ── pure partitionClipTranscriptAtSourceFrame ──────────────────────────────
+assert.equal(partitionClipTranscriptAtSourceFrame({}, fps, 45), null, 'no transcript → null');
+assert.equal(partitionClipTranscriptAtSourceFrame({ transcript: [] }, fps, 45), null, 'empty transcript → null');
 
-{ // unedited: cut 45 → source frame 45 → boundary before c → k=2
-  const r = splitClipTranscript({ transcript: W }, fps, 45)!;
+{
+  const r = partitionClipTranscriptAtSourceFrame({ transcript: W }, fps, 45)!;
   assert.equal(r.k, 2);
   assert.deepEqual(r.left.transcript!.map((w) => w.text), ['a', 'b']);
   assert.deepEqual(r.right.transcript!.map((w) => w.text), ['c', 'd']);
-  assert.deepEqual(r.left.deletedWordIdx, []);
-  assert.deepEqual(r.right.deletedWordIdx, []);
 }
-assert.equal(splitClipTranscript({ transcript: W }, fps, 75)!.k, 3, 'later cut → k=3');
-assert.equal(splitClipTranscript({ transcript: W }, fps, 5)!.k, 1, 'word straddling the cut stays left');
-assert.equal(splitClipTranscript({ transcript: W }, fps, 500)!.k, 4, 'cut past all words → all left');
+assert.equal(partitionClipTranscriptAtSourceFrame({ transcript: W }, fps, 75)!.k, 3, 'later cut → k=3');
+assert.equal(partitionClipTranscriptAtSourceFrame({ transcript: W }, fps, 5)!.k, 1, 'word straddling the cut stays left');
+assert.equal(partitionClipTranscriptAtSourceFrame({ transcript: W }, fps, 500)!.k, 4, 'cut past all words → all left');
 
-{ // deleted word in the right half → reindex to i-k (delete c=2, early cut k=1)
-  const r = splitClipTranscript({ transcript: W, deletedWordIdx: [2] }, fps, 5)!;
-  assert.equal(r.k, 1);
-  assert.deepEqual(r.left.deletedWordIdx, []);
-  assert.deepEqual(r.right.deletedWordIdx, [1], 'c: source idx 2 → right idx 1');
-}
-{ // deletion-aware boundary: b deleted compresses the edited timeline, so edited-cut 40
-  // maps to source frame 73 (inside c) → k=3, not the naive k=2
-  const r = splitClipTranscript({ transcript: W, deletedWordIdx: [1] }, fps, 40)!;
-  assert.equal(r.k, 3);
-  assert.deepEqual(r.left.deletedWordIdx, [1], 'b still deleted in left');
-  assert.deepEqual(r.right.deletedWordIdx, []);
-}
-{ // variants partition + rebase by source index (k=2)
+{
   const variants = [{ id: 'v1', lang: 'en', kind: 'translation' as const, label: 'EN', words: [{ i: 0, text: 'A' }, { i: 2, text: 'C' }, { i: 3, text: 'D' }] }];
-  const r = splitClipTranscript({ transcript: W, variants }, fps, 45)!;
+  const r = partitionClipTranscriptAtSourceFrame({ transcript: W, variants }, fps, 45)!;
   assert.deepEqual(r.left.variants![0]!.words, [{ i: 0, text: 'A' }], 'left variant word i<k');
   assert.deepEqual(r.right.variants![0]!.words, [{ i: 0, text: 'C' }, { i: 1, text: 'D' }], 'right variant rebased i-k');
-}
-{ // gapCaps: left keeps keys<k, boundary key=k dropped, right rebased key-k (k=2)
-  const r = splitClipTranscript({ transcript: W, gapCapsMs: { '1': 100, '2': 0, '3': 200 } }, fps, 45)!;
-  assert.deepEqual(r.left.gapCapsMs, { '1': 100 });
-  assert.deepEqual(r.right.gapCapsMs, { '1': 200 }, 'key3→1; boundary key2 dropped');
 }
 
 // ── reduce 'split' end-to-end: fades on outer edges only + partition wiring ──

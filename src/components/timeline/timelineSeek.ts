@@ -27,33 +27,147 @@ export function seekTimelineFromPointer(
   paintPlayhead(frame);
 }
 
+export interface TimelineScrubContainer extends EventTarget {
+  querySelectorAll?(selector: string): Iterable<{ seeking?: boolean; readyState?: number }>;
+}
+
+export type TimelineScrubPlayer = TimelinePointerSeekPlayer & {
+  getCurrentFrame(): number;
+  isPlaying(): boolean;
+  getContainerNode?(): TimelineScrubContainer | null;
+};
+
+export interface TimelineScrubSeekOptions {
+  maxDecodeWaitMs?: number;
+  now?: () => number;
+  setTimer?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimer?: (id: ReturnType<typeof setTimeout>) => void;
+}
+
+const DEFAULT_SCRUB_DECODE_WAIT_MS = 180;
+const SCRUB_MEDIA_SETTLE_EVENTS = ['seeked', 'error', 'emptied'] as const;
+
+function findSeekingVideoContainer(player: TimelineScrubPlayer | null): TimelineScrubContainer | null {
+  const container = player?.getContainerNode?.() ?? null;
+  if (!container?.querySelectorAll) return null;
+  for (const video of container.querySelectorAll('video')) {
+    if (video.seeking === true && (video.readyState ?? 0) >= 1) return container;
+  }
+  return null;
+}
+
 export function createTimelineScrubSeek(
-  getPlayer: () => (TimelinePointerSeekPlayer & { getCurrentFrame(): number; isPlaying(): boolean }) | null,
+  getPlayer: () => TimelineScrubPlayer | null,
   requestFrame: (callback: () => void) => number,
   cancelFrame: (id: number) => void,
+  options: TimelineScrubSeekOptions = {},
 ) {
+  const maxDecodeWaitMs = Math.max(1, options.maxDecodeWaitMs ?? DEFAULT_SCRUB_DECODE_WAIT_MS);
+  const now = options.now ?? (() => performance.now());
+  const setTimer = options.setTimer ?? globalThis.setTimeout.bind(globalThis);
+  const clearTimer = options.clearTimer ?? globalThis.clearTimeout.bind(globalThis);
   const moves = createFrameCoalescer<number>(requestFrame, cancelFrame);
+  let lastSeekAt = Number.NEGATIVE_INFINITY;
+  let deferred: { frame: number; paint: (frame: number) => void } | null = null;
+  let forceNextMove = false;
+  let waitContainer: TimelineScrubContainer | null = null;
+  let waitTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const onMediaSettled = () => {
+    if (deferred && !findSeekingVideoContainer(getPlayer())) flushDeferred();
+  };
+
+  const clearWait = () => {
+    if (waitContainer) {
+      for (const event of SCRUB_MEDIA_SETTLE_EVENTS) {
+        waitContainer.removeEventListener(event, onMediaSettled, true);
+      }
+      waitContainer = null;
+    }
+    if (waitTimer !== null) {
+      clearTimer(waitTimer);
+      waitTimer = null;
+    }
+  };
+
   const apply = (frame: number, paint: (frame: number) => void) => {
+    clearWait();
+    deferred = null;
+    forceNextMove = false;
     const player = getPlayer();
     if (player?.isPlaying()) player.pause();
-    if (player && player.getCurrentFrame() !== frame) player.seekTo(frame);
+    if (player && player.getCurrentFrame() !== frame) {
+      player.seekTo(frame);
+      lastSeekAt = now();
+    }
     paint(frame);
   };
+
+  const flushDeferred = () => {
+    clearWait();
+    const next = deferred;
+    deferred = null;
+    if (next) moves.schedule(next.frame, (latest) => runMove(latest, next.paint));
+  };
+
+  const runMove = (frame: number, paint: (frame: number) => void) => {
+    const force = forceNextMove;
+    forceNextMove = false;
+    const player = getPlayer();
+    if (player?.isPlaying()) player.pause();
+    if (!player || player.getCurrentFrame() === frame) {
+      paint(frame);
+      return;
+    }
+    const elapsed = now() - lastSeekAt;
+    if (!force && elapsed < maxDecodeWaitMs) {
+      const busyContainer = findSeekingVideoContainer(player);
+      if (busyContainer) {
+        deferred = { frame, paint };
+        if (waitContainer !== busyContainer) {
+          clearWait();
+          waitContainer = busyContainer;
+          for (const event of SCRUB_MEDIA_SETTLE_EVENTS) {
+            busyContainer.addEventListener(event, onMediaSettled, true);
+          }
+        }
+        if (waitTimer === null) {
+          waitTimer = setTimer(() => {
+            waitTimer = null;
+            forceNextMove = true;
+            flushDeferred();
+          }, Math.max(1, maxDecodeWaitMs - elapsed));
+        }
+        paint(frame);
+        return;
+      }
+    }
+    apply(frame, paint);
+  };
+
   return {
-    get pending() { return moves.pending; },
+    get pending() { return moves.pending || deferred !== null; },
     move(frame: number, paint: (frame: number) => void) {
       const player = getPlayer();
       if (player?.isPlaying()) player.pause();
-      moves.schedule(frame, (latest) => apply(latest, paint));
+      if (deferred !== null) deferred = { frame, paint };
+      moves.schedule(frame, (latest) => runMove(latest, paint));
       paint(frame);
     },
     commit(frame: number, paint: (frame: number) => void) {
       moves.cancel();
+      clearWait();
+      deferred = null;
+      forceNextMove = false;
       apply(frame, paint);
     },
     cancel(paint?: (frame: number) => void) {
-      if (!moves.pending) return;
+      const hadPending = moves.pending || deferred !== null || waitContainer !== null || waitTimer !== null;
       moves.cancel();
+      clearWait();
+      deferred = null;
+      forceNextMove = false;
+      if (!hadPending) return;
       const player = getPlayer();
       if (player && paint) paint(player.getCurrentFrame());
     },

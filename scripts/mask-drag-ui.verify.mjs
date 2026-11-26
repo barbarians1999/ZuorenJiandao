@@ -168,7 +168,7 @@ try {
   await click('选择视频'); // migration intentionally clears transient selection on reload
   await click('蒙版', 'tab'); await cli('snapshot', '-i');
   await cli('screenshot', join(root, 'mask-direct-editing.png'));
-  await click('画面 / 文字', 'tab');
+  await click('画面', 'tab');
   assert.equal(await evaluate("document.querySelectorAll('[data-mask-handle]').length"), 0);
   assert.equal(await evaluate("document.querySelectorAll('[data-preview-handle]').length"), 9);
   await click('马赛克', 'tab'); await click('局部打码');
@@ -191,7 +191,7 @@ try {
   near(mosaic.region.height_ratio, resizeBefore.height_ratio + .02);
   await cli('screenshot', join(root, 'mosaic-direct-editing.png'));
   report.checks.push('Local mosaic moves and resizes directly on preview; transformed coordinate mapping, live effect update and undo/redo pass');
-  await click('画面 / 文字', 'tab');
+  await click('画面', 'tab');
   assert.equal(await evaluate("document.querySelectorAll('[data-mosaic-handle]').length"), 0);
   assert.equal(await evaluate("document.querySelectorAll('[data-preview-handle]').length"), 9);
   report.checks.push('Lock interrupts active mask gesture; saved/reopened mask/curves persist; basic tab restores clip controls');

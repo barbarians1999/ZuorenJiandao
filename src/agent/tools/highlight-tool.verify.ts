@@ -9,6 +9,7 @@ import type { TranscriptWord } from '../../transcript/types';
 import { docFromTimeline } from '../../persist/projectStore';
 import type { AgentContext } from '../context';
 import { execHighlightTool, validateHighlights, setHighlightSelector } from './highlight-tool';
+import { resolveTranscriptUnit } from '../../transcript/trackEditCompiler';
 
 // fps 30 → msToFrame(ms)=round(ms/1000*30):0→0,500→15,1000→30,1400→42,1700→51,2000→60,2600→78,3000→90,3500→105
 const words: TranscriptWord[] = [
@@ -78,17 +79,15 @@ for (const s of res.shorts) {
   assert.deepStrictEqual([tl.width, tl.height, tl.fit], [1080, 1920, 'cover'], `${s.title} 是竖屏 9:16 cover`);
 }
 
-// ── 3) 富样本(最精彩 [2,6]):裁剪只留高光段并保持词帧一致 ────────────────
 const short = doc.timelines.find((t) => t.id === hot.timelineId)!;
 const talk = short.items.find((it) => it.id === 'talk')!;
-
-// 切点落在词边界,保留词的文本/时间戳一字未改;外侧词由 deletedWordIdx 标记。
-assert.strictEqual(talk.transcript!.length, 8, '转写词一条不删(仅标记删除),词↔帧仍成对');
-assert.deepStrictEqual([...(talk.deletedWordIdx ?? [])].sort((a, b) => a - b), [0, 1, 7], '高光外的词(0,1,7)被标记删除');
-assert.strictEqual(talk.transcript![2].text, 'this', '保留词文本未改');
-assert.strictEqual(talk.transcript![2].start, 1000, '保留词起点 ms 未改');
-assert.strictEqual(talk.transcript![6].end, 3000, '保留词终点 ms 未改');
-assert.deepStrictEqual(talk.transcript!.map((w) => w.text), words.map((w) => w.text), '任何词的文本都没被改写');
+const unit = resolveTranscriptUnit(short, talk.id)!;
+assert.strictEqual(unit.canonicalWords.length, 8, 'foldGroup 保留完整原始词表以支持恢复');
+assert.deepStrictEqual([...unit.deletedWordIdx].sort((a, b) => a - b), [0, 1, 7], '高光外的词(0,1,7)不在轨道窗口内');
+assert.strictEqual(talk.transcript![0].text, 'this', '子片段保留高亮首词');
+assert.strictEqual(talk.transcript![0].start, 1000, '保留词起点 ms 未改');
+assert.strictEqual(talk.transcript![talk.transcript!.length - 1].end, 3000, '保留词终点 ms 未改');
+assert.deepStrictEqual(unit.canonicalWords.map((w) => w.text), words.map((w) => w.text), '任何词的文本都没被改写');
 // 高光段被平移到 0,时长 = 帧区间跨度
 assert.strictEqual(talk.startFrame, 0, '高光段起播帧对齐到 0');
 assert.strictEqual(talk.durationInFrames, 60, 'clip 时长 = spanEnd-spanStart = 90-30');

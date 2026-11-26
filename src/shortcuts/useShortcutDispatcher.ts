@@ -24,7 +24,8 @@ export function useShortcutDispatcher(
       const typing = isTypingTarget(e.target);
       const isBracketKey = e.code === 'BracketLeft' || e.code === 'BracketRight'
         || e.key === '【' || e.key === '】' || e.key === '{' || e.key === '}';
-      if (isShortcutImeComposing(e) && (typing || !isBracketKey)) return;
+      const hasModifier = e.ctrlKey || e.metaKey || e.altKey;
+      if (isShortcutImeComposing(e) && (typing || (!isBracketKey && !hasModifier))) return;
       const nk = normalizeKey(e.key);
       if (!['shift', 'control', 'alt', 'meta'].includes(nk)) held.add(nk);
       if (e.defaultPrevented) return;

@@ -38,18 +38,31 @@ function useInstalledMusicPacks(enabled: boolean): boolean | null {
   useEffect(() => {
     if (!enabled) return;
     let live = true;
+    let lastCheckedAt = 0;
+    let lastResult: boolean | null = null;
     const check = () => {
+      lastCheckedAt = Date.now();
       void areModelPacksInstalled(MUSIC_PACK_IDS).then(
-        (next) => { if (live) setInstalled(next); },
-        () => { if (live) setInstalled(false); },
+        (next) => {
+          lastResult = next;
+          if (live) setInstalled(next);
+        },
+        () => {
+          lastResult = false;
+          if (live) setInstalled(false);
+        },
       );
     };
+    const checkOnFocus = () => {
+      if (lastResult === true || Date.now() - lastCheckedAt < 60_000) return;
+      check();
+    };
     check();
-    window.addEventListener('focus', check);
+    window.addEventListener('focus', checkOnFocus);
     window.addEventListener(MUSIC_PACK_REFRESH_EVENT, check);
     return () => {
       live = false;
-      window.removeEventListener('focus', check);
+      window.removeEventListener('focus', checkOnFocus);
       window.removeEventListener(MUSIC_PACK_REFRESH_EVENT, check);
     };
   }, [enabled]);

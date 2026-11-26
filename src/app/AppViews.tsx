@@ -28,7 +28,7 @@ export function AppSplash({ text }: { text: string }) {
   return (
     <div style={{
       height: '100vh', display: 'grid', placeItems: 'center', background: theme.bg,
-      color: theme.textDim, fontFamily: 'Geist, system-ui, sans-serif', fontSize: 13,
+      color: theme.textDim, fontFamily: 'var(--cc-ui-font)', fontSize: 13,
     }}>
       {text}
     </div>
@@ -40,14 +40,15 @@ interface EditorLoaderProps {
   quickStart?: ProjectQuickStart;
   onHome: () => void;
   onRename: (name: string) => void;
+  onRefreshMeta?: () => Promise<void>;
 }
 
 type EditorLoadState =
   | { kind: 'loading' }
-  | { kind: 'ready'; doc: ProjectDoc }
+  | { kind: 'ready'; doc: ProjectDoc; syncKey: number }
   | { kind: 'unreadable' };
 
-function EditorLoader({ meta, quickStart, onHome, onRename }: EditorLoaderProps) {
+function EditorLoader({ meta, quickStart, onHome, onRename, onRefreshMeta }: EditorLoaderProps) {
   const t = useT();
   const [load, setLoad] = useState<EditorLoadState>({ kind: 'loading' });
   const [attempt, setAttempt] = useState(0);
@@ -59,8 +60,8 @@ function EditorLoader({ meta, quickStart, onHome, onRename }: EditorLoaderProps)
       if (!alive) return;
       // "missing" opens a legitimately empty project; "unreadable" must block
       // the editor — opening it empty would let autosave overwrite real data.
-      if (result.status === 'ok') setLoad({ kind: 'ready', doc: result.doc });
-      else if (result.status === 'missing') setLoad({ kind: 'ready', doc: emptyProjectDoc() });
+      if (result.status === 'ok') setLoad({ kind: 'ready', doc: result.doc, syncKey: 0 });
+      else if (result.status === 'missing') setLoad({ kind: 'ready', doc: emptyProjectDoc(), syncKey: 0 });
       else setLoad({ kind: 'unreadable' });
     });
     return () => { alive = false; };
@@ -70,7 +71,7 @@ function EditorLoader({ meta, quickStart, onHome, onRename }: EditorLoaderProps)
     return (
       <div style={{
         height: '100vh', display: 'grid', placeItems: 'center', background: theme.bg,
-        fontFamily: 'Geist, system-ui, sans-serif',
+        fontFamily: 'var(--cc-ui-font)',
       }}>
         <div style={{ display: 'grid', gap: 10, justifyItems: 'center', maxWidth: 420, textAlign: 'center' }}>
           <b style={{ color: theme.text, fontSize: 14 }}>{t('工程数据暂时无法读取')}</b>
@@ -103,9 +104,13 @@ function EditorLoader({ meta, quickStart, onHome, onRename }: EditorLoaderProps)
       </div>
     );
   }
+  const handleApplySyncedDoc = (doc: ProjectDoc) => {
+    setLoad((prev) => ({ kind: 'ready', doc, syncKey: prev.kind === 'ready' ? prev.syncKey + 1 : 1 }));
+    void onRefreshMeta?.();
+  };
   return (
     <Suspense fallback={<AppSplash text={t('加载编辑器…')} />}>
-      <Editor initial={load.doc} project={meta} quickStart={quickStart} onHome={onHome} onRename={onRename} />
+      <Editor key={`${meta.id}:${load.syncKey}`} initial={load.doc} project={meta} quickStart={quickStart} onHome={onHome} onRename={onRename} onApplySyncedDoc={handleApplySyncedDoc} />
     </Suspense>
   );
 }
@@ -130,6 +135,7 @@ export function EditorRoute({ route, projects, refresh }: EditorRouteProps) {
       quickStart={route.quickStart}
       onHome={() => navigateTo('#/')}
       onRename={async (name) => { await renameProject(meta.id, name); refresh(); }}
+      onRefreshMeta={refresh}
     />
   );
 }

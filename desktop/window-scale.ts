@@ -178,7 +178,29 @@ export function installResponsiveWindowScale(win: BrowserWindow): void {
     frameHeight,
   });
 
+  let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastResizeAt = 0;
   const syncScale = () => applyResponsiveWindowScale(win);
+  const throttledResize = () => {
+    const now = Date.now();
+    const elapsed = now - lastResizeAt;
+    if (elapsed >= 16) {
+      lastResizeAt = now;
+      if (resizeTimer) {
+        clearTimeout(resizeTimer);
+        resizeTimer = null;
+      }
+      syncScale();
+      return;
+    }
+    if (!resizeTimer) {
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null;
+        lastResizeAt = Date.now();
+        syncScale();
+      }, 16 - elapsed);
+    }
+  };
 
   const { minimumWindowSize } = resolveDesktopWindowScale({
     baselineContentWidth,
@@ -189,7 +211,13 @@ export function installResponsiveWindowScale(win: BrowserWindow): void {
     frameHeight,
   });
   win.setMinimumSize(minimumWindowSize.width, minimumWindowSize.height);
-  win.on('resize', syncScale);
+  win.on('resize', throttledResize);
   win.on('restore', syncScale);
+  win.once?.('closed', () => {
+    if (resizeTimer) {
+      clearTimeout(resizeTimer);
+      resizeTimer = null;
+    }
+  });
   win.webContents.on('did-finish-load', syncScale);
 }

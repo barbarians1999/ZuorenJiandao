@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { nextFastForwardRate, nextShuttleRate, shuttleTick } from './shuttle';
+import { nextFastForwardRate, nextShuttleRate, resolvePlayPausePlan, shuttleTick } from './shuttle';
 
 assert.deepEqual(shuttleTick(-1), { stepFrames: -2, intervalMs: 80 });
 assert.deepEqual(shuttleTick(1), { stepFrames: 2, intervalMs: 80 });
@@ -40,5 +40,56 @@ assert.equal(nextFastForwardRate(1), 2);
 assert.equal(nextFastForwardRate(2), 4);
 assert.equal(nextFastForwardRate(4), 8);
 assert.equal(nextFastForwardRate(8), 1);
+
+// Play/Pause plan: deterministic play vs pause, playhead resync, and end restart
+assert.deepEqual(resolvePlayPausePlan({
+  isPlayerPlaying: true,
+  shuttleRate: 0,
+  playerFrame: 120,
+  playheadFrame: 120,
+  totalFrames: 600,
+}), { action: 'pause' });
+assert.deepEqual(resolvePlayPausePlan({
+  isPlayerPlaying: false,
+  shuttleRate: -2,
+  playerFrame: 120,
+  playheadFrame: 120,
+  totalFrames: 600,
+}), { action: 'pause' });
+assert.deepEqual(resolvePlayPausePlan({
+  isPlayerPlaying: false,
+  shuttleRate: 0,
+  playerFrame: 120,
+  playheadFrame: 120,
+  totalFrames: 600,
+}), { action: 'play', seekToFrame: null });
+assert.deepEqual(resolvePlayPausePlan({
+  isPlayerPlaying: false,
+  shuttleRate: 0,
+  playerFrame: 0,
+  playheadFrame: 120,
+  totalFrames: 600,
+}), { action: 'play', seekToFrame: 120 });
+assert.deepEqual(resolvePlayPausePlan({
+  isPlayerPlaying: false,
+  shuttleRate: 0,
+  playerFrame: 599,
+  playheadFrame: 599,
+  totalFrames: 600,
+}), { action: 'play', seekToFrame: 0 });
+assert.deepEqual(resolvePlayPausePlan({
+  isPlayerPlaying: false,
+  shuttleRate: 0,
+  playerFrame: 100,
+  playheadFrame: 600,
+  totalFrames: 600,
+}), { action: 'play', seekToFrame: 0 });
+assert.deepEqual(resolvePlayPausePlan({
+  isPlayerPlaying: false,
+  shuttleRate: 0,
+  playerFrame: null,
+  playheadFrame: 42,
+  totalFrames: 600,
+}), { action: 'play', seekToFrame: null });
 
 console.log('shuttle.verify: passed');

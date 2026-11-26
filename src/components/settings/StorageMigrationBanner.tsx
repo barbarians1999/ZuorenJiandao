@@ -53,12 +53,12 @@ export function StorageMigrationBanner({ onOpenDialog }: { onOpenDialog: () => v
   };
 
   return (
-    <div style={bannerStyle} role="status">
+    <div className="cc-storage-migration-banner" style={bannerStyle} role="status">
       <span style={bannerText}>
         {t('建议升级工程存储格式：保存更稳、打开更快、支持全文搜索（原工程文件会自动保留备份，随时可还原）。')}
       </span>
-      <button type="button" style={primaryBtn} onClick={onOpenDialog}>{t('立即升级')}</button>
-      <button type="button" style={dismissBtn} onClick={dismiss}>{t('忽略')}</button>
+      <button type="button" className="cc-storage-migration-primary" style={primaryBtn} onClick={onOpenDialog}>{t('立即升级')}</button>
+      <button type="button" className="cc-storage-migration-dismiss" style={dismissBtn} onClick={dismiss}>{t('忽略')}</button>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import type { TimelineItem } from './clipTypes.js';
 import type { Marker } from './markerTypes.js';
 import type { MediaAsset, MediaAssetKind } from './mediaTypes.js';
 import type { MulticamGroup, TimelineLinkGroup } from './multicamTypes.js';
+import type { TranscriptVariant, TranscriptWord } from '../transcript/types.js';
 import { TRACK_ORDER, type TrackFlags, type TrackId, type TrackKind, type TrackNature } from './trackTypes.js';
 import type { TransitionItem } from './transitionTypes.js';
 
@@ -19,6 +20,24 @@ export interface Watermark {
   /** 0..1 overlay opacity */
   opacity: number;
 }
+export interface TimelineFoldGroup {
+  id: string;
+  track: TrackId;
+  itemIds: string[];
+  collapsed: boolean;
+  label?: string;
+  sourceTranscript?: TranscriptWord[];
+  transcriptGenerationId?: string;
+  sourceVariants?: TranscriptVariant[];
+  sourceSpan?: { srcStartFrame: number; srcEndFrame: number };
+}
+
+export interface TimelineLegacyTimingReview {
+  required: boolean;
+  summary: string;
+  affectedItemIds: string[];
+}
+
 export const DEFAULT_WATERMARK: Watermark = { enabled: false, text: '', position: 'br', opacity: 0.7 };
 
 export interface TimelineState {
@@ -48,6 +67,10 @@ export interface TimelineState {
   markers?: Marker[];
   /** Optional professional edit relationships; absent in legacy projects. */
   linkGroups?: TimelineLinkGroup[];
+  /** Independent visual fold groups for transcript-cut or multi-segment clips. */
+  foldGroups?: TimelineFoldGroup[];
+  /** Explicit review alert when legacy project migration estimated cut boundaries. */
+  legacyTimingReview?: TimelineLegacyTimingReview;
   /** Persistent multicam sources, sync evidence and range camera decisions. */
   multicamGroups?: MulticamGroup[];
   /** Derived compatibility view of ProjectDoc.assets; never persisted here */
@@ -130,6 +153,10 @@ export function isEffectItemKind(kind: TimelineItem['kind']): boolean {
   return kind === 'solid' || kind === 'mosaic' || kind === 'motion-graphic' || kind === 'gif' || kind === 'svg';
 }
 
+export function isDedicatedEffectItemKind(kind: TimelineItem['kind']): boolean {
+  return kind === 'solid' || kind === 'mosaic' || kind === 'motion-graphic';
+}
+
 /** Strict track nature used to keep text, effect, video/picture, audio, and caption tracks segregated. */
 export function trackNature(s: TimelineState, id: TrackId, mainId?: TrackId | null): TrackNature {
   const kind = trackKind(s, id);
@@ -158,6 +185,7 @@ export function canTrackAcceptItemKind(
   if (itemKind === 'audio') return target === 'audio';
   if (itemKind === 'text') return target === 'text';
   if (target === 'text') return false;
+  if (isDedicatedEffectItemKind(itemKind)) return target === 'effect';
   if (target === 'effect') return isEffectItemKind(itemKind);
   return target === 'video';
 }

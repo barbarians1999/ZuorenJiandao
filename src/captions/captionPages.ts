@@ -6,6 +6,7 @@ import { effectivePreset } from './renderStyles.js';
 import {
   applyWordOverrides,
   resolveCaptionProjection,
+  wordRefIndexMap,
   type CaptionProjection,
 } from './resolve.js';
 import { orderedCaptionSourceEntries } from './sourceOrder.js';
@@ -15,14 +16,14 @@ import type { CaptionStyleOverride } from './styles.js';
 import {
   CAPTION_MAX_CHARS_PER_LINE,
   CAPTION_MAX_VISUAL_LINES,
-  LINGER_MS,
   paginate,
   type CaptionPage,
   type CaptionsData,
   type CaptionSourceEntry,
   type CaptionSourceSpan,
+  type CaptionWordOverride,
 } from './types.js';
-import { captionWordOverride } from './wordOverrides.js';
+import { buildStableOverrideMap, lookupCaptionWordOverride } from './wordOverrides.js';
 
 export interface CaptionPageIdentity {
   id: string;
@@ -53,7 +54,8 @@ function lanePages(
   laneOrder: number,
   projection: CaptionProjection,
   globalIndexByRef: ReadonlyMap<string, number>,
-  items: TimelineItem[],
+  itemsById: ReadonlyMap<string, TimelineItem>,
+  stableOverrides: ReadonlyMap<string, CaptionWordOverride>,
   fps: number,
 ): CaptionPageIdentity[] {
   const { words, wordRefs: refs } = projection;
@@ -83,16 +85,17 @@ function lanePages(
     ? visible.map(({ word }) => ({ words: [word], start: word.start, end: word.end }))
     : paginate(visible.map(({ word }) => word), captions.pacing, perPage, breaks, CAPTION_MAX_CHARS_PER_LINE, lines);
   let cursor = 0;
-  const source = items.find((item) => item.id === entry.itemId);
+  const source = itemsById.get(entry.itemId);
+  const positionByRef = wordRefIndexMap(projection);
   const sourceSpansFor = (refs: readonly string[]): CaptionSourceSpan[] => {
     if (!source?.transcript?.length) return [];
     return refs.flatMap((ref) => {
-      const position = projection.wordRefs.indexOf(ref);
-      if (position < 0) return [];
+      const position = positionByRef.get(ref);
+      if (position === undefined) return [];
       const sourceIndex = projection.indices[position]!;
       const word = source.transcript![sourceIndex];
       if (!word) return [];
-      const override = captionWordOverride(captions.wordOverrides, sourceIndex, ref);
+      const override = lookupCaptionWordOverride(captions.wordOverrides, stableOverrides, sourceIndex, ref);
       return [{ wordRef: ref, startMs: word.start, endMs: word.end,
         sourceText: projection.words[position]?.text ?? word.text, ...(override?.timingOffsetMs !== undefined ? { timingOffsetMs: override.timingOffsetMs } : {}) }];
     });
@@ -102,13 +105,13 @@ function lanePages(
     const wordRefs = projected.map(({ index }) => applied.wordRefs[index]!);
     const sourceRefs = [...wordRefs];
     for (const ref of wordRefs) {
-      const position = projection.wordRefs.indexOf(ref);
-      if (position < 0) continue;
-      const firstOverride = captionWordOverride(captions.wordOverrides, projection.indices[position]!, ref);
+      const position = positionByRef.get(ref);
+      if (position === undefined) continue;
+      const firstOverride = lookupCaptionWordOverride(captions.wordOverrides, stableOverrides, projection.indices[position]!, ref);
       if (!firstOverride?.text || !firstOverride.forceBreak) continue;
       for (let next = position + 1; next < projection.wordRefs.length; next += 1) {
         const nextRef = projection.wordRefs[next]!;
-        const nextOverride = captionWordOverride(captions.wordOverrides, projection.indices[next]!, nextRef);
+        const nextOverride = lookupCaptionWordOverride(captions.wordOverrides, stableOverrides, projection.indices[next]!, nextRef);
         if (nextOverride?.forceBreak) break;
         if (!nextOverride?.hidden) break;
         sourceRefs.push(nextRef);
@@ -182,7 +185,9 @@ function computeCaptionPages(captions: CaptionsData, items: TimelineItem[], fps:
   if (captions.sourceEntries?.length) {
     const entries = orderedCaptionSourceEntries(captions.sourceEntries).filter((entry) => entry.visible !== false);
     const globalIndexByRef = new Map(projection.wordRefs.map((ref, index) => [ref, index]));
-    return entries.flatMap((entry, laneOrder) => lanePages(captions, entry, laneOrder, projection.entries!.get(entry)!, globalIndexByRef, items, fps))
+    const itemsById = new Map(items.map((item) => [item.id, item]));
+    const stableOverrides = buildStableOverrideMap(captions.wordOverrides);
+    return entries.flatMap((entry, laneOrder) => lanePages(captions, entry, laneOrder, projection.entries!.get(entry)!, globalIndexByRef, itemsById, stableOverrides, fps))
       .sort((left, right) => left.page.start - right.page.start || left.laneOrder - right.laneOrder || left.page.end - right.page.end || left.id.localeCompare(right.id));
   }
   const applied = applyWordOverrides(projection.words, projection.indices, captions.wordOverrides, projection.wordRefs);
@@ -279,7 +284,6 @@ export function activeCaptionPages(pages: readonly CaptionPageIdentity[], ms: nu
     const i = lastStartedIndex(lane, ms, fps);
     if (i < 0) return [];
     const active = lane[i].page;
-    const next = lane[i + 1]?.page;
-    return next || ms < active.end + LINGER_MS ? [lane[i]] : [];
+    return !hasCaptionCueEndedAt(active.start, active.end, ms, fps) ? [lane[i]] : [];
   }).sort((left, right) => left.laneOrder - right.laneOrder || left.id.localeCompare(right.id));
 }

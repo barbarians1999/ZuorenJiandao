@@ -97,8 +97,8 @@ export function EffectsBrowser({
         onClick: () => onAddShape('rectangle'),
         preview: (
           <div style={{
-            width: 44,
-            height: 30,
+            width: 52,
+            height: 34,
             borderRadius: 6,
             border: `2px solid ${theme.accent}`,
             background: themeAlpha.accent(0.16),
@@ -112,8 +112,8 @@ export function EffectsBrowser({
         onClick: () => onAddShape('ellipse'),
         preview: (
           <div style={{
-            width: 44,
-            height: 30,
+            width: 52,
+            height: 34,
             borderRadius: '50%',
             border: `2px solid ${theme.accent}`,
             background: themeAlpha.accent(0.16),
@@ -128,8 +128,8 @@ export function EffectsBrowser({
       onClick: onAddSolid,
       preview: (
         <div style={{
-          width: 44,
-          height: 30,
+          width: 52,
+          height: 34,
           borderRadius: 6,
           border: `1px solid ${theme.borderLight}`,
           background: `linear-gradient(135deg, ${theme.panelAlt}, ${theme.hover})`,
@@ -146,8 +146,8 @@ export function EffectsBrowser({
       onClick: onAddMosaic,
       preview: (
         <div style={{
-          width: 48,
-          height: 32,
+          width: 54,
+          height: 36,
           borderRadius: 8,
           border: `1px solid ${theme.borderLight}`,
           background: `linear-gradient(135deg, ${themeAlpha.ink(0.16)}, ${themeAlpha.ink(0.05)})`,
@@ -296,7 +296,6 @@ export function EffectsBrowser({
                 >
                   <div className="cc-effect-card-thumb">{card.preview}</div>
                   <span className="cc-effect-card-label">{card.label}</span>
-                  <span className="cc-effect-card-hint">{card.hint}</span>
                 </button>
               ))}
             </div>
@@ -304,22 +303,19 @@ export function EffectsBrowser({
 
           <div className="cc-effects-section">
             <div className="cc-effects-section-title">{t('高斯模糊（马赛克）')}</div>
-            <div className="cc-effects-grid cc-effects-grid-wide">
+            <div className="cc-effects-grid">
               {blurCards.map((card) => (
                 <button
                   key={card.id}
                   type="button"
-                  className="cc-effect-card cc-effect-card-wide"
+                  className="cc-effect-card"
                   draggable
                   onDragStart={(event) => setLibraryDrag(event, { kind: 'effect-tool', id: card.id, name: card.label })}
                   onClick={card.onClick}
                   title={card.hint}
                 >
                   <div className="cc-effect-card-thumb">{card.preview}</div>
-                  <div className="cc-effect-card-copy">
-                    <span className="cc-effect-card-label">{card.label}</span>
-                    <span className="cc-effect-card-hint">{card.hint}</span>
-                  </div>
+                  <span className="cc-effect-card-label">{card.label}</span>
                 </button>
               ))}
             </div>

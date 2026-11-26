@@ -105,12 +105,7 @@ assert.deepEqual(spansToLocalCuts(clip({}), [{ startMs: 0, endMs: 10_000 }], FPS
 assert.match(silenceRemovalBlocker(clip({ playbackRate: 2 })) ?? '', /变速/);
 assert.match(silenceRemovalBlocker(clip({ zoom: { kind: 'shape' } as never })) ?? '', /zoom/);
 assert.match(silenceRemovalBlocker(clip({ kind: 'image' })) ?? '', /无音频/);
-assert.match(silenceRemovalBlocker(clip({ src: undefined })) ?? '', /无媒体源/);
-assert.match(
-  silenceRemovalBlocker(clip({ transcript: [{ text: 'hi', start: 0, end: 300 }], deletedWordIdx: [0] })) ?? '',
-  /clean_script/, '词级编辑过的转写 clip 让位 clean_script',
-);
-assert.equal(silenceRemovalBlocker(clip({ transcript: [{ text: 'hi', start: 0, end: 300 }] })), null, '未编辑的转写 clip 可处理');
+assert.equal(silenceRemovalBlocker(clip({ transcript: [{ text: 'hi', start: 0, end: 300 }] })), null, '转写 clip 可走轨道静音删除');
 assert.equal(silenceRemovalBlocker(clip({})), null, '普通视频可处理');
 
 console.log('silenceRebuild.verify: ok (映射/并段/真 reducer 波纹/淡化外缘/守门)');

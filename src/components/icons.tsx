@@ -4,7 +4,7 @@ import { useT } from '../i18n/locale';
 // toolbar/track-header glyphs — replaces emoji for a consistent editor chrome.
 
 export type IconName =
-  | 'plus' | 'cursor' | 'trim' | 'rateStretch' | 'blade' | 'scissors' | 'magnet' | 'mic' | 'chevronDown' | 'check' | 'brush' | 'cloud' | 'insert'
+  | 'plus' | 'cursor' | 'trim' | 'rateStretch' | 'blade' | 'scissors' | 'magnet' | 'mic' | 'chevronUp' | 'chevronDown' | 'check' | 'brush' | 'cloud' | 'insert'
   | 'play' | 'pause' | 'fastForward' | 'fastRewind' | 'markIn' | 'markOut' | 'camera' | 'text' | 'copy' | 'trash' | 'bookmark' | 'prev' | 'next'
   | 'zoomOut' | 'zoomIn' | 'fit' | 'aspect' | 'captions' | 'fullscreen'
   | 'eye' | 'eyeOff' | 'volume' | 'volumeOff' | 'lock' | 'unlock'
@@ -14,7 +14,7 @@ export type IconName =
   | 'download' | 'film' | 'clipboard' | 'plug' | 'github' | 'mail' | 'database'
   | 'music' | 'video' | 'image' | 'swap' | 'star' | 'pencil' | 'x' | 'diamond'
   | 'search' | 'upload' | 'folder' | 'folderPlus' | 'grid' | 'list' | 'sort' | 'filter' | 'more' | 'bug'
-  | 'palette' | 'wand' | 'tracking' | 'qrCode' | 'info' | 'sun' | 'moon';
+  | 'palette' | 'wand' | 'tracking' | 'qrCode' | 'info' | 'sun' | 'moon' | 'refresh' | 'gripVertical';
 
 // stroke path(s) per icon; a few are fill-based (play/pause/cursor/bookmark)
 const FILL = new Set<IconName>(['play', 'pause', 'fastForward', 'fastRewind', 'cursor', 'bookmark']);
@@ -32,7 +32,9 @@ const P: Record<IconName, string> = {
   tracking: 'M8 3H5a2 2 0 0 0-2 2v3 M16 3h3a2 2 0 0 1 2 2v3 M3 16v3a2 2 0 0 0 2 2h3 M21 16v3a2 2 0 0 1-2 2h-3 M12 8m-4 4a4 4 0 1 0 8 0a4 4 0 1 0-8 0',
   mic: 'M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z M5 10a7 7 0 0 0 14 0 M12 19v3',
   insert: 'M5 5v14 M19 5v14 M12 8v8 M9 12h6',
+  chevronUp: 'M18 15l-6-6-6 6',
   chevronDown: 'M6 9l6 6 6-6',
+  gripVertical: 'M9 5h.01 M9 12h.01 M9 19h.01 M15 5h.01 M15 12h.01 M15 19h.01',
   check: 'M20 6L9 17l-5-5',
   cloud: 'M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z',
   // lucide database (storage migration entry)
@@ -82,6 +84,7 @@ const P: Record<IconName, string> = {
   // Top-bar glyphs based on Lucide shapes.
   undo: 'M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5 5.5 5.5 0 0 1-5.5 5.5H11',
   redo: 'm15 14 5-5-5-5 M20 9H9.5a5.5 5.5 0 0 0 0 11H13',
+  refresh: 'M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5 M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16 M16 16h5v5',
   history: 'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5 M12 7v5l4 2',
   layoutPanel: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M15 3v18',
   keyboard: 'M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z M6 10h.01 M10 10h.01 M14 10h.01 M18 10h.01 M6 14h.01 M10 14h8',

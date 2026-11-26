@@ -305,11 +305,7 @@ function trimCopyToHighlight(
       startFrame: oStart - spanStart,
       durationInFrames: oEnd - oStart,
       srcInFrame: it.src
-        ? sourceWindowForTimelineRange(
-            it.kind === 'audio' && hasOperationalTranscript(it) ? { ...it, playbackRate: 1 } : it,
-            leftTrim,
-            oEnd - oStart,
-          ).startFrame
+        ? sourceWindowForTimelineRange(it, leftTrim, oEnd - oStart).startFrame
         : undefined,
     });
   }

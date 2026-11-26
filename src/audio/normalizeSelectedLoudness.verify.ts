@@ -17,19 +17,16 @@ assert.deepEqual(loudnessSelectionForItem(base, state).ranges, [{ startFrame: 10
 assert.equal(loudnessSelectionForItem(base, state).playbackRate, 2);
 assert.throws(() => loudnessSelectionForItem({ ...base, playbackRate: 0 }, state), /变速无效/);
 
-const transcriptItem: TimelineItem = {
-  ...base, id: 'edited', srcInFrame: 0, durationInFrames: 90, playbackRate: 1,
-  transcript: [
-    { text: 'one', start: 0, end: 1000 },
-    { text: 'two', start: 1000, end: 2000 },
-    { text: 'three', start: 2000, end: 3000 },
-  ],
-  deletedWordIdx: [1], transcriptPlayOrder: [2, 0, 2],
+// Each transcript-edited audio clip now has real track geometry (no deletedWordIdx/transcriptPlayOrder on TimelineItem).
+const editedClipA: TimelineItem = {
+  ...base, id: 'edited_a', srcInFrame: 60, durationInFrames: 30, playbackRate: 1,
 };
-const transcriptState = activeEditorState({ ...doc, timelines: [{ ...doc.timelines[0]!, items: [transcriptItem] }] });
-assert.deepEqual(loudnessSelectionForItem(transcriptItem, transcriptState).ranges, [
-  { startFrame: 60, endFrame: 90 }, { startFrame: 0, endFrame: 30 }, { startFrame: 60, endFrame: 90 },
-], 'play order duplicates are retained and deleted words are excluded');
+const editedClipB: TimelineItem = {
+  ...base, id: 'edited_b', startFrame: 30, srcInFrame: 0, durationInFrames: 30, playbackRate: 1,
+};
+const transcriptState = activeEditorState({ ...doc, timelines: [{ ...doc.timelines[0]!, items: [editedClipA, editedClipB] }] });
+assert.deepEqual(loudnessSelectionForItem(editedClipA, transcriptState).ranges, [{ startFrame: 60, endFrame: 90 }]);
+assert.deepEqual(loudnessSelectionForItem(editedClipB, transcriptState).ranges, [{ startFrame: 0, endFrame: 30 }]);
 
 const source = new Float32Array(90).fill(0.01);
 source.fill(0.1, 0, 30);

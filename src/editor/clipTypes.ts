@@ -226,30 +226,17 @@ export interface TimelineItem extends TranscriptCarrier {
   /** Playback speed: 1 = normal, 2 = 2× faster. Retiming keeps the source span,
    * so durationInFrames scales by 1/rate. Applies to video/audio/sequence items. */
   playbackRate?: number;
-  deletedWordIdx?: number[];
   /** text-only translation / correction variants of `transcript`. Each keys words
    * by their SOURCE index and carries only text — timing always comes from the
    * source word, so a variant never re-times a clip. Captions pick which
    * to display via CaptionsData.captionVariantId. */
   variants?: TranscriptVariant[];
-  /** clean_script silence compression: cap inter-word pauses to this many frames
-   * (undefined = keep every pause at its recorded length). */
-  silenceFrames?: number;
-  /** clean_script Breathing port: A total of so many frames of original silence are retained on both sides of the word deletion cutout (both sides are divided equally),
-   * Prevent the cut from hitting the word boundary and cutting off the consonants. undefined/0 = cut exactly at word boundaries. */
-  cutPadFrames?: number;
-  /**
-   * Per-gap silence caps (transcript Gap row / delete-gap).
-   * Key = word index AFTER the gap (string for JSON); value = max allowed gap ms
-   * (0 = delete that breath/gap). Overrides silenceFrames for that boundary only.
-   */
-  gapCapsMs?: Record<string, number>;
-  /**
-   * Playback order of SOURCE word indices (drag-reorder speech blocks in transcript).
-   * undefined = chronological 0..n-1. Indices still refer to `transcript[]` slots
-   * (variants / gapCaps stay valid). Playback concatenates ranges in this order.
-   */
-  transcriptPlayOrder?: number[];
+  /** Explicit review marker attached during legacy project migration when cut timing needs user check. */
+  legacyTimingReview?: {
+    caseCode: 'L2' | 'L3' | 'L4' | 'L5';
+    summary: string;
+    estimatedDeltaFrames?: number;
+  };
   /**
    * AI Voice Isolation (isolate_voice / DeepFilterNet3).
    * `src` stays the original media; playback uses denoisedSrc for audio when set.

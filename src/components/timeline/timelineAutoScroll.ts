@@ -135,3 +135,60 @@ export function createTimelineAutoScrollController(options: {
     getActivePointerId(): number | null { return gesture?.pointerId ?? null; },
   };
 }
+
+export interface PlaybackPageScrollInput {
+  frame: number;
+  pixelsPerFrame: number;
+  headerWidth: number;
+  clientWidth: number;
+  scrollLeft: number;
+  maxScrollLeft: number;
+  revealIfBeforeLeft?: boolean;
+}
+
+export function isPlayheadVisibleForPlaybackFollow(input: {
+  frame: number;
+  pixelsPerFrame: number;
+  headerWidth: number;
+  clientWidth: number;
+  scrollLeft: number;
+}): 'before' | 'inside' | 'near-end' | 'after' {
+  const usableWidth = input.clientWidth - input.headerWidth;
+  if (!Number.isFinite(usableWidth) || usableWidth <= 40 || !Number.isFinite(input.pixelsPerFrame) || input.pixelsPerFrame <= 0) {
+    return 'inside';
+  }
+  const playheadPx = Math.max(0, input.frame) * input.pixelsPerFrame;
+  const rightMargin = Math.min(32, usableWidth * 0.08);
+  if (playheadPx < input.scrollLeft) return 'before';
+  if (playheadPx > input.scrollLeft + usableWidth) return 'after';
+  if (playheadPx >= input.scrollLeft + usableWidth - rightMargin) return 'near-end';
+  return 'inside';
+}
+
+/** Page-turn scroll during playback: when the playhead nears the right edge, jump so it sits near the left. */
+export function playbackPageScrollLeft(input: PlaybackPageScrollInput): number | null {
+  const { frame, pixelsPerFrame, headerWidth, clientWidth, scrollLeft, maxScrollLeft, revealIfBeforeLeft } = input;
+  if (
+    !Number.isFinite(frame)
+    || !Number.isFinite(pixelsPerFrame)
+    || !Number.isFinite(headerWidth)
+    || !Number.isFinite(clientWidth)
+    || !Number.isFinite(scrollLeft)
+    || !Number.isFinite(maxScrollLeft)
+    || pixelsPerFrame <= 0
+    || maxScrollLeft <= 0
+  ) {
+    return null;
+  }
+  const usableWidth = clientWidth - headerWidth;
+  if (usableWidth <= 40) return null;
+  const playheadPx = Math.max(0, frame) * pixelsPerFrame;
+  const rightMargin = Math.min(32, usableWidth * 0.08);
+  const leadMargin = Math.min(48, usableWidth * 0.1);
+  const pastRight = playheadPx >= scrollLeft + usableWidth - rightMargin;
+  const beforeLeft = Boolean(revealIfBeforeLeft) && playheadPx < scrollLeft;
+  if (!pastRight && !beforeLeft) return null;
+  const target = Math.max(0, Math.min(maxScrollLeft, playheadPx - leadMargin));
+  if (Math.abs(target - scrollLeft) < 1) return null;
+  return target;
+}

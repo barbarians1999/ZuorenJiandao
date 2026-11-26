@@ -23,6 +23,7 @@ import type { AnimationAuditionPreview } from './useAnimationAudition';
 import type { TrackFlags, TrackUpdate } from '../../editor/trackTypes';
 import type { InspectorTab } from './InspectorContent';
 import type { CompositionMosaic } from '../../editor/compositionMosaic';
+import type { BatchFillToNextPlan } from '../../editor/speedDuration';
 
 export interface FadePatch {
   fadeInFrames?: number;
@@ -72,9 +73,14 @@ export interface InspectorPanelProps {
   autoGrade?: AutoGradeControlProps;
   onItemZoomChange: (patch: Partial<ZoomEffect> | null) => void;
   onItemEffectsChange: (effects: ClipEffect[]) => void;
+  selectedMosaicEffectId?: string | null;
+  onSelectMosaicEffect?: (effectId: string | null) => void;
   onCompositionMosaicChange?: (patch: Partial<CompositionMosaic>) => void;
   selectedPreviewStatuses?: readonly SelectedPreviewStatus[];
   onItemSpeedChange?: (rate: number) => void;
+  onItemSpeedDurationChange?: (targetSeconds: number) => void;
+  fillToNextSpeedPlan?: BatchFillToNextPlan | null;
+  onItemFillToNextClip?: () => void;
   slipPlan?: SlipPlan | null;
   onItemSlip?: (deltaInFrames: number) => SlipResult;
   onNormalizeLoudness?: () => void | Promise<void>;

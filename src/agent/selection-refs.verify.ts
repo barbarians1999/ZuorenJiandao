@@ -128,19 +128,25 @@ assert.equal(ts1.metadata.timelineFrameEnd, 120, '1000ms @30fps = 30f after clip
 assert.equal(ts1.metadata.speakerName, '说话人 1');
 assert.equal(ts1.id, 'transcript:item_t:0-1', 'deterministic id dedupes repeat picks');
 
-// deleting the middle word compresses the edited timeline — the mapper must follow
-const edited: TimelineItem = { ...spoken, deletedWordIdx: [1], durationInFrames: 30 };
-const ts2 = transcriptSelectionRef(edited, [0, 2], 30);
+// deleting/splitting on the track updates real clip windows — the mapper must follow
+const edited: TimelineItem = {
+  ...spoken, srcInFrame: 0, durationInFrames: 15,
+  transcript: [{ text: '今天', start: 0, end: 500, speaker: 'A' }],
+};
+const editedTail: TimelineItem = {
+  ...spoken, id: 'item_t2', startFrame: 105, srcInFrame: 60, durationInFrames: 15,
+};
+const ts2 = transcriptSelectionRef(edited, [0], 30);
 assert.ok(ts2 && ts2.kind === 'transcript-selection');
 assert.equal(ts2.metadata.sourceMediaStartMs, 0);
-assert.equal(ts2.metadata.sourceMediaEndMs, 2500, 'source ms stay raw word timestamps');
+assert.equal(ts2.metadata.sourceMediaEndMs, 500);
 assert.equal(ts2.metadata.timelineFrameStart, 90);
-assert.equal(ts2.metadata.timelineFrameEnd, 120, 'kept segments: 15f + 15f after the cut');
+assert.equal(ts2.metadata.timelineFrameEnd, 105);
 
-// picking only a deleted word: text survives, timeline position does not
-const ts3 = transcriptSelectionRef(edited, [1], 30);
+// picking a word outside the clip's media window: text survives, timeline position does not
+const ts3 = transcriptSelectionRef(editedTail, [1], 30);
 assert.ok(ts3 && ts3.kind === 'transcript-selection');
-assert.equal('timelineFrameStart' in ts3.metadata, false, 'cut word has no timeline frames');
+assert.equal('timelineFrameStart' in ts3.metadata, false, 'word outside media window has no timeline frames');
 assert.equal(ts3.metadata.selectedText, '我们');
 
 // English words join with spaces; out-of-range indices are dropped

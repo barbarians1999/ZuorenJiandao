@@ -3,7 +3,7 @@ import {
   isProjectStoreKey,
   projectIdFromProjectStoreKey,
 } from '../../shared/project-store-validation.ts';
-import { sqliteDeleteEntry, sqliteReadEntry, sqliteStoreEnabled } from '../storage/sqlite-store.ts';
+import { sqliteDeleteEntry, sqliteReadEntry, sqliteReadRawEntry, sqliteStoreEnabled } from '../storage/sqlite-store.ts';
 import { mergeAgentSidecar } from './project-store-entries.ts';
 import { durableRemove } from './project-store-durable.ts';
 
@@ -14,6 +14,7 @@ export interface StoredEntryValue {
 
 export interface LockedProjectStore {
   readEntry: (key: string) => Promise<StoredEntryValue>;
+  readRawEntry?: (key: string) => Promise<string | null>;
   writeEntry: (key: string, value: unknown) => Promise<void>;
   writeAgentRuntimeExact: (key: string, value: unknown) => Promise<void>;
   writeEntryExact: (key: string, value: unknown) => Promise<void>;
@@ -50,6 +51,16 @@ export function createProjectStoreEntryAdapter(
     }
   }
 
+  async function readEntryRawFile(key: string): Promise<string | null> {
+    if (sqliteStoreEnabled()) return sqliteReadRawEntry(key);
+    try {
+      return await readFile(options.entryPath(key), 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
   function validateLockedEntryKey(key: string): string | undefined {
     if (!isProjectStoreKey(key)) throw new Error('invalid project store entry key');
     return projectIdFromProjectStoreKey(key);
@@ -68,6 +79,14 @@ export function createProjectStoreEntryAdapter(
   ): Promise<StoredEntryValue> {
     const projectId = validateLockedEntryKey(key);
     return projectId && deletedIds.has(projectId) ? { found: false } : readEntryFile(key);
+  }
+
+  async function readLockedRawEntry(
+    key: string,
+    deletedIds: ReadonlySet<string>,
+  ): Promise<string | null> {
+    const projectId = validateLockedEntryKey(key);
+    return projectId && deletedIds.has(projectId) ? null : readEntryRawFile(key);
   }
 
   async function writeLockedEntry(
@@ -115,6 +134,7 @@ export function createProjectStoreEntryAdapter(
   function createLockedProjectStore(deletedIds: ReadonlySet<string>): LockedProjectStore {
     return {
       readEntry: (key) => readLockedEntry(key, deletedIds),
+      readRawEntry: (key) => readLockedRawEntry(key, deletedIds),
       writeEntry: (key, value) => writeLockedEntry(key, value, deletedIds),
       writeAgentRuntimeExact: (key, value) => writeAgentRuntimeExactLocked(key, value, deletedIds),
       writeEntryExact: (key, value) => writeEntryExactLocked(key, value, deletedIds),

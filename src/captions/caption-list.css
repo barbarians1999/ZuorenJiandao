@@ -55,3 +55,7 @@
 .cc-caption-list-timing input { width:100%; box-sizing:border-box; }
 .cc-caption-list-options { margin-top:10px; }
 .cc-caption-list-options > summary { padding:10px 0; font-size:14px; color:var(--cc-text); cursor:pointer; }
+.cc-cap-inline-row { display:grid; grid-template-columns:64px minmax(0, 1fr); align-items:center; gap:8px; }
+.cc-cap-inline-row label { color:var(--cc-text-muted); font-size:14px; font-weight:500; }
+.cc-cap-inline-row .cc-cap-select { width:100%; max-width:none; }
+.cc-cap-model-warn { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }

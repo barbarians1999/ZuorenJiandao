@@ -81,4 +81,32 @@ const noShortRoll = rollAdjacentManualCues(adjacent, rollLane, 0, 1, -2_000, 30)
 const noShortWords = noShortRoll.sourceEntries!.find((entry) => entry.id === rollLane)?.words ?? [];
 assert.ok(noShortWords.every((word) => word.end - word.start >= 500), 'roll preserves the half-second minimum');
 
+const shortPair = [
+  { id: 'short-l', text: '短', start: 1_000, end: 1_200 },
+  { id: 'long-r', text: '长一句', start: 1_200, end: 2_200 },
+];
+const extendShort = rollAdjacentManualCues({
+  ...adjacent,
+  sourceEntries: [{ id: rollLane, itemId: 'manual:roll', label: 'Roll', words: shortPair }],
+}, rollLane, 0, 1, 200, 30)!;
+const extendedWords = extendShort.sourceEntries!.find((entry) => entry.id === rollLane)?.words ?? [];
+assert.deepEqual(extendedWords.map((w) => [w.start, w.end]), [[1_000, 1_400], [1_400, 2_200]],
+  'short cue can expand toward longer neighbor');
+const shrinkShortBlocked = rollAdjacentManualCues({
+  ...adjacent,
+  sourceEntries: [{ id: rollLane, itemId: 'manual:roll', label: 'Roll', words: shortPair }],
+}, rollLane, 0, 1, -200, 30)!;
+const blockedWords = shrinkShortBlocked.sourceEntries!.find((entry) => entry.id === rollLane)?.words ?? [];
+assert.deepEqual(blockedWords.map((w) => [w.start, w.end]), [[1_000, 1_200], [1_200, 2_200]],
+  'short cue does not jump backwards when dragged toward its shorter direction');
+
+const bothShort = [
+  { id: 's1', text: '一', start: 1_000, end: 1_300 },
+  { id: 's2', text: '二', start: 1_300, end: 1_600 },
+];
+assert.equal(rollAdjacentManualCues({
+  ...adjacent,
+  sourceEntries: [{ id: rollLane, itemId: 'manual:roll', label: 'Roll', words: bothShort }],
+}, rollLane, 0, 1, 100, 30), null, 'two cues both <= 0.5s have no roll range');
+
 console.log('manualCaptions.check: ok');

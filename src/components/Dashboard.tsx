@@ -13,7 +13,7 @@ export function Dashboard(props: DashboardProps) {
   const isMacDesktop = window.openChatCutDesktop?.platform === 'darwin';
   const isWindowsDesktop = window.openChatCutDesktop?.platform === 'win32';
   return (
-    <div className="cc-dashboard" style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: theme.bg, color: theme.text, fontFamily: 'Geist, system-ui, -apple-system, sans-serif' }}>
+    <div className="cc-dashboard" style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: theme.bg, color: theme.text, fontFamily: 'var(--cc-ui-font)' }}>
       <UpstreamUpdateNotice />
       <header className={`cc-dashboard-titlebar cc-window-titlebar${isMacDesktop ? ' cc-window-titlebar--mac' : ''}${isWindowsDesktop ? ' cc-window-titlebar--windows' : ''}`} style={{ position: 'relative', height: 52, flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '0 22px', borderBottom: `0.5px solid ${theme.border}`, background: theme.panel }}>
         <DesktopWindowControls />

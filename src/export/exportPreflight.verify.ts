@@ -57,17 +57,53 @@ const baseState = (): TimelineState => ({
   assert.deepEqual(pre.reasons, ['transitions']);
 }
 
-// 3. Adding a 30-frame PiP overlay on V2 -> segmented hybrid
+// 3. Adding a 2-layer PiP overlay on V2 stays fast; 5 simultaneous video layers triggers segmented hybrid
 {
   const st = baseState();
   st.items.push({
     id: 'pip', name: 'pip', kind: 'video', track: 'V2', startFrame: 180, durationInFrames: 30,
     src: '/media/uploads/c.mp4', srcInFrame: 0,
   });
-  const pre = analyzeExportRoutePreflight(st, 'h264', 30);
-  assert.equal(pre.mode, 'segmented');
-  assert.equal(pre.compatFrames, 30);
-  assert.deepEqual(pre.reasons, ['overlapping-base-video']);
+  const preFastPip = analyzeExportRoutePreflight(st, 'h264', 30);
+  assert.equal(preFastPip.mode, 'fast');
+  assert.equal(preFastPip.compatFrames, 0);
+
+  st.trackOrder = ['C1', 'T1', 'M1', 'V5', 'V4', 'V3', 'V2', 'V1', 'A1'];
+  for (const tid of ['V3', 'V4', 'V5']) {
+    st.tracks![tid] = { kind: 'video' };
+    st.items.push({
+      id: `pip_${tid}`, name: `pip_${tid}`, kind: 'video', track: tid, startFrame: 180, durationInFrames: 30,
+      src: '/media/uploads/c.mp4', srcInFrame: 0,
+    });
+  }
+  const pre5 = analyzeExportRoutePreflight(st, 'h264', 30);
+  assert.equal(pre5.mode, 'segmented');
+  assert.equal(pre5.compatFrames, 30);
+  assert.deepEqual(pre5.reasons, ['overlapping-base-video']);
+}
+
+// 3b. Transformed static mosaic + non-overlapping text track stays fast; overlapping overlay below mosaic triggers compat
+{
+  const st = baseState();
+  st.items.push({
+    id: 'm1', name: 'm1', kind: 'mosaic', track: 'M1', startFrame: 10, durationInFrames: 40,
+    transform: { x: 20, y: -20, scaleX: 0.5, scaleY: 0.5 },
+    mosaic: { shape: 'rectangle', centerX: 0.5, centerY: 0.5, width: 0.3, height: 0.3, strength: 60, feather: 0, opacity: 1 },
+  });
+  st.items.push({
+    id: 't_later', name: 't_later', kind: 'text', track: 'T1', startFrame: 100, durationInFrames: 30,
+    props: { text: 'later' },
+  });
+  assert.equal(analyzeExportRoutePreflight(st, 'h264', 30).mode, 'fast');
+
+  // Text below mosaic (on V2) overlapping in time -> compat
+  st.items.push({
+    id: 't_under', name: 't_under', kind: 'text', track: 'V2', startFrame: 20, durationInFrames: 15,
+    props: { text: 'under' },
+  });
+  const preBad = analyzeExportRoutePreflight(st, 'h264', 30);
+  assert.equal(preBad.mode, 'segmented');
+  assert.ok(preBad.reasons.includes('composition-mosaic'));
 }
 
 // 4. Non-H.264 codec -> full compat
@@ -105,6 +141,40 @@ const baseState = (): TimelineState => ({
   const preCompat = analyzeExportRoutePreflight(st, 'h264', 30);
   assert.equal(preCompat.mode, 'segmented');
   assert.ok(preCompat.reasons.includes('video-clip-effects'));
+}
+
+// 7. Plan A additions: gif, rotation, borderRadius, backgroundFill, mosaic fade, clean bottom underlay stay fast;
+// sandwiched overlay, zoom, backgroundFill + effects emit accurate spanDetails
+{
+  const stFast = baseState();
+  stFast.trackOrder = ['C1', 'T1', 'M1', 'V1', 'BG', 'A1'];
+  stFast.tracks!.BG = { kind: 'video', visualRole: 'effect' };
+  stFast.items[0].transform = { rotation: 12, borderRadius: 20 };
+  stFast.items[1].backgroundFill = true;
+  stFast.items.push(
+    { id: 'bg', name: 'bg', kind: 'solid', track: 'BG', startFrame: 0, durationInFrames: 120, props: { color: '#112233' } },
+    { id: 'g', name: 'g', kind: 'gif', track: 'T1', startFrame: 20, durationInFrames: 30, src: '/media/uploads/x.gif' },
+    {
+      id: 'mf', name: 'mf', kind: 'mosaic', track: 'M1', startFrame: 150, durationInFrames: 60,
+      fadeInFrames: 10, fadeOutFrames: 10,
+      mosaic: { shape: 'rectangle', centerX: 0.5, centerY: 0.5, width: 0.2, height: 0.2, strength: 60, feather: 0, opacity: 1 },
+    },
+  );
+  const preFast = analyzeExportRoutePreflight(stFast, 'h264', 30);
+  assert.equal(preFast.mode, 'fast');
+  assert.equal(preFast.compatFrames, 0);
+  assert.deepEqual(preFast.spanDetails, []);
+
+  const stSeg = baseState();
+  stSeg.items[1].zoom = { magnification: 1.4 };
+  const preSeg = analyzeExportRoutePreflight(stSeg, 'h264', 30);
+  assert.equal(preSeg.mode, 'segmented');
+  assert.equal(preSeg.compatFrames, 150);
+  assert.equal(preSeg.spanDetails.length, 1);
+  assert.equal(preSeg.spanDetails[0]?.fromSeconds, 5);
+  assert.equal(preSeg.spanDetails[0]?.toSeconds, 10);
+  assert.deepEqual(preSeg.spanDetails[0]?.itemNames, ['v2']);
+  assert.deepEqual(preSeg.spanDetails[0]?.reasons, ['video-clip-effects']);
 }
 
 console.log('[verify] exportPreflight passed');

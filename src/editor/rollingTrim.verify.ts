@@ -252,4 +252,30 @@ const get = (state: TimelineState, id: string) => state.items.find((item) => ite
   assert.equal(get(activeEditorState(limitedHistory.present), 'right-video').startFrame, 62);
 }
 
+for (const kind of ['text', 'image', 'motion-graphic', 'solid'] as const) {
+  const sfState: TimelineState = {
+    fps: 30, width: 1920, height: 1080, selectedId: null,
+    trackOrder: ['T1'],
+    tracks: { T1: { kind: kind === 'text' ? 'video' : 'video' } },
+    items: [
+      { id: `l-${kind}`, kind, track: 'T1', name: `L ${kind}`, startFrame: 0, durationInFrames: 45 } as TimelineItem,
+      { id: `r-${kind}`, kind, track: 'T1', name: `R ${kind}`, startFrame: 45, durationInFrames: 45 } as TimelineItem,
+    ],
+  };
+  const forward = planRollingTrim(sfState, `l-${kind}`, `r-${kind}`, 10);
+  assert.equal(forward.error, undefined, `${kind} rolls forward without finite media asset`);
+  assert.equal(forward.deltaF, 10);
+  assert.equal(get(forward.state, `l-${kind}`).durationInFrames, 55);
+  assert.equal(get(forward.state, `r-${kind}`).startFrame, 55);
+  assert.equal(get(forward.state, `r-${kind}`).durationInFrames, 35);
+  assert.equal(get(forward.state, `r-${kind}`).srcInFrame, undefined, `${kind} never fabricates srcInFrame`);
+
+  const backward = planRollingTrim(sfState, `l-${kind}`, `r-${kind}`, -10);
+  assert.equal(backward.error, undefined, `${kind} rolls backward without finite media asset`);
+  assert.equal(backward.deltaF, -10);
+  assert.equal(get(backward.state, `l-${kind}`).durationInFrames, 35);
+  assert.equal(get(backward.state, `r-${kind}`).startFrame, 35);
+  assert.equal(get(backward.state, `r-${kind}`).durationInFrames, 55);
+}
+
 console.log('rollingTrim.verify: exact adjacency, linked source-rate bounds, safe rejection, normalization, and atomic history passed');

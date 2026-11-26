@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import type { LibraryPanelProps } from './LibraryPanel';
 import { CaptionsPanel } from '../captions/CaptionsPanel';
 import { useT } from '../i18n/locale';
@@ -16,13 +16,14 @@ export type TextWorkspaceProps = Pick<LibraryProps,
   onPageChange: (page: TextWorkspacePage) => void;
   onClose: () => void;
   captionActivationRequest?: { selection: NonNullable<LibraryProps['selectedCaptions']>[number]; nonce: number; identity: string };
+  visible?: boolean;
 };
 
-export function TextWorkspace({
+export const TextWorkspace = memo(function TextWorkspace({
   timelineId, semanticScopeId, playerRef, fps, items, trackOptions, captionTracks,
   onSetCaptions, onCreateCaptionTrack, onUpdateCaptions, onLiveUpdateCaptions, selectedCaptions, onSelectCaption,
   onSelectCaptionRange, onSeekFrame, selectedItem,
-  pasteTranscriptRequest = 0, page, captionActivationRequest,
+  pasteTranscriptRequest = 0, page, captionActivationRequest, visible = true,
 }: TextWorkspaceProps) {
   const t = useT();
   const identity = `${semanticScopeId}:${timelineId}`;
@@ -46,7 +47,7 @@ export function TextWorkspace({
   return <section className="cc-text-workspace" aria-label={t('字幕列表')}>
     <div className="cc-text-workspace-body">
       <div className="cc-text-workspace-page">
-        <CaptionsPanel mode="list-only" projectId={semanticScopeId} timelineId={timelineId} selectedCaptions={selectedCaptions}
+        <CaptionsPanel mode="list-only" visible={visible} projectId={semanticScopeId} timelineId={timelineId} selectedCaptions={selectedCaptions}
           onSelectCaption={onSelectCaption} onSelectCaptionRange={onSelectCaptionRange} onSeekFrame={onSeekFrame}
           draftKey={`${semanticScopeId}:${timelineId}`} key={`${semanticScopeId}:${timelineId}`} playerRef={playerRef}
           fps={fps} items={items} trackOptions={trackOptions} selectedItem={selectedItem} captionTracks={captionTracks}
@@ -58,5 +59,5 @@ export function TextWorkspace({
       </div>
     </div>
   </section>;
-}
+}, (prev, next) => prev.visible === false && next.visible === false);
 

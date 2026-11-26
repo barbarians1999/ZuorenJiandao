@@ -1,5 +1,5 @@
 import { placeTrack } from '../../editor/reducerTimelineHelpers';
-import { timelineTrackIds, trackKind, type TimelineState } from '../../editor/types';
+import { isDedicatedEffectItemKind, timelineTrackIds, trackKind, type TimelineState } from '../../editor/types';
 import { moveTimelineSelectionByDelta } from '../../captions/captionGroupMove';
 import { mainTrackId, planMagneticMove } from '../../editor/magneticTimeline';
 
@@ -13,12 +13,14 @@ export function moveSelectionToNewTrack(state: TimelineState, ids: readonly stri
   const kind = trackKind(state, base);
   if (kind === 'caption') return state;
   const allText = kind === 'video' && clips.every((item) => item.kind === 'text');
+  const allEffect = kind === 'video' && !allText && clips.every((item) => isDedicatedEffectItemKind(item.kind));
+  const visualRole = allText ? 'text' as const : allEffect ? 'effect' as const : undefined;
   const existingMain = mainTrackId(state);
   const videoCount = timelineTrackIds(state).filter((id) => trackKind(state, id) === 'video').length;
   const targetOrder = kind === 'video' ? (placement === 'bottom' ? 0 : videoCount) : (placement === 'top' ? 0 : undefined);
   const order = placeTrack(state, trackId, kind, targetOrder);
   const interaction = existingMain && !state.interaction?.mainTrackId ? { ...state.interaction, mainTrackId: existingMain } : state.interaction;
-  const prepared = { ...state, ...(interaction ? { interaction } : {}), tracks: { ...state.tracks, [trackId]: { kind, ...(allText ? { visualRole: 'text' as const } : {}) } }, trackOrder: order };
+  const prepared = { ...state, ...(interaction ? { interaction } : {}), tracks: { ...state.tracks, [trackId]: { kind, ...(visualRole ? { visualRole } : {}) } }, trackOrder: order };
   if (state.interaction?.magnet && base === mainTrackId(state)) {
     const plan = planMagneticMove(prepared, ids, clips[0].id, clips[0].startFrame + delta, trackId);
     return plan.error ? state : plan.state;

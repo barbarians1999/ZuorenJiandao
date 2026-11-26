@@ -36,10 +36,14 @@ export interface SkinTokens {
   trackAudioA1: string;
   trackAudioA2: string;
   trackCaption: string;
+  trackVideoInk: string;
+  trackAudioInk: string;
+  trackCaptionInk: string;
   clipVideo: string;
   clipAudio: string;
   clipMg: string;
   clipText: string;
+  clipInk: string;
 }
 
 export interface SkinFamilyDef {
@@ -74,7 +78,9 @@ const LIQUID_GLASS_DARK: SkinTokens = {
   gold: '#e6b84c', select: '#3b9eff', success: '#30d158', danger: '#ff453a',
   tlTrack: '#141518', tlSidePanel: '#191a1e',
   trackVideo: '#5ac8fa', trackAudioA1: '#30d158', trackAudioA2: '#64d2ff', trackCaption: '#bf5af2',
+  trackVideoInk: '#071426', trackAudioInk: '#061f0d', trackCaptionInk: '#12061c',
   clipVideo: '#2a4c6b', clipAudio: '#245746', clipMg: '#6e3a50', clipText: '#563f73',
+  clipInk: '#ffffff',
 };
 
 const LIQUID_GLASS_LIGHT: SkinTokens = {
@@ -86,8 +92,10 @@ const LIQUID_GLASS_LIGHT: SkinTokens = {
   inkRgb: '29,29,31', shadowRgb: '15,23,36', colorScheme: 'light',
   gold: '#b88214', select: '#006be6', success: '#248a3d', danger: '#d70015',
   tlTrack: '#f5f6f8', tlSidePanel: '#ffffff',
-  trackVideo: '#35699e', trackAudioA1: '#248a3d', trackAudioA2: '#0b7ea8', trackCaption: '#7e48a6',
+  trackVideo: '#35699e', trackAudioA1: '#1f7a35', trackAudioA2: '#0b7ea8', trackCaption: '#7e48a6',
+  trackVideoInk: '#ffffff', trackAudioInk: '#ffffff', trackCaptionInk: '#ffffff',
   clipVideo: '#3b6a94', clipAudio: '#2e755c', clipMg: '#8c4b65', clipText: '#684e8a',
+  clipInk: '#ffffff',
 };
 
 const CONSTRUCTIVISM_DARK: SkinTokens = {
@@ -99,8 +107,10 @@ const CONSTRUCTIVISM_DARK: SkinTokens = {
   inkRgb: '242,236,224', shadowRgb: '0,0,0', colorScheme: 'dark',
   gold: '#d49a2a', select: '#df3426', success: '#3c9673', danger: '#e84133',
   tlTrack: '#121210', tlSidePanel: '#181815',
-  trackVideo: '#35699e', trackAudioA1: '#c88d22', trackAudioA2: '#35856a', trackCaption: '#df3426',
-  clipVideo: '#204664', clipAudio: '#245745', clipMg: '#a67012', clipText: '#b8251a',
+  trackVideo: '#35699e', trackAudioA1: '#c88d22', trackAudioA2: '#55b592', trackCaption: '#d62f22',
+  trackVideoInk: '#ffffff', trackAudioInk: '#141008', trackCaptionInk: '#ffffff',
+  clipVideo: '#204664', clipAudio: '#245745', clipMg: '#8d5b0c', clipText: '#b8251a',
+  clipInk: '#ffffff',
 };
 
 const CONSTRUCTIVISM_LIGHT: SkinTokens = {
@@ -112,8 +122,10 @@ const CONSTRUCTIVISM_LIGHT: SkinTokens = {
   inkRgb: '20,20,18', shadowRgb: '10,10,8', colorScheme: 'light',
   gold: '#a67012', select: '#c8281c', success: '#22664d', danger: '#c8281c',
   tlTrack: '#efe8d8', tlSidePanel: '#e8dfcc',
-  trackVideo: '#204664', trackAudioA1: '#a67012', trackAudioA2: '#245745', trackCaption: '#c8281c',
-  clipVideo: '#204664', clipAudio: '#245745', clipMg: '#a67012', clipText: '#b8251a',
+  trackVideo: '#204664', trackAudioA1: '#8f5e0c', trackAudioA2: '#245745', trackCaption: '#c8281c',
+  trackVideoInk: '#ffffff', trackAudioInk: '#ffffff', trackCaptionInk: '#ffffff',
+  clipVideo: '#204664', clipAudio: '#245745', clipMg: '#8d5b0c', clipText: '#b8251a',
+  clipInk: '#ffffff',
 };
 
 const MATERIAL_DARK: SkinTokens = {
@@ -126,7 +138,9 @@ const MATERIAL_DARK: SkinTokens = {
   gold: '#e0b46a', select: '#7fd1b2', success: '#7fd1b2', danger: '#ff897d',
   tlTrack: '#141a17', tlSidePanel: '#19201c',
   trackVideo: '#5a9ec9', trackAudioA1: '#7fd1b2', trackAudioA2: '#d49a6a', trackCaption: '#b58ecc',
+  trackVideoInk: '#091822', trackAudioInk: '#003828', trackCaptionInk: '#180b21',
   clipVideo: '#244f67', clipAudio: '#1b5440', clipMg: '#6f3a2c', clipText: '#563869',
+  clipInk: '#ffffff',
 };
 
 const MATERIAL_LIGHT: SkinTokens = {
@@ -139,7 +153,9 @@ const MATERIAL_LIGHT: SkinTokens = {
   gold: '#8a5300', select: '#196b52', success: '#196b52', danger: '#ba1a1a',
   tlTrack: '#f2f6f2', tlSidePanel: '#f8fbf8',
   trackVideo: '#2a628f', trackAudioA1: '#196b52', trackAudioA2: '#8a5300', trackCaption: '#76448a',
+  trackVideoInk: '#ffffff', trackAudioInk: '#ffffff', trackCaptionInk: '#ffffff',
   clipVideo: '#2c5e7a', clipAudio: '#1d6b52', clipMg: '#8b4a39', clipText: '#6b4480',
+  clipInk: '#ffffff',
 };
 
 const MINIMALISM_DARK: SkinTokens = {
@@ -152,7 +168,9 @@ const MINIMALISM_DARK: SkinTokens = {
   gold: '#f25c22', select: '#f25c22', success: '#4ca673', danger: '#f25c22',
   tlTrack: '#121211', tlSidePanel: '#151514',
   trackVideo: '#7b8794', trackAudioA1: '#658a76', trackAudioA2: '#8f8470', trackCaption: '#9b7b8c',
+  trackVideoInk: '#111316', trackAudioInk: '#0e1712', trackCaptionInk: '#161013',
   clipVideo: '#2f353d', clipAudio: '#293830', clipMg: '#42352f', clipText: '#3a3340',
+  clipInk: '#ffffff',
 };
 
 const MINIMALISM_LIGHT: SkinTokens = {
@@ -165,7 +183,9 @@ const MINIMALISM_LIGHT: SkinTokens = {
   gold: '#c24614', select: '#d9480f', success: '#2c8a56', danger: '#d9480f',
   tlTrack: '#f5f5f1', tlSidePanel: '#fafafa',
   trackVideo: '#5a6470', trackAudioA1: '#4e6b5c', trackAudioA2: '#7a6c55', trackCaption: '#7d5868',
+  trackVideoInk: '#ffffff', trackAudioInk: '#ffffff', trackCaptionInk: '#ffffff',
   clipVideo: '#525c68', clipAudio: '#486355', clipMg: '#755c52', clipText: '#665870',
+  clipInk: '#ffffff',
 };
 
 export const SKINS: readonly SkinDef[] = [
@@ -194,9 +214,10 @@ const LEGACY_MIGRATION: Record<string, string> = {
 const kebab = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
 function skinBlock(tokens: SkinTokens): string {
-  return (Object.entries(tokens) as [string, string][])
-    .map(([name, value]) => `  --cc-${kebab(name)}: ${value};`)
-    .join('\n');
+  const vars = (Object.entries(tokens) as [string, string][])
+    .map(([name, value]) => `  --cc-${kebab(name)}: ${value};`);
+  vars.push(`  --cc-accent-soft: rgba(${tokens.accentRgb}, 0.14);`);
+  return vars.join('\n');
 }
 
 export function resolveSkinId(id: string | null | undefined): string {
@@ -220,7 +241,8 @@ export function buildSkinsCss(): string {
     .map((s) => `html[data-cc-skin='${s.id}'] {\n${skinBlock(s.tokens)}\n}`)
     .join('\n');
   return `:root {\n${skinBlock(base.tokens)}\n}\n${overrides}\n` +
-    'body { background: var(--cc-bg); color-scheme: var(--cc-color-scheme); }\n';
+    'html, body { color-scheme: var(--cc-color-scheme); }\n' +
+    'body { background: var(--cc-bg); }\n';
 }
 
 export function getSkin(): string {
@@ -237,6 +259,7 @@ export function applySkin(id: string): void {
   if (skin === DEFAULT_SKIN) delete document.documentElement.dataset.ccSkin;
   else document.documentElement.dataset.ccSkin = skin;
   document.documentElement.dataset.ccSkinFamily = def.family;
+  document.documentElement.dataset.ccSkinMode = def.mode;
   try { localStorage.setItem(STORAGE_KEY, skin); } catch { /* Storage may be unavailable. */ }
 }
 

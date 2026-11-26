@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import type { TimelineItem } from '../editor/types';
 import type { TranscriptWord } from '../transcript/types';
-import { keptWordIndices, retimeWords, wordTimelineFrame } from '../transcript/edit';
+import { projectMediaWindowWords, wordTimelineFrame } from '../transcript/edit';
 import { resolveCaptionWordIndices, resolveCaptionWordRefs, resolveCaptionWords } from './resolve';
 
 const fps = 30;
@@ -20,58 +20,42 @@ const W: TranscriptWord[] = [
 const encodeWordRef = (scope: readonly string[], generationId: string, wordId: string): string =>
   `cw2.${encodeURIComponent(JSON.stringify([...scope, generationId, wordId]))}`;
 
-// ── edit 层:retimeWords 与 keptWordIndices 在 playOrder 下位置对齐 ─────────
+// ── Track-SSOT: reordered audio clips project via continuous media windows ──
 {
-  const playOrder = [2, 3, 0, 1]; // C D A B
-  const words = retimeWords(W, new Set(), fps, 0, { playOrder });
-  const indices = keptWordIndices(W, new Set(), fps, { playOrder });
-  assert.deepEqual(words.map((w) => w.text), ['C', 'D', 'A', 'B'], 'timeline order follows playOrder');
-  assert.deepEqual(indices, [2, 3, 0, 1], 'indices are emitted in the SAME timeline order');
-  for (let i = 0; i < words.length; i++) {
-    assert.equal(words[i]!.text, W[indices[i]!]!.text, `position ${i}: word ↔ source index aligned`);
-  }
-  console.log('retimeWords/keptWordIndices alignment: OK');
-}
-
-// ── resolve 层:单源音频 + playOrder,words/indices/refs 三方按位对齐 ────────
-{
-  const item = {
-    id: 'clip1', track: 'A1', startFrame: 0, durationInFrames: 120, kind: 'audio',
+  const partCD: TimelineItem = {
+    id: 'clip1', track: 'A1', startFrame: 0, durationInFrames: 60, srcInFrame: 60, kind: 'audio',
     name: 'vo', src: '/a.mp3', transcript: W, transcriptGenerationId: 'gen1',
-    transcriptPlayOrder: [2, 3, 0, 1],
-  } as unknown as TimelineItem;
-  const captions = { template: 'plain', sourceItemId: 'clip1' } as never;
-  const words = resolveCaptionWords(captions, [item], fps);
-  const indices = resolveCaptionWordIndices(captions, [item], fps);
-  const refs = resolveCaptionWordRefs(captions, [item], fps);
-  assert.equal(words.length, 4);
-  assert.equal(indices.length, 4);
-  assert.equal(refs.length, 4);
+  };
+  const partAB: TimelineItem = {
+    id: 'clip1_b', track: 'A1', startFrame: 60, durationInFrames: 60, srcInFrame: 0, kind: 'audio',
+    name: 'vo', src: '/a.mp3', transcript: W, transcriptGenerationId: 'gen1',
+  };
+  const captions = { template: 'plain', sources: ['clip1', 'clip1_b'] } as never;
+  const words = resolveCaptionWords(captions, [partCD, partAB], fps);
+  const indices = resolveCaptionWordIndices(captions, [partCD, partAB], fps);
+  const refs = resolveCaptionWordRefs(captions, [partCD, partAB], fps);
   assert.deepEqual(words.map((w) => w.text), ['C', 'D', 'A', 'B']);
-  for (let i = 0; i < words.length; i++) {
-    const sourceWord = W[indices[i]!]!;
-    assert.equal(words[i]!.text, sourceWord.text, `position ${i}: word ↔ index aligned`);
-    assert.equal(refs[i], encodeWordRef(['item', 'clip1'], 'gen1', sourceWord.id!),
-      `position ${i}: ref encodes the SAME source word`);
-  }
-  console.log('resolveCaptionWords/Indices/Refs alignment: OK');
+  assert.deepEqual(indices, [0, 1, 2, 3]);
+  assert.equal(refs[0], encodeWordRef(['item', 'clip1'], 'gen1', 'w2'));
+  assert.equal(refs[2], encodeWordRef(['item', 'clip1_b'], 'gen1', 'w0'));
+  console.log('resolveCaptionWords/Indices/Refs track-window alignment: OK');
 }
 
-// ── wordTimelineFrame:音频删词流投影 ───────────────────────────────────────
+// ── wordTimelineFrame: audio clip uses unified continuous media window ───────
 {
-  const item = {
-    id: 'clip1', track: 'A1', startFrame: 100, durationInFrames: 60, kind: 'audio',
-    name: 'vo', src: '/a.mp3', transcript: W.slice(0, 3), deletedWordIdx: [1],
-  } as unknown as TimelineItem;
-  // kept: A[src 0-30)@local 0, C[src 60-90)@local 30
-  assert.equal(wordTimelineFrame(item, W[0]!, fps), 100, 'first word seeks to clip head');
-  assert.equal(wordTimelineFrame(item, W[2]!, fps), 130,
-    'word after a deletion seeks to its EDITED position (not source position)');
-  assert.equal(wordTimelineFrame(item, W[1]!, fps), 130,
-    'deleted word at a cut seeks to the cut point where playback resumes');
-  // 与渲染层一致:retimeWords 的 start 换算成帧应与 seek 目标一致
-  const projected = retimeWords(W.slice(0, 3), new Set([1]), fps, item.startFrame, {});
-  assert.equal(Math.round((projected[1]!.start / 1000) * fps), 130, 'seek matches render projection');
+  const segA: TimelineItem = {
+    id: 'clip1', track: 'A1', startFrame: 100, durationInFrames: 30, srcInFrame: 0, kind: 'audio',
+    name: 'vo', src: '/a.mp3', transcript: W.slice(0, 3),
+  };
+  const segC: TimelineItem = {
+    id: 'clip1_c', track: 'A1', startFrame: 130, durationInFrames: 30, srcInFrame: 60, kind: 'audio',
+    name: 'vo', src: '/a.mp3', transcript: W.slice(0, 3),
+  };
+  assert.equal(wordTimelineFrame(segA, W[0]!, fps), 100, 'first word seeks to clip head');
+  assert.equal(wordTimelineFrame(segC, W[2]!, fps), 130, 'C plays on second sub-clip at timeline frame 130');
+  assert.equal(wordTimelineFrame(segA, W[1]!, fps), null, 'deleted word outside media window returns null');
+  const projected = projectMediaWindowWords(W.slice(0, 3), fps, segC);
+  assert.equal(Math.round((projected.words[0]!.start / 1000) * fps), 130, 'seek matches render projection');
   console.log('wordTimelineFrame audio: OK');
 }
 

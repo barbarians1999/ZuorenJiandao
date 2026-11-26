@@ -1,6 +1,6 @@
 import type { EditorCommands } from '../../editor/storeCommands';
 import { selectedIdsOf, type TimelineState } from '../../editor/types';
-import { groupedItemIds } from '../../editor/linkGroups';
+import { expandSelectionItemIds } from '../../editor/multiSelect';
 import { removeItemsFromState } from '../../editor/multiSelect';
 import { planClipPasteResult } from '../../editor/clipPaste';
 import { mainTrackId, planDirectionalChange, planMagneticDelete, type MagneticPlan } from '../../editor/magneticTimeline';
@@ -21,7 +21,7 @@ interface ClipboardActionDeps {
 export function createTimelineClipboardActions(deps: ClipboardActionDeps): Pick<TimelineShortcutApi,
   'copySelected' | 'cutSelected' | 'pasteClipboard' | 'duplicateSelected' | 'deleteSelected'> {
   const { state, commands } = deps;
-  const ids = () => groupedItemIds(state, selectedIdsOf(state));
+  const ids = () => expandSelectionItemIds(state, selectedIdsOf(state));
   const selection = () => {
     const selected = new Set(ids());
     return state.items.filter((item) => selected.has(item.id));
@@ -34,6 +34,7 @@ export function createTimelineClipboardActions(deps: ClipboardActionDeps): Pick<
       multi: items.length > 1 ? structuredClone(items) : undefined,
       tracks: structuredClone(state.tracks ?? {}), sourceMainTrackId: mainTrackId(state),
       groups: structuredClone((state.linkGroups ?? []).filter((group) => group.itemIds.every((id) => copiedIds.has(id)))),
+      foldGroups: structuredClone((state.foldGroups ?? []).filter((group) => group.itemIds.every((id) => copiedIds.has(id)))),
     };
     return true;
   };
@@ -71,7 +72,7 @@ export function createTimelineClipboardActions(deps: ClipboardActionDeps): Pick<
       const clip = deps.clipboard.current;
       if (!clip) return;
       commit(planClipPasteResult(state, clip.multi?.length ? clip.multi : [clip.item], clip.tracks, deps.playhead(), deps.uid, {
-        sourceMainTrackId: clip.sourceMainTrackId, groups: clip.groups,
+        sourceMainTrackId: clip.sourceMainTrackId, groups: clip.groups, foldGroups: clip.foldGroups,
       }));
     },
     duplicateSelected: () => {
@@ -79,7 +80,7 @@ export function createTimelineClipboardActions(deps: ClipboardActionDeps): Pick<
       if (!items.length) return;
       const end = Math.max(...items.map((item) => item.startFrame + item.durationInFrames));
       commit(planClipPasteResult(state, items, state.tracks, end, deps.uid, {
-        sourceMainTrackId: mainTrackId(state), groups: state.linkGroups, keepSourceTracks: true,
+        sourceMainTrackId: mainTrackId(state), groups: state.linkGroups, foldGroups: state.foldGroups, keepSourceTracks: true,
       }));
     },
     deleteSelected: remove,

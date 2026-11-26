@@ -84,6 +84,10 @@ export function DesktopWindowControls() {
     if (!header) return;
     const wco = (navigator as Navigator & { windowControlsOverlay?: WindowControlsOverlayLike }).windowControlsOverlay;
     let rafId = 0;
+    let lastSafeRight = -1;
+    let lastColor = '';
+    let lastSymbolColor = '';
+    let lastHeight = -1;
     const sync = () => {
       const { tokens } = SKINS.find((skin) => skin.id === getSkin()) ?? SKINS[0]!;
       const inEditor = Boolean(header.closest('.cc-editor-shell'));
@@ -97,22 +101,34 @@ export function DesktopWindowControls() {
         innerWidth: window.innerWidth,
         overlayRightInsetCss,
       });
-      document.documentElement.style.setProperty('--cc-win-titlebar-safe-right', `${safeRight}px`);
       const headerHeight = Math.max(32, Math.floor(header.getBoundingClientRect().height || header.offsetHeight));
-      void desktop.setTitlebarAppearance!({
-        color: inEditor ? tokens.bg : tokens.panel,
-        symbolColor: tokens.text,
-        height: headerHeight,
-      })
-        .catch((error: unknown) => console.warn('Titlebar appearance sync failed', error));
+      if (safeRight !== lastSafeRight) {
+        lastSafeRight = safeRight;
+        document.documentElement.style.setProperty('--cc-win-titlebar-safe-right', `${safeRight}px`);
+      }
+      const color = inEditor ? tokens.bg : tokens.panel;
+      const symbolColor = tokens.text;
+      if (color !== lastColor || symbolColor !== lastSymbolColor || headerHeight !== lastHeight) {
+        lastColor = color;
+        lastSymbolColor = symbolColor;
+        lastHeight = headerHeight;
+        void desktop.setTitlebarAppearance!({
+          color,
+          symbolColor,
+          height: headerHeight,
+        })
+          .catch((error: unknown) => console.warn('Titlebar appearance sync failed', error));
+      }
     };
     const scheduleSync = () => {
-      sync();
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(sync);
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        sync();
+      });
     };
     const themeObserver = new MutationObserver(scheduleSync);
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-cc-skin'] });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-cc-skin', 'data-cc-skin-family', 'data-cc-skin-mode'] });
     const sizeObserver = new ResizeObserver(scheduleSync);
     sizeObserver.observe(header);
     window.addEventListener('resize', scheduleSync);

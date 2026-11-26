@@ -154,7 +154,7 @@ export const TRANSCRIPT_TOOL_SCHEMAS: AgentToolSchema[] = [
         },
         clearPlayOrder: {
           type: 'boolean',
-          description: 'set_play_order: when true, clear transcriptPlayOrder and restore chronological speech.',
+          description: 'set_play_order: when true, restore chronological speech clip order on the track.',
         },
         lang: { type: 'string', description: 'translation_create/ensure: target language, such as English, Chinese, or Japanese; translation_read: variant language to read.' },
         texts: { type: 'array', items: { type: 'string' }, description: 'translation_create: translated text for each source word, in source order. Compute translations in Codex first; the editor does not run a model.' },

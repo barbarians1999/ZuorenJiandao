@@ -75,26 +75,75 @@ function connectErrorMessage(t: ReturnType<typeof useT>, error: string): string 
   return t('连接失败');
 }
 
-function StatusBadge({ status }: { status?: ClientConnectionStatus }) {
+function StatusBadge({ status, loading }: { status?: ClientConnectionStatus; loading?: boolean }) {
   const t = useT();
-  if (!status || status === 'not-configured') return null;
-  const isOk = status === 'connected';
-  const isInvalid = status === 'invalid-config';
-  const label = isOk ? t('已连接') : isInvalid ? t('配置异常') : t('需更新');
+  if (loading && !status) {
+    return (
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          padding: '2px 8px',
+          borderRadius: 999,
+          fontSize: 11,
+          fontWeight: 550,
+          background: theme.panel,
+          color: theme.textDim,
+          border: `1px solid ${theme.border}`,
+        }}
+      >
+        {t('检测中…')}
+      </span>
+    );
+  }
+  const effective: ClientConnectionStatus = status ?? 'not-configured';
+  const isConnected = effective === 'connected';
+  const isOutdated = effective === 'outdated';
+  const isInvalid = effective === 'invalid-config';
+  const label = isConnected
+    ? t('已连接')
+    : isInvalid
+      ? t('配置异常')
+      : isOutdated
+        ? t('配置已过期')
+        : t('未连接');
+  const color = isConnected
+    ? theme.success
+    : isInvalid
+      ? theme.danger
+      : isOutdated
+        ? theme.gold
+        : theme.textDim;
+  const background = isConnected
+    ? 'color-mix(in srgb, var(--cc-success) 16%, transparent)'
+    : isInvalid
+      ? 'color-mix(in srgb, var(--cc-danger) 15%, transparent)'
+      : isOutdated
+        ? 'color-mix(in srgb, var(--cc-gold) 15%, transparent)'
+        : theme.panel;
+  const borderColor = isConnected
+    ? 'color-mix(in srgb, var(--cc-success) 45%, transparent)'
+    : isInvalid
+      ? 'color-mix(in srgb, var(--cc-danger) 45%, transparent)'
+      : isOutdated
+        ? 'color-mix(in srgb, var(--cc-gold) 45%, transparent)'
+        : theme.border;
   return (
     <span
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        padding: '1px 7px',
+        gap: 4,
+        padding: '2px 8px',
         borderRadius: 999,
-        fontSize: 10.5,
+        fontSize: 11,
         fontWeight: 600,
-        background: isInvalid ? theme.hover : isOk ? themeAlpha.accent(0.14) : theme.panel,
-        color: isInvalid ? theme.danger : isOk ? theme.accent : theme.textMuted,
-        border: `0.5px solid ${isOk ? themeAlpha.accent(0.35) : theme.borderLight}`,
+        background,
+        color,
+        border: `1px solid ${borderColor}`,
       }}
     >
+      {isConnected && <Icon name="check" size={11} strokeWidth={2.4} />}
       {label}
     </span>
   );
@@ -113,12 +162,48 @@ function ConnectButton({
 }) {
   const t = useT();
   const [state, setState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle');
+  useEffect(() => {
+    if (state !== 'done') return;
+    const timer = window.setTimeout(() => setState('idle'), 3500);
+    return () => window.clearTimeout(timer);
+  }, [state]);
   const busy = state === 'busy';
-  const idleLabel = existingStatus === 'connected'
-    ? t('重新连接')
-    : existingStatus === 'outdated'
-      ? t('更新连接')
-      : t('连接');
+  const isConnected = existingStatus === 'connected';
+  const needsUpdate = existingStatus === 'outdated' || existingStatus === 'invalid-config';
+  const idleLabel = isConnected
+    ? t('重新写入')
+    : needsUpdate
+      ? t('更新配置')
+      : t('立即连接');
+  const label = busy
+    ? t('写入中…')
+    : state === 'done'
+      ? t('连接成功')
+      : state === 'error'
+        ? t('重试连接')
+        : idleLabel;
+  const isQuietSecondary = state === 'idle' && isConnected;
+  const background = state === 'done'
+    ? 'color-mix(in srgb, var(--cc-success) 18%, var(--cc-panel))'
+    : state === 'error'
+      ? theme.hover
+      : isQuietSecondary
+        ? theme.panel
+        : `linear-gradient(135deg, ${theme.accent}, ${theme.accentDeep})`;
+  const border = state === 'done'
+    ? '1px solid color-mix(in srgb, var(--cc-success) 55%, transparent)'
+    : state === 'error'
+      ? '1px solid color-mix(in srgb, var(--cc-danger) 55%, transparent)'
+      : isQuietSecondary
+        ? `1px solid ${theme.borderLight}`
+        : '1px solid transparent';
+  const color = state === 'done'
+    ? theme.success
+    : state === 'error'
+      ? theme.danger
+      : isQuietSecondary
+        ? theme.textMuted
+        : theme.onAccent;
   return (
     <button
       type="button"
@@ -136,9 +221,17 @@ function ConnectButton({
             const result = data as { ok?: boolean; paths?: string[]; error?: string } | null;
             if (response.ok && result?.ok) {
               setState('done');
-              onStatus(t('已写入 {paths}', { paths: (result.paths ?? []).join('、') }), true);
+              const paths = (result.paths ?? []).join('、');
+              onStatus(
+                t(
+                  client === 'codex'
+                    ? '配置已写入（{paths}），新开终端生效'
+                    : '配置已写入（{paths}），重启客户端生效',
+                  { paths },
+                ),
+                true,
+              );
               onConnected();
-              setTimeout(() => setState('idle'), 2500);
             } else {
               setState('error');
               onStatus(connectErrorMessage(t, result?.error ?? ''), false);
@@ -150,24 +243,24 @@ function ConnectButton({
           });
       }}
       style={{
-        flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 4,
-        padding: '5px 12px', border: 'none', borderRadius: 999,
-        background: state === 'error' ? theme.hover : `linear-gradient(135deg, ${theme.accent}, ${theme.accentDeep})`,
-        boxShadow: state === 'error' ? 'none' : themeAlpha.shadow(0.25),
-        color: state === 'error' ? theme.danger : theme.onAccent,
-        fontSize: 11, fontWeight: 600, cursor: busy ? 'default' : 'pointer',
+        flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 5,
+        padding: '6px 13px', border, borderRadius: 999,
+        background,
+        boxShadow: isQuietSecondary || state === 'error' || state === 'done' ? 'none' : `0 2px 8px ${themeAlpha.shadow(0.25)}`,
+        color,
+        fontSize: 12, fontWeight: 600, cursor: busy ? 'default' : 'pointer',
         opacity: busy ? 0.7 : 1,
       }}
     >
-      <Icon name={state === 'done' ? 'check' : 'plug'} size={11} />
-      {busy ? t('连接中…') : state === 'done' ? t('已写入') : state === 'error' ? t('连接失败') : idleLabel}
+      <Icon name={state === 'done' ? 'check' : 'plug'} size={state === 'done' ? 12 : 11} />
+      {label}
     </button>
   );
 }
 
 const cardStyle: React.CSSProperties = {
   display: 'flex', flexDirection: 'column', gap: 8,
-  background: theme.panelAlt, border: 'none',
+  background: theme.panelAlt, border: `1px solid ${theme.border}`,
   borderRadius: 12, padding: '12px 14px',
 };
 
@@ -178,7 +271,7 @@ const endpointStyle: React.CSSProperties = {
   whiteSpace: 'nowrap', overflowX: 'auto', userSelect: 'text',
 };
 
-export function McpGuideDialog({ onClose }: { onClose: () => void }) {
+export function McpGuideContent({ showAutoApprove = true }: { showAutoApprove?: boolean }) {
   const t = useT();
   const [autoApproveExternal, setAutoApproveExternal] = useExternalAutoApprove();
   const fallbackEndpoint = `${window.location.origin}/api/external-mcp/mcp`;
@@ -187,6 +280,7 @@ export function McpGuideDialog({ onClose }: { onClose: () => void }) {
   const [endpoint, setEndpoint] = useState(fallbackEndpoint);
   const [discoveryPath, setDiscoveryPath] = useState('~/.openchatcut/discovery.json');
   const [clientStatuses, setClientStatuses] = useState<Partial<Record<ClientId, ClientConnectionStatus>>>({});
+  const [statusLoading, setStatusLoading] = useState(true);
   const [connectStatus, setConnectStatus] = useState<Record<string, { message: string; ok: boolean }>>({});
 
   const refreshClientStatus = useCallback(() => {
@@ -208,7 +302,8 @@ export function McpGuideDialog({ onClose }: { onClose: () => void }) {
           setClientStatuses(next);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setStatusLoading(false));
   }, []);
 
   useEffect(() => {
@@ -219,47 +314,26 @@ export function McpGuideDialog({ onClose }: { onClose: () => void }) {
         setMcpToken(info.mcpToken);
         refreshClientStatus();
       },
-      () => { if (active) setTokenError(true); },
+      () => {
+        if (!active) return;
+        setTokenError(true);
+        setStatusLoading(false);
+      },
     );
     return () => { active = false; };
   }, [refreshClientStatus]);
 
-  const dialog = (
-    <div className="cc-modal-backdrop" onPointerDown={onClose}>
-      <div
-        className="cc-modal"
-        style={{ width: 600, gap: 12, maxHeight: 'calc(100vh - 64px)', overflowY: 'auto' }}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span
-            aria-hidden
-            style={{
-              width: 36, height: 36, borderRadius: 10, flex: '0 0 auto',
-              background: `linear-gradient(135deg, ${theme.accent}, ${theme.accentDeep})`,
-              boxShadow: themeAlpha.shadow(0.35),
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: theme.onAccent,
-            }}
-          >
-            <Icon name="plug" size={18} />
-          </span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            <strong style={{ fontSize: 14 }}>{t('外部 Agent 接入 (MCP)')}</strong>
-            <span style={{ color: theme.textMuted, fontSize: 11.5 }}>
-              {t('Streamable HTTP · 一键写入主流客户端配置')}
-            </span>
-          </div>
-          <button type="button" onClick={onClose} style={{ marginLeft: 'auto', padding: '5px 14px', borderRadius: 999 }}>{t('关闭')}</button>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 600 }}>{t('端点地址')}</span>
+          <span style={{ color: theme.textMuted, fontSize: 11 }}>{t('自动发现文件：{path}', { path: discoveryPath })}</span>
         </div>
+        <pre style={endpointStyle}>{endpoint}</pre>
+      </div>
 
-        <div style={cardStyle}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, fontWeight: 600 }}>{t('端点地址')}</span>
-            <span style={{ color: theme.textMuted, fontSize: 11 }}>{t('自动发现文件：{path}', { path: discoveryPath })}</span>
-          </div>
-          <pre style={endpointStyle}>{endpoint}</pre>
-        </div>
-
+      {showAutoApprove && (
         <label style={{ ...cardStyle, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14, cursor: 'pointer' }}>
           <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <strong style={{ fontSize: 12.5 }}>{t('自动允许所有外部操作（免反复确认）')}</strong>
@@ -276,52 +350,90 @@ export function McpGuideDialog({ onClose }: { onClose: () => void }) {
             aria-label={t('自动允许所有外部操作')}
           />
         </label>
+      )}
 
-        {mcpToken ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {clientSnippets().map((snippet) => {
-              const status = clientStatuses[snippet.client];
-              return (
-                <div key={snippet.name} style={cardStyle}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {snippet.logo}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 12, fontWeight: 600 }}>{snippet.name}</span>
-                        <StatusBadge status={status} />
-                      </div>
-                      <span style={{ color: theme.textMuted, fontSize: 11.5 }}>{t(snippet.desc)}</span>
+      {mcpToken ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {clientSnippets().map((snippet) => {
+            const status = clientStatuses[snippet.client];
+            const isConnected = status === 'connected';
+            return (
+              <div
+                key={snippet.name}
+                style={{
+                  ...cardStyle,
+                  border: isConnected
+                    ? '1px solid color-mix(in srgb, var(--cc-success) 32%, var(--cc-border))'
+                    : `1px solid ${theme.border}`,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {snippet.logo}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>{snippet.name}</span>
+                      <StatusBadge status={status} loading={statusLoading} />
                     </div>
-                    <div style={{ marginLeft: 'auto' }}>
-                      <ConnectButton
-                        client={snippet.client}
-                        existingStatus={status}
-                        onStatus={(message, ok) => setConnectStatus((prev) => ({ ...prev, [snippet.client]: { message, ok } }))}
-                        onConnected={refreshClientStatus}
-                      />
-                    </div>
+                    <span style={{ color: theme.textMuted, fontSize: 11.5 }}>{t(snippet.desc)}</span>
                   </div>
-                  {connectStatus[snippet.client]?.message ? (
-                    <div style={{ color: connectStatus[snippet.client].ok ? theme.accent : theme.danger, fontSize: 11 }}>
-                      {connectStatus[snippet.client].message}
-                    </div>
-                  ) : null}
+                  <div style={{ marginLeft: 'auto' }}>
+                    <ConnectButton
+                      client={snippet.client}
+                      existingStatus={status}
+                      onStatus={(message, ok) => setConnectStatus((prev) => ({ ...prev, [snippet.client]: { message, ok } }))}
+                      onConnected={refreshClientStatus}
+                    />
+                  </div>
                 </div>
-              );
-            })}
-            <div style={{ color: theme.textDim, fontSize: 11 }}>
-              {t('连接或更新后重启对应客户端生效；Codex 需新开终端。')}
-            </div>
-          </div>
-        ) : (
-          <div style={{ color: tokenError ? theme.danger : theme.textMuted, fontSize: 12 }}>
-            {tokenError ? t('无法读取 MCP 连接令牌，请从受信任的编辑器窗口重试。') : t('正在读取 MCP 连接令牌…')}
-          </div>
-        )}
-
-        <div style={{ color: theme.textDim, fontSize: 11.5, lineHeight: 1.55, borderTop: `0.5px solid ${theme.borderLight}`, paddingTop: 8 }}>
-          {t('本软件仅提供剪辑与 MCP 工具，AI 模型与密钥请在外部客户端管理。Bearer 令牌首次启动生成并持久化，可用 OPENCHATCUT_MCP_TOKEN 覆盖。')}
+                {connectStatus[snippet.client]?.message ? (
+                  <div style={{ color: connectStatus[snippet.client].ok ? theme.success : theme.danger, fontSize: 11.5 }}>
+                    {connectStatus[snippet.client].message}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
+      ) : (
+        <div style={{ color: tokenError ? theme.danger : theme.textMuted, fontSize: 12 }}>
+          {tokenError ? t('无法读取 MCP 连接令牌，请从受信任的编辑器窗口重试。') : t('正在读取 MCP 连接令牌…')}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function McpGuideDialog({ onClose }: { onClose: () => void }) {
+  const t = useT();
+  const dialog = (
+    <div className="cc-modal-backdrop" onPointerDown={onClose}>
+      <div
+        className="cc-modal"
+        style={{ width: 600, gap: 12, maxHeight: 'calc(100vh - 64px)', overflowY: 'auto' }}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span
+            aria-hidden
+            style={{
+              width: 36, height: 36, borderRadius: 10, flex: '0 0 auto',
+              background: `linear-gradient(135deg, ${theme.accent}, ${theme.accentDeep})`,
+              boxShadow: `0 4px 12px ${themeAlpha.shadow(0.35)}`,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: theme.onAccent,
+            }}
+          >
+            <Icon name="plug" size={18} />
+          </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <strong style={{ fontSize: 14 }}>{t('外部 Agent 接入 (MCP)')}</strong>
+            <span style={{ color: theme.textMuted, fontSize: 11.5 }}>
+              {t('Streamable HTTP · 一键写入主流客户端配置')}
+            </span>
+          </div>
+          <button type="button" onClick={onClose} style={{ marginLeft: 'auto', padding: '5px 14px', borderRadius: 999 }}>{t('关闭')}</button>
+        </div>
+
+        <McpGuideContent showAutoApprove />
       </div>
     </div>
   );

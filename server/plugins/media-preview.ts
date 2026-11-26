@@ -95,7 +95,7 @@ function previewMaxBytes(): number {
 }
 
 export function isPreviewDerivative(name: string): boolean {
-  return /\.(?:peaks(?:-v\d+)?\.json|strip(?:-v\d+)?\.jpg|frame-\d+\.jpg|poster\.jpg|proxy(?:-720-v\d+)?\.mp4|proxy(?:-720-v\d+)?-status\.json)$/.test(name);
+  return /\.(?:peaks(?:-v\d+)?\.json|strip(?:-v\d+)?\.jpg|frame-\d+\.jpg|poster\.jpg|proxy(?:-720-v\d+)?\.mp4|proxy(?:-720-v\d+)?-status\.json|proxy-720-alpha-v\d+\.webm|proxy-720-alpha-v\d+-status\.json)$/.test(name);
 }
 
 async function previewEntries(): Promise<PreviewCacheEntry[]> {
@@ -279,32 +279,65 @@ async function handleWaveform(req: IncomingMessage, res: ServerResponse, logErro
   }
 }
 
+interface CachedFilmstripSpec {
+  frameCount: number;
+  cellWidth: number;
+  cellHeight: number;
+  durationMs: number;
+}
+
+function isValidFilmstripSpec(value: unknown): value is CachedFilmstripSpec {
+  if (!value || typeof value !== 'object') return false;
+  const spec = value as Partial<CachedFilmstripSpec>;
+  return typeof spec.frameCount === 'number' && Number.isFinite(spec.frameCount) && spec.frameCount > 0
+    && typeof spec.cellWidth === 'number' && Number.isFinite(spec.cellWidth) && spec.cellWidth > 0
+    && typeof spec.cellHeight === 'number' && Number.isFinite(spec.cellHeight) && spec.cellHeight > 0
+    && typeof spec.durationMs === 'number' && Number.isFinite(spec.durationMs) && spec.durationMs > 0;
+}
+
+async function readCachedFilmstripSpec(specCache: string): Promise<CachedFilmstripSpec | null> {
+  if (!existsSync(specCache)) return null;
+  try {
+    const parsed: unknown = JSON.parse(await readFile(specCache, 'utf8'));
+    return isValidFilmstripSpec(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 async function handleFilmstrip(req: IncomingMessage, res: ServerResponse, logError: (message: string) => void) {
   try {
     const hit = await resolveReq(req, res);
     if (!hit) return;
     // Bump only the filmstrip derivative: old posters and waveform caches stay warm.
     const cache = previewCachePath(hit.name, hit.source, 'strip-v2', 'jpg');
-    const previewInfo = await runDerivative(req, res, `${cache}.spec`, async (signal) => {
-      const result = await probe(hit.file, signal);
-      if (!result.width || !result.height) throw new Error('not a video');
-      return { probeResult: result, spec: filmstripSpec(result) };
-    }, `${cache}.spec`, false, 'low');
-    if (!existsSync(cache)) {
-      await runDerivative(req, res, cache, async (signal) => {
-        if (existsSync(cache)) return;
-        await atomicPreviewBuild(cache, (tmp) => buildFilmstrip(
-          hit.file, previewInfo.probeResult, tmp, signal, previewInfo.spec,
-        ));
-      }, cache, false, 'low');
+    const specCache = `${cache}.spec.json`;
+    let spec = existsSync(cache) ? await readCachedFilmstripSpec(specCache) : null;
+    if (!spec) {
+      const previewInfo = await runDerivative(req, res, `${cache}.spec`, async (signal) => {
+        const result = await probe(hit.file, signal);
+        if (!result.width || !result.height) throw new Error('not a video');
+        const nextSpec = filmstripSpec(result);
+        await atomicPreviewBuild(specCache, (tmp) => writeFile(tmp, JSON.stringify(nextSpec))).catch(() => undefined);
+        return { probeResult: result, spec: nextSpec };
+      }, `${cache}.spec`, false, 'low');
+      spec = previewInfo.spec;
+      if (!existsSync(cache)) {
+        await runDerivative(req, res, cache, async (signal) => {
+          if (existsSync(cache)) return;
+          await atomicPreviewBuild(cache, (tmp) => buildFilmstrip(
+            hit.file, previewInfo.probeResult, tmp, signal, previewInfo.spec,
+          ));
+        }, cache, false, 'low');
+      }
     }
     if (res.destroyed) return;
     res.statusCode = 200;
     res.setHeader('Content-Type', 'image/jpeg');
-    res.setHeader('X-Filmstrip-Frame-Count', String(previewInfo.spec.frameCount));
-    res.setHeader('X-Filmstrip-Cell-Width', String(previewInfo.spec.cellWidth));
-    res.setHeader('X-Filmstrip-Cell-Height', String(previewInfo.spec.cellHeight));
-    res.setHeader('X-Filmstrip-Duration-Ms', String(previewInfo.spec.durationMs));
+    res.setHeader('X-Filmstrip-Frame-Count', String(spec.frameCount));
+    res.setHeader('X-Filmstrip-Cell-Width', String(spec.cellWidth));
+    res.setHeader('X-Filmstrip-Cell-Height', String(spec.cellHeight));
+    res.setHeader('X-Filmstrip-Duration-Ms', String(spec.durationMs));
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     res.end(await readCachedPreview(cache));
   } catch (error) {

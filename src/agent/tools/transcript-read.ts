@@ -1,8 +1,8 @@
 import type { AgentContext } from '../context';
 import { resolveTrackId, trackAlias, type TimelineItem } from '../../editor/types';
 import { packTranscriptPhrases, type TranscriptPhrase } from '../../transcript/phrases';
+import { resolveTranscriptUnitsForItems, type ResolvedTranscriptUnit } from '../../transcript/trackEditCompiler';
 import { hasOperationalTranscript } from '../../transcript/types';
-import { makeWordFrameMapper } from './transcript-find';
 
 type Args = Record<string, unknown>;
 
@@ -48,33 +48,13 @@ function matchingItem<T extends TimelineItem>(items: readonly T[], query: string
   return matches[0]!;
 }
 
-function playableWordIndices(item: TimelineItem, mapper: ReturnType<typeof makeWordFrameMapper>): number[] {
-  const words = item.transcript ?? [];
-  const deleted = new Set(item.deletedWordIdx ?? []);
-  const order = item.transcriptPlayOrder?.length
-    ? item.transcriptPlayOrder
-    : words.map((_, index) => index);
-  const seen = new Set<number>();
-  return order.filter((index) => {
-    if (!Number.isInteger(index) || deleted.has(index) || seen.has(index) || mapper(index) === null) return false;
-    seen.add(index);
-    return true;
-  });
-}
-
-function timelinePhrases(item: TimelineItem, ctx: AgentContext, args: Args): TimelinePhrase[] {
-  const state = ctx.getState();
-  const baseMapper = makeWordFrameMapper(item, state.fps);
-  const frameCache = new Map<number, ReturnType<typeof baseMapper>>();
-  const mapper = (wordIndex: number): ReturnType<typeof baseMapper> => {
-    if (!frameCache.has(wordIndex)) frameCache.set(wordIndex, baseMapper(wordIndex));
-    return frameCache.get(wordIndex) ?? null;
-  };
-  const phrases = packTranscriptPhrases(item.transcript ?? [], {
-    sourceItemId: item.id,
+function timelinePhrases(unit: ResolvedTranscriptUnit, state: ReturnType<AgentContext['getState']>, args: Args): TimelinePhrase[] {
+  const mapper = (wordIndex: number) => unit.wordFrameByIndex.get(wordIndex) ?? null;
+  const phrases = packTranscriptPhrases(unit.canonicalWords, {
+    sourceItemId: unit.anchorItemId,
     silenceThresholdMs: boundedNumber(args.silenceThresholdSeconds, 0.5, 0, 10) * 1000,
     maxWordsPerPhrase: boundedInteger(args.maxWordsPerPhrase, 40, 1, 100),
-    wordIndices: playableWordIndices(item, mapper),
+    wordIndices: unit.activeWordOrder,
   });
   return phrases.flatMap((phrase) => {
     const firstIndex = phrase.wordRanges[0]?.[0];
@@ -85,7 +65,7 @@ function timelinePhrases(item: TimelineItem, ctx: AgentContext, args: Args): Tim
     if (!first || !last) return [];
     return [{
       ...phrase,
-      track: trackAlias(state, item.track),
+      track: trackAlias(state, unit.track),
       fromFrame: first.fromFrame,
       toFrame: last.toFrame,
     }];
@@ -114,10 +94,10 @@ export function execReadTranscript(args: Args, ctx: AgentContext): unknown {
     }
   }
 
-  items = [...items].sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id));
-  if (!items.length) return transcriptUnavailable(mediaItems);
+  const units = resolveTranscriptUnitsForItems(state, items);
+  if (!units.length) return transcriptUnavailable(mediaItems);
 
-  const allPhrases = items.flatMap((item) => timelinePhrases(item, ctx, args));
+  const allPhrases = units.flatMap((unit) => timelinePhrases(unit, state, args));
   const offset = boundedInteger(args.offset, 0, 0, Math.max(0, allPhrases.length));
   const limit = boundedInteger(args.limit, 80, 1, 200);
   const phrases = allPhrases.slice(offset, offset + limit);
@@ -126,7 +106,7 @@ export function execReadTranscript(args: Args, ctx: AgentContext): unknown {
     available: true,
     view: 'phrases',
     timeUnit: 'milliseconds',
-    clips: items.length,
+    clips: units.length,
     phraseCount: allPhrases.length,
     returned: phrases.length,
     offset,

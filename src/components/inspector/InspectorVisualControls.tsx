@@ -4,6 +4,7 @@ import './clip-region-controls.css';
 import { theme } from '../../theme';
 import type { ClipEffect, ClipEffectValue, ClipFilters, ClipMask, TimelineItem } from '../../editor/types';
 import { DEFAULT_CLIP_MASK } from '../../editor/clipMask';
+import { isMosaicEffect } from '../../editor/mosaic';
 import {
   ALL_FX as FX_EFFECTS,
   FX_IDS as SHADER_FX_IDS,
@@ -213,10 +214,18 @@ export function MaskControl({ item, mixed, onChange, onReset, kf }: {
 
 // Per-clip WebGL effect stack (effects / builtin:fx-*). Order is render
 // order: each card consumes the previous card's output.
-export function EffectsControl({ item, onChange, previewStatus }: { item: TimelineItem; onChange: (effects: ClipEffect[]) => void; previewStatus?: SelectedPreviewStatus }) {
+export function EffectsControl({ item, onChange, previewStatus, excludeMosaic = false }: {
+  item: TimelineItem;
+  onChange: (effects: ClipEffect[]) => void;
+  previewStatus?: SelectedPreviewStatus;
+  excludeMosaic?: boolean;
+}) {
   const t = useT();
   const effects = item.effects ?? [];
-  const active = effects.filter((fx) => fx.assetId in FX_EFFECTS);
+  const active = effects.filter((fx) => fx.assetId in FX_EFFECTS && (!excludeMosaic || !isMosaicEffect(fx)));
+  const shaderFxIds = excludeMosaic
+    ? SHADER_FX_IDS.filter((id) => !isMosaicEffect({ assetId: id }))
+    : SHADER_FX_IDS;
   const customFxIds = Object.keys(FX_EFFECTS).filter((id) => !SHADER_FX_SET.has(id) && !LUT_FX_SET.has(id));
   const addEffect = (assetId: string) => {
     if (assetId) onChange([...effects, { id: `fx_${crypto.randomUUID()}`, assetId, overrides: {} }]);
@@ -241,7 +250,7 @@ export function EffectsControl({ item, onChange, previewStatus }: { item: Timeli
         style={{ width: '100%', background: theme.panelAlt, color: theme.text, border: `0.5px solid ${theme.border}`, borderRadius: 6, padding: '5px 7px', fontSize: 12 }}>
         <option value="">{t('＋ 添加特效或 LUT…')}</option>
         <optgroup label={t('画面特效')}>
-          {SHADER_FX_IDS.map((id) => <option key={id} value={id}>{t(FX_EFFECTS[id].name)}</option>)}
+          {shaderFxIds.map((id) => <option key={id} value={id}>{t(FX_EFFECTS[id].name)}</option>)}
         </optgroup>
         <optgroup label={t('调色 LUT')}>
           {LUT_IDS.map((id) => <option key={id} value={id}>{t(LUT_EFFECTS[id].name)}</option>)}

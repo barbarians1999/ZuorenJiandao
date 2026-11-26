@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { availableParallelism, freemem } from 'node:os';
 import path from 'node:path';
@@ -17,95 +17,67 @@ import {
 import { normalizeH264Profile } from './render-contract.mjs';
 import {
   neutralPictureProps,
-  pictureAnimationTiming,
   pictureAnimationWindows,
   pictureOnlyProps,
 } from '../shared/picture-animation-timing.mjs';
+import {
+  computeAudioSampleWindow,
+  isVisualOverlayItemVisible,
+} from '../shared/timeline-media-schedule.mjs';
+import {
+  CLIP_MASK_KEYS,
+  OVERLAY_KINDS,
+  TRACK_ORDER_DEFAULT,
+  defaultVideoTrackId,
+  planOverlayHybridExport,
+  resolveBaseTimelineState,
+  timelineTrackIds,
+  trackKind,
+} from '../shared/export-route-plan.mjs';
 
-const STATE_KEYS = new Set([
-  'fps', 'width', 'height', 'fit', 'compositingOrder', 'items', 'interaction',
-  'trackOrder', 'tracks', 'transitions', 'markers', 'linkGroups', 'multicamGroups',
-  'assets', 'captionsHidden', 'selectedId', 'selectedIds', 'captions', 'watermark',
-  'fxDefs', 'id', 'name', 'order', 'hidden',
-]);
+export { planOverlayHybridExport } from '../shared/export-route-plan.mjs';
 
-const ITEM_KEYS = new Set([
-  'id', 'mainClipId', 'track', 'startFrame', 'durationInFrames', 'name', 'kind',
-  'templateId', 'code', 'props', 'width', 'height', 'src', 'sourceFilename',
-  'originalFilePath', 'sourceAssetId', 'sourceRevision', 'sourceContentHash',
-  'timelineId', 'pictureDisabled', 'multicamGroupId', 'multicamAngleId',
-  'volume', 'audioDetached', 'srcInFrame', 'fadeInFrames', 'fadeOutFrames',
-  'transform', 'keyframes', 'filters', 'mask', 'mosaic', 'backgroundFill',
-  'backgroundFillStrength', 'zoom', 'effects', 'playbackRate', 'deletedWordIdx',
-  'variants', 'silenceFrames', 'cutPadFrames', 'gapCapsMs', 'transcriptPlayOrder',
-  'denoisedSrc', 'denoiseStrength', 'transcript', 'transcriptGenerationId', 'transcriptStale',
-]);
-
-const OVERLAY_KINDS = new Set(['text', 'solid', 'image', 'svg']);
-const SUPPORTED_HYBRID_TRANSITIONS = new Set(['cross-dissolve', 'dip-to-black']);
-const BASE_TRANSFORM_KEYS = new Set(['scale', 'scaleX', 'scaleY', 'x', 'y', 'rotation', 'opacity', 'borderRadius', 'crop']);
-const BASE_FILTER_KEYS = new Set(['brightness', 'contrast', 'saturate', 'blur']);
-const LOCAL_GAUSSIAN_BLUR_ASSET_ID = 'builtin:fx-local-gaussian-blur';
-const LOCAL_MOSAIC_ASSET_ID = 'builtin:fx-local-mosaic';
-const PIXELATE_ASSET_ID = 'builtin:fx-pixelate';
-const RECT_MASK_ASSET_ID = 'builtin:fx-rect-mask';
-const CIRCLE_MASK_ASSET_ID = 'builtin:fx-circle-mask';
-const CUBE_LUT_ASSETS = {
-  'builtin:slog3-s709': 'luts/Sony_Slog3_s709.cube',
-  'builtin:canon-log3-709': 'luts/CinemaGamut_CanonLog3-to-Canon709_33_Ver.1.0.cube',
-};
-const CLIP_EFFECT_KEYS = new Set(['id', 'assetId', 'overrides', 'mosaicTrack']);
-const LOCAL_GAUSSIAN_BLUR_OVERRIDE_KEYS = new Set(['center_x', 'center_y', 'width_ratio', 'height_ratio', 'strength', 'feather']);
-const LOCAL_MOSAIC_OVERRIDE_KEYS = new Set(['center_x', 'center_y', 'width_ratio', 'height_ratio', 'block_size', 'feather']);
-const PIXELATE_OVERRIDE_KEYS = new Set(['blockSize']);
-const RECT_MASK_OVERRIDE_KEYS = new Set(['center_x', 'center_y', 'width', 'height', 'corner_radius', 'feather', 'invert']);
-const CIRCLE_MASK_OVERRIDE_KEYS = new Set(['center_x', 'center_y', 'radius', 'feather', 'invert']);
-const LUT_OVERRIDE_KEYS = new Set(['intensity']);
-const CLIP_MASK_KEYS = new Set(['type', 'x', 'y', 'width', 'height', 'feather']);
-const TRACK_ORDER_DEFAULT = ['V2', 'V1', 'A1', 'A2'];
 const PREROLL_FRAMES = 60;
 const MAX_BASE_SEGMENTS_PER_CHUNK = 8;
-const COMPAT_MIN_FAST_GAP_FRAMES = 15;
+const MAX_OVERLAY_VIDEOS_PER_CHUNK = 6;
+const MAX_AUDIO_INPUTS_PER_BATCH = 48;
+const INLINE_FILTER_CHAR_LIMIT = 4000;
 const CHUNK_TIMEOUT_MS = 600_000;
 const FINALIZATION_TIMEOUT_MIN_MS = 180_000;
 const FINALIZATION_TIMEOUT_MAX_MS = 45 * 60_000;
 const GIB_BYTES = 1024 ** 3;
-const SUPPORTED_HYBRID_VIDEO_CODECS = new Set(['h264', 'hevc', 'vp9', 'av1', 'prores', 'mpeg4', 'mjpeg']);
-const OPAQUE_HYBRID_PIX_FMTS = /^(?:yuvj?(?:420|422|444)p(?:10le)?|nv12|p010le|rgb24|bgr24|gbrp)$/;
+const SUPPORTED_HYBRID_VIDEO_CODECS = new Set([
+  'h264', 'hevc', 'vp8', 'vp9', 'av1', 'prores', 'mpeg4', 'mjpeg',
+  'gif', 'png', 'webp', 'dnxhd', 'ffv1', 'huffyuv', 'utvideo', 'rawvideo', 'mpeg2video', 'wmv3', 'vc1',
+]);
+const OPAQUE_HYBRID_PIX_FMTS = /^(?:yuvj?(?:420|422|444)p(?:(?:10|12|16)le)?|nv12|p010le|p016le|rgb24|bgr24|gbrp(?:(?:10|12|16)le)?|gray(?:16le)?|rgb48le|bgr48le|pal8)$/;
+const ALPHA_HYBRID_PIX_FMTS = /^(?:yuva(?:420|422|444)p(?:(?:10|12|16)le)?|rgba|bgra|argb|abgr|gbrap(?:10le|12le)?)$/;
+const RGB_ALPHA_PIX_FMTS = /^(?:rgba|bgra|argb|abgr|gbrap)/;
+
+function streamHasAlpha(video) {
+  if (!video) return false;
+  const pixFmt = String(video.pix_fmt ?? '').trim();
+  if (ALPHA_HYBRID_PIX_FMTS.test(pixFmt)) return true;
+  if (video.codec_name === 'gif' || pixFmt === 'pal8') return true;
+  if (video.tags && typeof video.tags === 'object') {
+    for (const [key, value] of Object.entries(video.tags)) {
+      if (/^alpha_mode$/i.test(key) && /^(?:1|true)$/i.test(String(value ?? '').trim())) return true;
+    }
+  }
+  return false;
+}
 
 const integer = (value, min = 0) => Number.isInteger(value) && value >= min;
-const refusal = (reason) => ({ eligible: false, reason, renderRoute: null });
 const hasOwnKeys = (value) => value != null && typeof value === 'object' && Object.keys(value).some((k) => value[k] !== undefined);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const escapeFfmpegFilterPath = (filePath) => String(filePath).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
 
-function voiceIsolationMix(strength) {
-  const wet = clamp(Number(strength ?? 100) / 100, 0, 1);
-  if (wet === 0) return { dry: 1, wet: 0 };
-  if (wet === 1) return { dry: 0, wet: 1 };
-  return {
-    dry: Math.cos((wet * Math.PI) / 2),
-    wet: Math.sin((wet * Math.PI) / 2),
-  };
-}
-
-function hasNonVolumeKeyframes(keyframes) {
-  if (!keyframes || typeof keyframes !== 'object') return false;
-  return Object.entries(keyframes).some(([prop, frames]) => prop !== 'volume' && Array.isArray(frames) && frames.length > 0);
-}
-
-function resolveAudioVolumeKeyframes(keyframes) {
-  const raw = keyframes?.volume;
-  if (!Array.isArray(raw) || raw.length === 0) return null;
-  if (raw.length > 24) return { unsupported: true };
-  const cleaned = [];
-  for (const kf of raw) {
-    if (!kf || !Number.isFinite(kf.frame) || !Number.isFinite(kf.value)) return { unsupported: true };
-    if (kf.easing && kf.easing !== 'linear') return { unsupported: true };
-    cleaned.push({ frame: Number(kf.frame), value: clamp(Number(kf.value), 0, 2) });
+async function filterComplexArgs(filterText, scriptPath) {
+  if (filterText.length <= INLINE_FILTER_CHAR_LIMIT || !scriptPath) {
+    return ['-filter_complex', filterText];
   }
-  cleaned.sort((a, b) => a.frame - b.frame);
-  return cleaned;
+  await writeFile(scriptPath, filterText, 'utf8');
+  return ['-filter_complex_script', scriptPath];
 }
 
 function defaultResolveLutPath(relPath, assetsDirectory) {
@@ -168,18 +140,6 @@ async function totalFileBytes(files) {
   return sizes.reduce((total, size) => total + size, 0);
 }
 
-function trackKind(state, id) {
-  const prefix = String(id).toUpperCase()[0];
-  return state.tracks?.[id]?.kind ?? (prefix === 'A' ? 'audio' : prefix === 'C' ? 'caption' : 'video');
-}
-
-function timelineTrackIds(state) {
-  const ids = Array.isArray(state.trackOrder) ? [...state.trackOrder] : [...TRACK_ORDER_DEFAULT];
-  for (const id of Object.keys(state.tracks ?? {})) if (!ids.includes(id)) ids.push(id);
-  for (const item of state.items ?? []) if (!ids.includes(item.track)) ids.push(item.track);
-  return ids;
-}
-
 export function buildAtempoChain(rate) {
   if (!Number.isFinite(rate) || Math.abs(rate - 1) < 1e-6) return [];
   const filters = [];
@@ -198,1095 +158,14 @@ export function buildAtempoChain(rate) {
   return filters;
 }
 
-function resolveStaticCompositionMosaic(item, width, height) {
-  const m = item?.mosaic;
-  if (!m || typeof m !== 'object' || (m.shape !== 'rectangle' && m.shape !== 'ellipse')) return null;
-  const bounds = {
-    centerX: [0, 1], centerY: [0, 1], width: [0.01, 1], height: [0.01, 1],
-    strength: [1, 100], feather: [0, 100], opacity: [0, 1],
-  };
-  for (const [key, [min, max]] of Object.entries(bounds)) {
-    const v = m[key];
-    if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) return null;
-  }
-  if (item.fadeInFrames || item.fadeOutFrames) return null;
-  if (hasAnyKeyframes(item.keyframes) || hasOwnKeys(item.zoom) || (item.effects?.length ?? 0) > 0
-    || item.backgroundFill || hasOwnKeys(item.mask) || item.filters) {
-    return null;
-  }
-  if (!neutralPictureProps(item)) return null;
-  if (item.transform && typeof item.transform === 'object') {
-    for (const key of Object.keys(item.transform)) {
-      if (item.transform[key] !== undefined && !BASE_TRANSFORM_KEYS.has(key)) return null;
-    }
-    const tr = item.transform;
-    if (Number(tr.rotation ?? 0) !== 0 || Number(tr.borderRadius ?? 0) !== 0
-      || Number(tr.scaleX ?? tr.scale ?? 1) !== 1 || Number(tr.scaleY ?? tr.scale ?? 1) !== 1
-      || Number(tr.x ?? 0) !== 0 || Number(tr.y ?? 0) !== 0
-      || Number(tr.opacity ?? 1) !== 1 || resolveFlexCrop(tr.crop, width, height)) {
-      return null;
-    }
-  }
-  const rawW = m.width * width;
-  const rawH = m.height * height;
-  const rawX = m.centerX * width - rawW / 2;
-  const rawY = m.centerY * height - rawH / 2;
-  const x0 = Math.max(0, Math.round(rawX));
-  const y0 = Math.max(0, Math.round(rawY));
-  const x1 = Math.min(width, Math.round(rawX + rawW));
-  const y1 = Math.min(height, Math.round(rawY + rawH));
-  const w = x1 - x0;
-  const h = y1 - y0;
-  if (w < 2 || h < 2) return null;
-  const sigma = Math.max(1, Math.round(clamp(m.strength, 1, 100) * 0.24));
-  return {
-    shape: m.shape,
-    x0,
-    y0,
-    w,
-    h,
-    localCx: m.centerX * width - x0,
-    localCy: m.centerY * height - y0,
-    halfW: rawW / 2,
-    halfH: rawH / 2,
-    sigma,
-    feather: m.feather,
-    opacity: m.opacity,
-    startFrame: item.startFrame,
-    endFrame: item.startFrame + item.durationInFrames,
-    track: item.track,
-  };
-}
-
-function hasAnyKeyframes(keyframes) {
-  if (!keyframes || typeof keyframes !== 'object') return false;
-  return Object.values(keyframes).some((frames) => Array.isArray(frames) && frames.length > 0);
-}
-
-function resolveFlexCrop(crop, width, height) {
-  if (!crop || typeof crop !== 'object') return null;
-  const left = Math.max(0, Number(crop.left ?? 0));
-  const top = Math.max(0, Number(crop.top ?? 0));
-  const right = Math.max(0, Number(crop.right ?? 0));
-  const bottom = Math.max(0, Number(crop.bottom ?? 0));
-  if (left <= 0 && top <= 0 && right <= 0 && bottom <= 0) return null;
-  const px = (fraction, axis) => (fraction <= 0 ? 0 : Math.min(axis, Math.max(1, Math.round(fraction * axis))));
-  const lx = px(left, width);
-  const ty = px(top, height);
-  const rx = px(right, width);
-  const by = px(bottom, height);
-  return { x: lx, y: ty, width: Math.max(0, width - lx - rx), height: Math.max(0, height - ty - by) };
-}
-
-function resolveBaseTransform(transform, canvasW, canvasH) {
-  if (!transform || typeof transform !== 'object') return null;
-  for (const key of Object.keys(transform)) {
-    if (transform[key] !== undefined && !BASE_TRANSFORM_KEYS.has(key)) return { unsupported: `transform:${key}` };
-  }
-  const rotation = Number(transform.rotation ?? 0);
-  const borderRadius = Math.max(0, Number(transform.borderRadius ?? 0));
-  if (rotation !== 0 || borderRadius !== 0) return { unsupported: 'transform-rotation-or-radius' };
-  const scaleX = Number(transform.scaleX ?? transform.scale ?? 1);
-  const scaleY = Number(transform.scaleY ?? transform.scale ?? 1);
-  const x = Number(transform.x ?? 0);
-  const y = Number(transform.y ?? 0);
-  const opacity = clamp(Number(transform.opacity ?? 1), 0, 1);
-  const crop = resolveFlexCrop(transform.crop, canvasW, canvasH);
-  if (![scaleX, scaleY, x, y, opacity].every(Number.isFinite) || scaleX <= 0 || scaleY <= 0) {
-    return { unsupported: 'transform-invalid' };
-  }
-  return { scaleX, scaleY, x, y, opacity, crop };
-}
-
-function resolveBaseFilters(filters) {
-  if (!filters || typeof filters !== 'object') return null;
-  for (const key of Object.keys(filters)) {
-    if (filters[key] !== undefined && !BASE_FILTER_KEYS.has(key)) return { unsupported: `filter:${key}` };
-  }
-  const brightness = Number(filters.brightness ?? 1);
-  const contrast = Number(filters.contrast ?? 1);
-  const saturate = Number(filters.saturate ?? 1);
-  const blur = Number(filters.blur ?? 0);
-  if (![brightness, contrast, saturate, blur].every(Number.isFinite) || brightness < 0 || contrast < 0 || saturate < 0 || blur < 0) {
-    return { unsupported: 'filter-invalid' };
-  }
-  if (brightness === 1 && contrast === 1 && saturate === 1 && blur === 0) return null;
-  return { brightness, contrast, saturate, blur };
-}
-
-function resolveBaseClipEffects(effects) {
-  if (!effects || (Array.isArray(effects) && effects.length === 0)) return [];
-  if (!Array.isArray(effects)) return { unsupported: true };
-  const resolved = [];
-  for (const effect of effects) {
-    if (!effect || typeof effect !== 'object') return { unsupported: true };
-    for (const key of Object.keys(effect)) {
-      if (effect[key] !== undefined && !CLIP_EFFECT_KEYS.has(key)) return { unsupported: true };
-    }
-    if (effect.mosaicTrack) return { unsupported: true };
-    const o = effect.overrides ?? {};
-    if (typeof o !== 'object' || Array.isArray(o)) return { unsupported: true };
-    if (effect.assetId === LOCAL_GAUSSIAN_BLUR_ASSET_ID) {
-      for (const key of Object.keys(o)) {
-        if (o[key] !== undefined && !LOCAL_GAUSSIAN_BLUR_OVERRIDE_KEYS.has(key)) return { unsupported: true };
-      }
-      const centerX = Number(o.center_x ?? 0.5);
-      const centerY = Number(o.center_y ?? 0.5);
-      const widthRatio = Number(o.width_ratio ?? 0.35);
-      const heightRatio = Number(o.height_ratio ?? 0.35);
-      const strength = Number(o.strength ?? 70);
-      const feather = Number(o.feather ?? 0);
-      if (![centerX, centerY, widthRatio, heightRatio, strength, feather].every(Number.isFinite)
-        || centerX < 0 || centerX > 1 || centerY < 0 || centerY > 1
-        || widthRatio < 0.01 || widthRatio > 1 || heightRatio < 0.01 || heightRatio > 1
-        || strength < 1 || strength > 100 || feather < 0 || feather > 100) {
-        return { unsupported: true };
-      }
-      const sigma = Math.max(1, Math.round(clamp(strength, 1, 100) * 0.24));
-      resolved.push({ kind: 'blur', centerX, centerY, widthRatio, heightRatio, sigma, feather });
-    } else if (effect.assetId === LOCAL_MOSAIC_ASSET_ID) {
-      for (const key of Object.keys(o)) {
-        if (o[key] !== undefined && !LOCAL_MOSAIC_OVERRIDE_KEYS.has(key)) return { unsupported: true };
-      }
-      const centerX = Number(o.center_x ?? 0.5);
-      const centerY = Number(o.center_y ?? 0.3);
-      const widthRatio = Number(o.width_ratio ?? 0.2);
-      const heightRatio = Number(o.height_ratio ?? 0.2);
-      const blockSize = Number(o.block_size ?? 20);
-      const feather = Number(o.feather ?? 4);
-      if (![centerX, centerY, widthRatio, heightRatio, blockSize, feather].every(Number.isFinite)
-        || centerX < 0 || centerX > 1 || centerY < 0 || centerY > 1
-        || widthRatio < 0.01 || widthRatio > 1 || heightRatio < 0.01 || heightRatio > 1
-        || blockSize < 1 || blockSize > 200 || feather < 0 || feather > 100) {
-        return { unsupported: true };
-      }
-      resolved.push({ kind: 'local-mosaic', centerX, centerY, widthRatio, heightRatio, blockSize, feather });
-    } else if (effect.assetId === PIXELATE_ASSET_ID) {
-      for (const key of Object.keys(o)) {
-        if (o[key] !== undefined && !PIXELATE_OVERRIDE_KEYS.has(key)) return { unsupported: true };
-      }
-      const blockSize = Number(o.blockSize ?? 12);
-      if (!Number.isFinite(blockSize) || blockSize < 1 || blockSize > 200) {
-        return { unsupported: true };
-      }
-      resolved.push({ kind: 'pixelate', blockSize });
-    } else if (effect.assetId === RECT_MASK_ASSET_ID) {
-      for (const key of Object.keys(o)) {
-        if (o[key] !== undefined && !RECT_MASK_OVERRIDE_KEYS.has(key)) return { unsupported: true };
-      }
-      const centerX = Number(o.center_x ?? 0.5);
-      const centerY = Number(o.center_y ?? 0.5);
-      const widthRatio = Number(o.width ?? 0.5);
-      const heightRatio = Number(o.height ?? 0.5);
-      const cornerRadius = Number(o.corner_radius ?? 0);
-      const feather = Number(o.feather ?? 2);
-      const invert = Number(o.invert ?? 0);
-      if (![centerX, centerY, widthRatio, heightRatio, cornerRadius, feather, invert].every(Number.isFinite)
-        || centerX < 0 || centerX > 1 || centerY < 0 || centerY > 1
-        || widthRatio < 0 || widthRatio > 1 || heightRatio < 0 || heightRatio > 1
-        || cornerRadius < 0 || cornerRadius > 1000 || feather < 0 || feather > 200) {
-        return { unsupported: true };
-      }
-      resolved.push({
-        kind: 'shape-mask',
-        shape: 'rectangle',
-        centerX,
-        centerY,
-        widthRatio,
-        heightRatio,
-        cornerRadius,
-        feather,
-        invert: invert > 0.5,
-      });
-    } else if (effect.assetId === CIRCLE_MASK_ASSET_ID) {
-      for (const key of Object.keys(o)) {
-        if (o[key] !== undefined && !CIRCLE_MASK_OVERRIDE_KEYS.has(key)) return { unsupported: true };
-      }
-      const centerX = Number(o.center_x ?? 0.5);
-      const centerY = Number(o.center_y ?? 0.5);
-      const radius = Number(o.radius ?? 0.3);
-      const feather = Number(o.feather ?? 2);
-      const invert = Number(o.invert ?? 0);
-      if (![centerX, centerY, radius, feather, invert].every(Number.isFinite)
-        || centerX < 0 || centerX > 1 || centerY < 0 || centerY > 1
-        || radius < 0 || radius > 1 || feather < 0 || feather > 200) {
-        return { unsupported: true };
-      }
-      resolved.push({
-        kind: 'shape-mask',
-        shape: 'circle',
-        centerX,
-        centerY,
-        radius,
-        feather,
-        invert: invert > 0.5,
-      });
-    } else if (CUBE_LUT_ASSETS[effect.assetId]) {
-      for (const key of Object.keys(o)) {
-        if (o[key] !== undefined && !LUT_OVERRIDE_KEYS.has(key)) return { unsupported: true };
-      }
-      const intensity = Number(o.intensity ?? 1);
-      if (!Number.isFinite(intensity) || intensity < 0 || intensity > 1) return { unsupported: true };
-      resolved.push({
-        kind: 'lut3d',
-        assetId: effect.assetId,
-        cubeRelPath: CUBE_LUT_ASSETS[effect.assetId],
-        intensity,
-      });
-    } else {
-      return { unsupported: true };
-    }
-  }
-  return resolved;
-}
-
-function resolveBaseClipMask(mask, width, height) {
-  if (!mask || !hasOwnKeys(mask)) return null;
-  if (typeof mask !== 'object' || Array.isArray(mask)) return { unsupported: true };
-  for (const key of Object.keys(mask)) {
-    if (mask[key] !== undefined && !CLIP_MASK_KEYS.has(key)) return { unsupported: true };
-  }
-  if (mask.type !== 'rectangle' && mask.type !== 'ellipse') return { unsupported: true };
-  const rawX = Number(mask.x);
-  const rawY = Number(mask.y);
-  const rawW = Number(mask.width);
-  const rawH = Number(mask.height);
-  const rawFeather = Number(mask.feather ?? 0);
-  if (![rawX, rawY, rawW, rawH, rawFeather].every(Number.isFinite)) return { unsupported: true };
-  const x = clamp(rawX, 0, 0.999);
-  const y = clamp(rawY, 0, 0.999);
-  const w = clamp(rawW, 0.001, 1 - x);
-  const h = clamp(rawH, 0.001, 1 - y);
-  const featherNorm = clamp(rawFeather, 0, 0.5);
-  if (mask.type === 'rectangle' && x === 0 && y === 0 && w === 1 && h === 1 && featherNorm === 0) {
-    return null;
-  }
-  return {
-    shape: mask.type,
-    rw: width,
-    rh: height,
-    localCx: (x + w / 2) * width,
-    localCy: (y + h / 2) * height,
-    halfW: (w * width) / 2,
-    halfH: (h * height) / 2,
-    feather: featherNorm * Math.min(width, height),
-  };
-}
-
-function resolveBaseVisualFade(item) {
-  const clipFadeIn = Number(item.fadeInFrames ?? 0);
-  const clipFadeOut = Number(item.fadeOutFrames ?? 0);
-  if (!Number.isFinite(clipFadeIn) || clipFadeIn < 0 || !Number.isFinite(clipFadeOut) || clipFadeOut < 0) {
-    return { unsupported: 'video-visual-fade' };
-  }
-  const hasPicAnim = !neutralPictureProps(item);
-  if (hasPicAnim && !pictureOnlyProps(item.props)) return { unsupported: 'video-clip-effects' };
-  const ent = item.props?.visualEntrance ?? 'none';
-  const ex = item.props?.visualExit ?? 'none';
-  if ((ent !== 'none' && ent !== 'fade') || (ex !== 'none' && ex !== 'fade')) {
-    return { unsupported: 'video-clip-effects' };
-  }
-  const dur = item.durationInFrames;
-  const timing = hasPicAnim ? pictureAnimationTiming(item) : { entrance: null, exit: null };
-  const picIn = timing.entrance && timing.entrance.until > 0 && timing.entrance.from < dur
-    ? { from: timing.entrance.from, until: timing.entrance.until }
-    : null;
-  const picOut = timing.exit && timing.exit.until > 0 && timing.exit.from < dur
-    ? { from: timing.exit.from, until: timing.exit.until }
-    : null;
-  if ((clipFadeIn > 0 && picIn) || (clipFadeOut > 0 && picOut)) {
-    return { unsupported: 'video-visual-fade' };
-  }
-  const fadeIn = picIn ?? (clipFadeIn > 0 ? { from: 0, until: Math.min(dur, Math.round(clipFadeIn)) } : null);
-  const fadeOut = picOut ?? (clipFadeOut > 0 ? { from: Math.max(0, dur - Math.round(clipFadeOut)), until: dur } : null);
-  return (fadeIn || fadeOut) ? { fadeIn, fadeOut } : null;
-}
-
-function resolveBaseTimelineState({ state, project, timelineId }) {
-  if (project && timelineId) {
-    const timeline = project.timelines?.find((entry) => entry.id === timelineId);
-    if (!timeline) return null;
-    return { ...timeline, assets: project.assets ?? timeline.assets };
-  }
-  return state;
-}
-
-function mergeCompatSpans(rawSpans, rangeStart, rangeEnd) {
-  const clipped = [];
-  for (const sp of rawSpans) {
-    const from = Math.max(rangeStart, Math.floor(sp.from));
-    const to = Math.min(rangeEnd, Math.ceil(sp.to));
-    if (to <= from) continue;
-    clipped.push({
-      from,
-      to,
-      compatAudio: Boolean(sp.compatAudio),
-      reasons: new Set(sp.reasons ? sp.reasons : sp.reason ? [sp.reason] : []),
-    });
-  }
-  if (!clipped.length) return [];
-  clipped.sort((a, b) => a.from - b.from || a.to - b.to);
-  const merged = [];
-  for (const sp of clipped) {
-    const prev = merged.at(-1);
-    if (prev && sp.from <= prev.to) {
-      prev.to = Math.max(prev.to, sp.to);
-      prev.compatAudio = prev.compatAudio || sp.compatAudio;
-      for (const r of sp.reasons) prev.reasons.add(r);
-    } else {
-      merged.push(sp);
-    }
-  }
-  const coalesced = [];
-  for (const sp of merged) {
-    const prev = coalesced.at(-1);
-    if (prev && sp.from - prev.to > 0 && sp.from - prev.to < COMPAT_MIN_FAST_GAP_FRAMES) {
-      prev.to = sp.to;
-      prev.compatAudio = prev.compatAudio || sp.compatAudio;
-      for (const r of sp.reasons) prev.reasons.add(r);
-    } else {
-      coalesced.push(sp);
-    }
-  }
-  return coalesced.map((sp) => ({
-    from: sp.from,
-    to: sp.to,
-    compatAudio: sp.compatAudio,
-    reasons: [...sp.reasons],
-  }));
-}
-
-function complementFastSpans(rangeStart, rangeEnd, compatSpans) {
-  const out = [];
-  let cursor = rangeStart;
-  for (const sp of compatSpans) {
-    if (sp.from > cursor) out.push({ from: cursor, to: sp.from });
-    cursor = Math.max(cursor, sp.to);
-  }
-  if (cursor < rangeEnd) out.push({ from: cursor, to: rangeEnd });
-  return out;
-}
-
-function resolveAudioCrossfadePlans(audioItems, audioTransitions, assets) {
-  const byId = new Map(audioItems.map((it) => [it.id, it]));
-  const plansByItemId = new Map();
-  const getPlan = (id) => {
-    let rec = plansByItemId.get(id);
-    if (!rec) {
-      rec = { beforeFrames: 0, afterFrames: 0, curves: [] };
-      plansByItemId.set(id, rec);
-    }
-    return rec;
-  };
-  const findAsset = (item) => (item.sourceAssetId
-    ? assets.find((a) => a.id === item.sourceAssetId)
-    : assets.find((a) => a.src === item.src));
-  const availBefore = (item) => {
-    const rate = Math.max(0.01, Number(item.playbackRate ?? 1) || 1);
-    const start = Math.max(0, Number(item.srcInFrame ?? 0) || 0);
-    return Math.max(0, Math.floor(start / rate));
-  };
-  const availAfter = (item) => {
-    const asset = findAsset(item);
-    if (!asset || !Number.isFinite(asset.durationInFrames)) return null;
-    const rate = Math.max(0.01, Number(item.playbackRate ?? 1) || 1);
-    const srcEnd = (item.srcInFrame ?? 0) + item.durationInFrames * rate;
-    if (!Number.isFinite(srcEnd)) return 0;
-    return Math.max(0, Math.floor((asset.durationInFrames - srcEnd) / rate));
-  };
-  for (const t of audioTransitions) {
-    const out = byId.get(t.outgoingItemId);
-    const inc = byId.get(t.incomingItemId);
-    if (!out || !inc) continue;
-    const dur = Number.isFinite(t.durationInFrames) ? Math.max(1, Math.round(t.durationInFrames)) : 1;
-    const reqBefore = Math.floor(dur / 2);
-    const reqAfter = dur - reqBefore;
-    const beforeFrames = Math.min(reqBefore, availBefore(inc));
-    const tail = availAfter(out);
-    const afterFrames = tail === null ? reqAfter : Math.min(reqAfter, tail);
-    const hasFullHandles = beforeFrames === reqBefore && afterFrames === reqAfter;
-    const seam = inc.startFrame;
-    const overlapFrames = beforeFrames + afterFrames;
-    const incPlan = getPlan(inc.id);
-    const outPlan = getPlan(out.id);
-    if (hasFullHandles) {
-      incPlan.beforeFrames = Math.max(incPlan.beforeFrames, beforeFrames);
-      incPlan.curves.push({ direction: 'in', startFrame: seam - beforeFrames, duration: overlapFrames });
-      outPlan.afterFrames = Math.max(outPlan.afterFrames, afterFrames);
-      outPlan.curves.push({ direction: 'out', startFrame: seam - beforeFrames, duration: overlapFrames });
-    } else {
-      if (reqAfter > 0) incPlan.curves.push({ direction: 'in', startFrame: seam, duration: reqAfter });
-      if (reqBefore > 0) outPlan.curves.push({ direction: 'out', startFrame: seam - reqBefore, duration: reqBefore });
-    }
-  }
-  return plansByItemId;
-}
-
-function finalizeSegmentedGeometry({
-  rangeStart, rangeEnd, frames, plannedTransitions, rawCompatSpans, allowCompatSpans,
-}) {
-  if (!allowCompatSpans) {
-    const fastSpans = [{ from: rangeStart, to: rangeEnd }];
-    return { compatSpans: [], fastSpans, compatFrames: 0, compatReasons: [] };
-  }
-  let workingCompat = mergeCompatSpans(rawCompatSpans, rangeStart, rangeEnd);
-  let expanded = true;
-  while (expanded) {
-    expanded = false;
-    for (const rec of plannedTransitions) {
-      if (workingCompat.some((c) => c.from < rec.winEnd && c.to > rec.winStart)) {
-        const alreadyCovered = workingCompat.some((c) => c.from <= rec.winStart && c.to >= rec.winEnd);
-        if (!alreadyCovered) {
-          workingCompat.push({ from: rec.winStart, to: rec.winEnd, compatAudio: false, reasons: ['transitions'] });
-          workingCompat = mergeCompatSpans(workingCompat, rangeStart, rangeEnd);
-          expanded = true;
-        }
-      }
-    }
-  }
-  const fastSpans = complementFastSpans(rangeStart, rangeEnd, workingCompat);
-  const compatFrames = workingCompat.reduce((sum, s) => sum + (s.to - s.from), 0);
-  const reasonSet = new Set();
-  for (const s of workingCompat) for (const r of s.reasons) reasonSet.add(r);
-  void frames;
-  return {
-    compatSpans: workingCompat,
-    fastSpans,
-    compatFrames,
-    compatReasons: [...reasonSet],
-  };
-}
-
-function buildBaseSegmentsForSpans({
-  fastSpans, sortedVideos, transitionByOutgoingId, transitionByIncomingId,
-}) {
-  const baseSegments = [];
-  const makeVideoSegment = (entry, segStart, segEnd) => {
-    const { item, rate, transform, filters, visualFade, localGaussianBlurs, clipMask } = entry;
-    const isSolidBlack = transform?.opacity === 0 || filters?.brightness === 0;
-    return isSolidBlack
-      ? { kind: 'black', timelineFrame: segStart, frames: segEnd - segStart }
-      : {
-        kind: 'video',
-        timelineFrame: segStart,
-        frames: segEnd - segStart,
-        sourceFrame: (item.srcInFrame ?? 0) + (segStart - item.startFrame) * rate,
-        playbackRate: rate,
-        clipLocalStart: segStart - item.startFrame,
-        src: item.src,
-        transform,
-        filters,
-        visualFade,
-        ...(localGaussianBlurs?.length ? { localGaussianBlurs } : {}),
-        ...(clipMask ? { clipMask } : {}),
-      };
-  };
-
-  for (const fastSpan of fastSpans) {
-    let cursor = fastSpan.from;
-    const spanEnd = fastSpan.to;
-    for (const entry of sortedVideos) {
-      const { item } = entry;
-      const itemStart = item.startFrame;
-      const itemEnd = itemStart + item.durationInFrames;
-      const inTr = transitionByIncomingId.get(item.id);
-      const outTr = transitionByOutgoingId.get(item.id);
-      const effectiveEnd = outTr ? outTr.winEnd : itemEnd;
-      if (effectiveEnd <= cursor || itemStart >= spanEnd) continue;
-      if (itemStart > cursor) {
-        const gapEnd = Math.min(spanEnd, itemStart);
-        if (gapEnd > cursor) {
-          baseSegments.push({ kind: 'black', timelineFrame: cursor, frames: gapEnd - cursor });
-          cursor = gapEnd;
-        }
-      }
-      const inTrInside = inTr && inTr.winStart >= fastSpan.from && inTr.winEnd <= spanEnd;
-      const outTrInside = outTr && outTr.winStart >= fastSpan.from && outTr.winEnd <= spanEnd;
-      const bodyStart = inTrInside ? inTr.winEnd : itemStart;
-      const bodyEnd = outTrInside ? outTr.winStart : itemEnd;
-      const segStart = Math.max(cursor, bodyStart);
-      const segEnd = Math.min(spanEnd, bodyEnd);
-      if (segEnd > segStart) {
-        baseSegments.push(makeVideoSegment(entry, segStart, segEnd));
-        cursor = segEnd;
-      }
-      if (outTrInside && outTr.winEnd > cursor && outTr.winStart < spanEnd) {
-        const { outEntry, incEntry, L, half, winStart, winEnd, t } = outTr;
-        baseSegments.push({
-          kind: 'transition',
-          transitionType: t.type,
-          timelineFrame: winStart,
-          frames: L,
-          outgoingSeg: {
-            kind: 'video',
-            timelineFrame: winStart,
-            frames: L,
-            sourceFrame: (outEntry.item.srcInFrame ?? 0) + (winStart - outEntry.item.startFrame) * outEntry.rate,
-            playbackRate: outEntry.rate,
-            clipLocalStart: winStart - outEntry.item.startFrame,
-            src: outEntry.item.src,
-            transform: outEntry.transform,
-            filters: outEntry.filters,
-            visualFade: null,
-            ...(outEntry.localGaussianBlurs?.length ? { localGaussianBlurs: outEntry.localGaussianBlurs } : {}),
-            ...(outEntry.clipMask ? { clipMask: outEntry.clipMask } : {}),
-          },
-          incomingSeg: {
-            kind: 'video',
-            timelineFrame: winStart,
-            frames: L,
-            sourceFrame: (incEntry.item.srcInFrame ?? 0) - half * incEntry.rate,
-            playbackRate: incEntry.rate,
-            clipLocalStart: -half,
-            src: incEntry.item.src,
-            transform: incEntry.transform,
-            filters: incEntry.filters,
-            visualFade: null,
-            ...(incEntry.localGaussianBlurs?.length ? { localGaussianBlurs: incEntry.localGaussianBlurs } : {}),
-            ...(incEntry.clipMask ? { clipMask: incEntry.clipMask } : {}),
-          },
-        });
-        cursor = winEnd;
-      }
-    }
-    if (cursor < spanEnd) {
-      baseSegments.push({ kind: 'black', timelineFrame: cursor, frames: spanEnd - cursor });
-    }
-  }
-  return baseSegments;
-}
-
-export function planOverlayHybridExport({
-  state: rawState,
-  project,
-  timelineId,
-  codec = 'h264',
-  scale = 1,
-  frameRange,
-  separateAudioTo,
-  allowCompatSpans = false,
-} = {}) {
-  const state = resolveBaseTimelineState({ state: rawState, project, timelineId });
-  if (!state || typeof state !== 'object' || !Array.isArray(state.items)) return refusal('invalid-state');
-  for (const key of Object.keys(state)) if (!STATE_KEYS.has(key)) return refusal(`state:${key}`);
-  if (codec !== 'h264' || separateAudioTo || !Number.isFinite(scale) || scale <= 0 || scale > 16) return refusal('render-mode');
-  if (!integer(state.fps, 1) || !integer(state.width, 2) || !integer(state.height, 2)
-    || state.width % 2 !== 0 || state.height % 2 !== 0) {
-    return refusal('composition-geometry');
-  }
-  const outputWidth = Math.round(state.width * scale);
-  const outputHeight = Math.round(state.height * scale);
-  if (!integer(outputWidth, 2) || !integer(outputHeight, 2) || outputWidth % 2 !== 0 || outputHeight % 2 !== 0) {
-    return refusal('output-geometry');
-  }
-
-  const endFrame = Math.max(state.fps, state.items.reduce((max, item) => Math.max(max, (item.startFrame ?? 0) + (item.durationInFrames ?? 0)), 0));
-  const [from, to] = frameRange ?? [0, endFrame - 1];
-  if (!integer(from) || !integer(to, from) || to >= endFrame) return refusal('frame-range');
-  const rangeStart = from;
-  const rangeEnd = to + 1;
-  const frames = rangeEnd - rangeStart;
-
-  const trackIds = timelineTrackIds(state);
-  const visualTrackIds = trackIds.filter((id) => trackKind(state, id) === 'video');
-  const tracks = state.tracks ?? {};
-
-  const visibleVideoItems = [];
-  const allVisualVideoItems = [];
-  const visibleOverlayItems = [];
-  const visibleMosaicItems = [];
-  const audioItems = [];
-  const rawCompatSpans = [];
-  const markCompat = (itemStart, itemDur, reason, compatAudio = false) => {
-    const s = Math.max(rangeStart, itemStart);
-    const e = Math.min(rangeEnd, itemStart + Math.max(1, itemDur));
-    if (e > s) rawCompatSpans.push({ from: s, to: e, reason, compatAudio });
-  };
-
-  for (const item of state.items) {
-    if (!item || typeof item !== 'object') return refusal('invalid-item');
-    for (const key of Object.keys(item)) if (!ITEM_KEYS.has(key)) {
-      if (!allowCompatSpans) return refusal(`item:${key}`);
-      if (integer(item.startFrame) && integer(item.durationInFrames, 1)) {
-        markCompat(item.startFrame, item.durationInFrames, `item:${key}`, true);
-        continue;
-      }
-      return refusal(`item:${key}`);
-    }
-    const track = tracks[item.track];
-    if (track?.hidden) continue;
-    if (!integer(item.startFrame) || !integer(item.durationInFrames, 1)) return refusal('item-timing');
-
-    if (item.kind === 'sequence') {
-      if (!allowCompatSpans) return refusal('nested-sequence');
-      markCompat(item.startFrame, item.durationInFrames, 'nested-sequence', true);
-      continue;
-    }
-    if (item.kind === 'gif') {
-      if (!allowCompatSpans) return refusal(`unsupported-kind:${item.kind}`);
-      markCompat(item.startFrame, item.durationInFrames, `unsupported-kind:${item.kind}`, false);
-      continue;
-    }
-    if (item.kind !== 'mosaic' && item.mosaic) {
-      if (!allowCompatSpans) return refusal('composition-mosaic');
-      markCompat(item.startFrame, item.durationInFrames, 'composition-mosaic', false);
-    }
-
-    if (item.kind === 'mosaic') {
-      const resolved = resolveStaticCompositionMosaic(item, state.width, state.height);
-      if (!resolved) {
-        if (!allowCompatSpans) return refusal('composition-mosaic');
-        markCompat(item.startFrame, item.durationInFrames, 'composition-mosaic', false);
-      } else {
-        visibleMosaicItems.push(resolved);
-      }
-    } else if (item.kind === 'video') {
-      if (!item.pictureDisabled) allVisualVideoItems.push(item);
-      const rate = Number(item.playbackRate ?? 1);
-      const speechEdited = Boolean(
-        item.deletedWordIdx?.length || item.transcriptPlayOrder?.length || item.silenceFrames != null
-        || item.cutPadFrames != null || item.gapCapsMs != null,
-      );
-      if (!Number.isFinite(rate) || rate < 0.25 || rate > 4.0) {
-        if (!allowCompatSpans) return refusal('item-retimed');
-        markCompat(item.startFrame, item.durationInFrames, 'item-retimed', true);
-        continue;
-      }
-      if (speechEdited) {
-        if (!allowCompatSpans) return refusal('item-speech-edited');
-        markCompat(item.startFrame, item.durationInFrames, 'item-speech-edited', true);
-        continue;
-      }
-      if (!item.pictureDisabled) {
-        let videoCompatReason = null;
-        if (!item.src || !integer(item.srcInFrame ?? 0)) videoCompatReason = 'video-source';
-        else if (hasAnyKeyframes(item.keyframes) || hasOwnKeys(item.zoom)
-          || item.backgroundFill || item.mosaic) {
-          videoCompatReason = 'video-clip-effects';
-        }
-        const clipMask = videoCompatReason ? null : resolveBaseClipMask(item.mask, state.width, state.height);
-        if (!videoCompatReason && clipMask?.unsupported) videoCompatReason = 'video-clip-effects';
-        const localGaussianBlurs = videoCompatReason ? null : resolveBaseClipEffects(item.effects);
-        if (!videoCompatReason && localGaussianBlurs?.unsupported) videoCompatReason = 'video-clip-effects';
-        const visualFade = videoCompatReason ? null : resolveBaseVisualFade(item);
-        if (!videoCompatReason && visualFade?.unsupported) videoCompatReason = visualFade.unsupported;
-        const transform = videoCompatReason ? null : resolveBaseTransform(item.transform, state.width, state.height);
-        if (!videoCompatReason && transform?.unsupported) videoCompatReason = transform.unsupported;
-        const filters = videoCompatReason ? null : resolveBaseFilters(item.filters);
-        if (!videoCompatReason && filters?.unsupported) videoCompatReason = filters.unsupported;
-
-        if (videoCompatReason) {
-          if (!allowCompatSpans) return refusal(videoCompatReason);
-          markCompat(item.startFrame, item.durationInFrames, videoCompatReason, false);
-        } else {
-          visibleVideoItems.push({ item, rate, transform, filters, visualFade, localGaussianBlurs, clipMask });
-        }
-      }
-      if (!item.audioDetached && item.volume !== 0) {
-        if (!item.src || !integer(item.srcInFrame ?? 0)) {
-          if (!allowCompatSpans) return refusal('video-audio-source');
-          markCompat(item.startFrame, item.durationInFrames, 'video-audio-source', true);
-        } else {
-          audioItems.push(item);
-        }
-      }
-    } else if (item.kind === 'audio') {
-      if (!item.src || !integer(item.srcInFrame ?? 0)) {
-        if (!allowCompatSpans) return refusal('audio-source');
-        markCompat(item.startFrame, item.durationInFrames, 'audio-source', true);
-        continue;
-      }
-      const rate = Number(item.playbackRate ?? 1);
-      if (!Number.isFinite(rate) || rate < 0.25 || rate > 4.0) {
-        if (!allowCompatSpans) return refusal('audio-retimed');
-        markCompat(item.startFrame, item.durationInFrames, 'audio-retimed', true);
-        continue;
-      }
-      const volKeyframes = resolveAudioVolumeKeyframes(item.keyframes);
-      const speechEdited = Boolean(
-        item.deletedWordIdx?.length || item.transcriptPlayOrder?.length || item.silenceFrames != null
-        || item.cutPadFrames != null || item.gapCapsMs != null,
-      );
-      if (speechEdited) {
-        if (!allowCompatSpans) return refusal('item-speech-edited');
-        markCompat(item.startFrame, item.durationInFrames, 'item-speech-edited', true);
-        continue;
-      }
-      if (hasNonVolumeKeyframes(item.keyframes) || (item.effects?.length ?? 0) > 0 || volKeyframes?.unsupported) {
-        if (!allowCompatSpans) return refusal('audio-processing');
-        markCompat(item.startFrame, item.durationInFrames, 'audio-processing', true);
-        continue;
-      }
-      audioItems.push({ ...item, _volumeKeyframes: Array.isArray(volKeyframes) ? volKeyframes : null });
-    } else if (OVERLAY_KINDS.has(item.kind)) {
-      visibleOverlayItems.push(item);
-    } else {
-      if (!allowCompatSpans) return refusal(`unsupported-kind:${item.kind}`);
-      markCompat(item.startFrame, item.durationInFrames, `unsupported-kind:${item.kind}`, false);
-    }
-  }
-
-  // Visual stacking check: overlays below visible video tracks.
-  const minVideoTrackIdx = visibleVideoItems.length > 0
-    ? Math.min(...visibleVideoItems.map(({ item }) => visualTrackIds.indexOf(item.track)))
-    : Infinity;
-  if (!allowCompatSpans && visibleVideoItems.length > 0) {
-    for (const overlay of visibleOverlayItems) {
-      const idx = visualTrackIds.indexOf(overlay.track);
-      if (idx < 0 || idx >= minVideoTrackIdx) return refusal('overlay-below-video');
-    }
-  } else if (allowCompatSpans && allVisualVideoItems.length > 0) {
-    for (const overlay of visibleOverlayItems) {
-      const ovIdx = visualTrackIds.indexOf(overlay.track);
-      const ovStart = overlay.startFrame;
-      const ovEnd = ovStart + overlay.durationInFrames;
-      if (ovIdx < 0) {
-        markCompat(ovStart, overlay.durationInFrames, 'overlay-below-video', false);
-        continue;
-      }
-      for (const vid of allVisualVideoItems) {
-        const vIdx = visualTrackIds.indexOf(vid.track);
-        if (vIdx >= 0 && vIdx <= ovIdx) {
-          const s = Math.max(rangeStart, ovStart, vid.startFrame);
-          const e = Math.min(rangeEnd, ovEnd, vid.startFrame + vid.durationInFrames);
-          if (e > s) rawCompatSpans.push({ from: s, to: e, reason: 'overlay-below-video', compatAudio: false });
-        }
-      }
-    }
-  }
-
-  const isTrackCaptionEnabled = (id) => state.captionsHidden !== true
-    && trackKind(state, id) === 'caption'
-    && !tracks[id]?.hidden
-    && (tracks[id]?.captions?.enabled ?? (tracks[id]?.captions === undefined && id === 'C1' && state.captions?.enabled));
-  const enabledCaptionTrackIndices = trackIds
-    .map((id, idx) => (isTrackCaptionEnabled(id) ? idx : -1))
-    .filter((idx) => idx >= 0);
-  const maxCaptionTrackIdx = enabledCaptionTrackIndices.length > 0 ? Math.max(...enabledCaptionTrackIndices) : -1;
-  const maxOverlayTrackIdx = visibleOverlayItems.length > 0
-    ? Math.max(...visibleOverlayItems.map((it) => visualTrackIds.indexOf(it.track)))
-    : -1;
-  const eligibleMosaics = [];
-  for (const mosaic of visibleMosaicItems) {
-    const mVisIdx = visualTrackIds.indexOf(mosaic.track);
-    const mTrackIdx = trackIds.indexOf(mosaic.track);
-    let invalidZ = mVisIdx < 0 || (visibleVideoItems.length > 0 && mVisIdx >= minVideoTrackIdx);
-    if (!invalidZ && visibleOverlayItems.length > 0 && (maxOverlayTrackIdx < 0 || mVisIdx <= maxOverlayTrackIdx)) {
-      invalidZ = true;
-    }
-    if (!invalidZ && maxCaptionTrackIdx >= 0 && mTrackIdx <= maxCaptionTrackIdx) {
-      invalidZ = true;
-    }
-    if (invalidZ) {
-      if (!allowCompatSpans) return refusal('composition-mosaic');
-      markCompat(mosaic.startFrame, mosaic.endFrame - mosaic.startFrame, 'composition-mosaic', false);
-    } else {
-      eligibleMosaics.push(mosaic);
-    }
-  }
-
-  const sortedVideos = [...visibleVideoItems].sort((a, b) => a.item.startFrame - b.item.startFrame);
-  if (!allowCompatSpans) {
-    for (let i = 1; i < sortedVideos.length; i++) {
-      const prev = sortedVideos[i - 1].item;
-      if (sortedVideos[i].item.startFrame < prev.startFrame + prev.durationInFrames) {
-        return refusal('overlapping-base-video');
-      }
-    }
-  } else {
-    const events = [];
-    for (const v of allVisualVideoItems) {
-      const s = Math.max(rangeStart, v.startFrame);
-      const e = Math.min(rangeEnd, v.startFrame + v.durationInFrames);
-      if (e > s) events.push([s, 1], [e, -1]);
-    }
-    events.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    let activeCount = 0;
-    let overlapStart = null;
-    for (let i = 0; i < events.length;) {
-      const pos = events[i][0];
-      while (i < events.length && events[i][0] === pos) {
-        activeCount += events[i][1];
-        i += 1;
-      }
-      if (activeCount >= 2 && overlapStart === null) overlapStart = pos;
-      else if (activeCount < 2 && overlapStart !== null) {
-        if (pos > overlapStart) rawCompatSpans.push({ from: overlapStart, to: pos, reason: 'overlapping-base-video', compatAudio: false });
-        overlapStart = null;
-      }
-    }
-  }
-
-  const allItemsById = new Map((state.items ?? []).map((it) => [it.id, it]));
-  const videoById = new Map(sortedVideos.map((entry) => [entry.item.id, entry]));
-  const enabledTransitions = (state.transitions ?? []).filter((t) => t && t.enabled !== false);
-  const visualTransitions = enabledTransitions.filter((t) => t.type !== 'audio-cross-fade');
-  const audioTransitions = enabledTransitions.filter((t) => t.type === 'audio-cross-fade');
-
-  const plannedTransitions = [];
-  const transitionByOutgoingId = new Map();
-  const transitionByIncomingId = new Map();
-  const addTransitionCompatSpan = (t) => {
-    const out = allItemsById.get(t.outgoingItemId);
-    const inc = allItemsById.get(t.incomingItemId);
-    if (out && inc && integer(out.startFrame) && integer(inc.startFrame)) {
-      const L = integer(t.durationInFrames, 2) ? t.durationInFrames : 30;
-      const half = Math.floor(L / 2);
-      markCompat(inc.startFrame - half, L, 'transitions', false);
-    } else if (out && integer(out.startFrame) && integer(out.durationInFrames, 1)) {
-      markCompat(out.startFrame, out.durationInFrames, 'transitions', false);
-    }
-  };
-
-  for (const t of visualTransitions) {
-    if (!SUPPORTED_HYBRID_TRANSITIONS.has(t.type) || t.customFrag || !integer(t.durationInFrames, 2)) {
-      if (!allowCompatSpans) return refusal('transitions');
-      addTransitionCompatSpan(t);
-      continue;
-    }
-    const outEntry = videoById.get(t.outgoingItemId);
-    const incEntry = videoById.get(t.incomingItemId);
-    if (!outEntry || !incEntry) {
-      if (!allowCompatSpans) return refusal('transitions');
-      addTransitionCompatSpan(t);
-      continue;
-    }
-    const out = outEntry.item;
-    const inc = incEntry.item;
-    if (out.track !== inc.track || out.startFrame + out.durationInFrames !== inc.startFrame) {
-      if (!allowCompatSpans) return refusal('transitions');
-      addTransitionCompatSpan(t);
-      continue;
-    }
-    const L = t.durationInFrames;
-    const half = Math.floor(L / 2);
-    const post = L - half;
-    const seam = inc.startFrame;
-    const winStart = seam - half;
-    const winEnd = seam + post;
-    if (winStart < out.startFrame || winEnd > inc.startFrame + inc.durationInFrames
-      || winStart < rangeStart || winEnd > rangeEnd
-      || outEntry.transform?.opacity === 0 || outEntry.filters?.brightness === 0
-      || incEntry.transform?.opacity === 0 || incEntry.filters?.brightness === 0
-      || (inc.srcInFrame ?? 0) < half * incEntry.rate
-      || transitionByOutgoingId.has(out.id) || transitionByIncomingId.has(inc.id)) {
-      if (!allowCompatSpans) return refusal('transitions');
-      markCompat(winStart, L, 'transitions', false);
-      continue;
-    }
-    const overlapsFade = (vf, clipStart) => {
-      if (!vf) return false;
-      for (const w of [vf.fadeIn, vf.fadeOut]) {
-        if (w && clipStart + w.until > winStart && clipStart + w.from < winEnd) return true;
-      }
-      return false;
-    };
-    if (overlapsFade(outEntry.visualFade, out.startFrame) || overlapsFade(incEntry.visualFade, inc.startFrame)) {
-      if (!allowCompatSpans) return refusal('transitions');
-      markCompat(winStart, L, 'transitions', false);
-      continue;
-    }
-    const rec = { t, outEntry, incEntry, L, half, post, winStart, winEnd };
-    plannedTransitions.push(rec);
-    transitionByOutgoingId.set(out.id, rec);
-    transitionByIncomingId.set(inc.id, rec);
-  }
-  plannedTransitions.sort((a, b) => a.winStart - b.winStart);
-  for (let i = 1; i < plannedTransitions.length; i++) {
-    if (plannedTransitions[i].winStart < plannedTransitions[i - 1].winEnd) {
-      if (!allowCompatSpans) return refusal('transitions');
-      markCompat(plannedTransitions[i].winStart, plannedTransitions[i].L, 'transitions', false);
-    }
-  }
-
-  const { compatSpans, fastSpans, compatFrames, compatReasons } = finalizeSegmentedGeometry({
-    rangeStart,
-    rangeEnd,
-    frames,
-    plannedTransitions,
-    rawCompatSpans,
-    allowCompatSpans,
-  });
-
-  if (compatFrames >= frames) {
-    return refusal(compatReasons[0] ?? 'video-clip-effects');
-  }
-
-  const baseSegments = buildBaseSegmentsForSpans({
-    fastSpans,
-    sortedVideos,
-    transitionByOutgoingId,
-    transitionByIncomingId,
-  });
-
-  if (compatSpans.length > 0 && !baseSegments.some((s) => s.kind === 'video' || s.kind === 'transition')) {
-    return refusal(compatReasons[0] ?? 'video-clip-effects');
-  }
-
-  const mosaics = eligibleMosaics
-    .filter((m) => m.endFrame > rangeStart && m.startFrame < rangeEnd)
-    .sort((a, b) => visualTrackIds.indexOf(b.track) - visualTrackIds.indexOf(a.track) || a.startFrame - b.startFrame);
-
-  const audioTracksInUse = [...new Set(audioItems.map((it) => it.track))];
-  const anySolo = audioTracksInUse.some((id) => tracks[id]?.soloed);
-  const anchorRangesRaw = [];
-  for (const it of audioItems) {
-    const tr = tracks[it.track];
-    const audibleTrack = !tr?.hidden && !tr?.muted && (!anySolo || Boolean(tr?.soloed));
-    if (!audibleTrack) continue;
-    if (tr?.role === 'anchor' && it.src) {
-      anchorRangesRaw.push([it.startFrame, it.startFrame + it.durationInFrames]);
-    }
-  }
-  const anchorRanges = mergeRanges(anchorRangesRaw, rangeStart, rangeEnd);
-  const crossfadePlans = resolveAudioCrossfadePlans(audioItems, audioTransitions, state.assets ?? []);
-
-  const audioSegments = [];
-  for (const item of audioItems) {
-    const tr = tracks[item.track];
-    if (tr?.hidden || tr?.muted || (anySolo && !tr?.soloed)) continue;
-    const volKeyframes = item._volumeKeyframes ?? null;
-    const baseVolume = volKeyframes?.length === 1 ? volKeyframes[0].value : clamp(Number(item.volume ?? 1), 0, 2);
-    const gainDb = Number(tr?.audioRouting?.gainDb ?? 0);
-    const trackGain = Number.isFinite(gainDb) ? 10 ** (gainDb / 20) : 1;
-    const rate = Number(item.playbackRate ?? 1);
-    const cfPlan = crossfadePlans.get(item.id);
-    const extBefore = cfPlan?.beforeFrames ?? 0;
-    const extAfter = cfPlan?.afterFrames ?? 0;
-    const itemStart = item.startFrame - extBefore;
-    const itemEnd = item.startFrame + item.durationInFrames + extAfter;
-    const overlapStart = Math.max(rangeStart, itemStart);
-    const overlapEnd = Math.min(rangeEnd, itemEnd);
-    if (overlapEnd <= overlapStart) continue;
-
-    let duckIntervals = null;
-    let duckFactor = 1;
-    if (anchorRanges.length > 0 && tr?.role === 'follower') {
-      duckFactor = clamp(10 ** ((tr?.audioRouting?.duckDepthDb ?? -12) / 20), 0, 2);
-      if (duckFactor !== 1) {
-        const intervals = [];
-        for (const [a, b] of anchorRanges) {
-          const is = Math.max(overlapStart, a);
-          const ie = Math.min(overlapEnd, b);
-          if (ie > is) intervals.push([(is - overlapStart) / state.fps, (ie - overlapStart) / state.fps]);
-        }
-        if (intervals.length) duckIntervals = intervals;
-      }
-    }
-
-    const crossfades = cfPlan?.curves?.length
-      ? cfPlan.curves
-        .map((c) => ({
-          direction: c.direction,
-          startFrame: c.startFrame - overlapStart,
-          durationFrames: c.duration,
-        }))
-        .filter((c) => c.durationFrames > 0 && c.startFrame + c.durationFrames > 0 && c.startFrame < overlapEnd - overlapStart)
-      : null;
-
-    const sourcesForItem = item.denoisedSrc
-      ? (() => {
-        const mix = voiceIsolationMix(item.denoiseStrength);
-        const out = [];
-        if (mix.dry > 0) out.push({ src: item.src, mixGain: mix.dry });
-        if (mix.wet > 0) out.push({ src: item.denoisedSrc, mixGain: mix.wet });
-        return out;
-      })()
-      : [{ src: item.src, mixGain: 1 }];
-
-    for (const sEntry of sourcesForItem) {
-      const gain = (volKeyframes?.length >= 2 ? 1 : baseVolume) * trackGain * sEntry.mixGain;
-      if (gain <= 0) continue;
-      audioSegments.push({
-        src: sEntry.src,
-        timelineStartFrame: overlapStart,
-        frames: overlapEnd - overlapStart,
-        sourceFrame: (item.srcInFrame ?? 0) + (overlapStart - item.startFrame) * rate,
-        playbackRate: rate,
-        itemDuration: item.durationInFrames,
-        offsetInItem: overlapStart - item.startFrame,
-        fadeInFrames: Math.max(0, Number(item.fadeInFrames ?? 0)),
-        fadeOutFrames: Math.max(0, Number(item.fadeOutFrames ?? 0)),
-        gain,
-        fromVideo: item.kind === 'video',
-        ...(duckIntervals ? { duckIntervals, duckFactor } : {}),
-        ...(crossfades?.length ? { crossfades } : {}),
-        ...(volKeyframes?.length >= 2 ? { volumeKeyframes: volKeyframes } : {}),
-      });
-    }
-  }
-
-  const captionsEnabled = enabledCaptionTrackIndices.length > 0;
-  const hasLegacyCaptions = state.captionsHidden !== true
-    && Boolean(state.captions?.enabled)
-    && !trackIds.some((id) => trackKind(state, id) === 'caption');
-  const watermarkEnabled = Boolean(state.watermark?.enabled && state.watermark.text?.trim());
-  const visibleOverlayInRange = visibleOverlayItems.some(
-    (it) => !(state.captionsHidden === true && it.kind === 'text')
-      && it.startFrame < rangeEnd
-      && it.startFrame + it.durationInFrames > rangeStart,
-  );
-
-  return {
-    eligible: true,
-    renderRoute: 'hybrid',
-    hybridMode: compatSpans.length > 0 ? 'segmented-hybrid' : 'overlay-plates',
-    fps: state.fps,
-    width: state.width,
-    height: state.height,
-    outputWidth,
-    outputHeight,
-    fit: state.fit ?? 'contain',
-    rangeStart,
-    rangeEnd,
-    frames,
-    compatSpans,
-    fastSpans,
-    compatFrames,
-    compatReasons,
-    baseSegments,
-    mosaics,
-    audioSegments,
-    hasCaptions: captionsEnabled || hasLegacyCaptions,
-    hasWatermark: watermarkEnabled,
-    hasOverlays: visibleOverlayInRange || captionsEnabled || hasLegacyCaptions || watermarkEnabled,
-    state,
-    _rebuildForExtraCompat: (extraRawCompatSpans) => {
-      const merged = finalizeSegmentedGeometry({
-        rangeStart,
-        rangeEnd,
-        frames,
-        plannedTransitions,
-        rawCompatSpans: [...rawCompatSpans, ...extraRawCompatSpans],
-        allowCompatSpans: true,
-      });
-      if (merged.compatFrames >= frames) {
-        return refusal(merged.compatReasons[0] ?? 'source-metadata');
-      }
-      const rebuiltBaseSegments = buildBaseSegmentsForSpans({
-        fastSpans: merged.fastSpans,
-        sortedVideos,
-        transitionByOutgoingId,
-        transitionByIncomingId,
-      });
-      if (merged.compatSpans.length > 0 && !rebuiltBaseSegments.some((s) => s.kind === 'video' || s.kind === 'transition')) {
-        return refusal(merged.compatReasons[0] ?? 'source-metadata');
-      }
-      return {
-        ...merged,
-        baseSegments: rebuiltBaseSegments,
-      };
-    },
-  };
-}
-
 /**
  * Create a derived state for rendering ONLY overlay plates (`captions`, `text`, `solid`, `image`, `svg`, `watermark`).
  * Moves stripped `video`, `audio`, and admitted `mosaic` items onto a hidden track instead of deleting them so caption items referencing
  * a video/audio item's `transcript` and `timelineDuration()` keep 100% identical timing!
  */
-export function buildOverlayOnlyState(state) {
+export function buildOverlayOnlyState(state, excludedItemIds = null) {
   const hiddenTrackId = '__cc_hidden_media__';
+  const excluded = excludedItemIds?.length ? new Set(excludedItemIds) : null;
   const trackOrder = Array.isArray(state.trackOrder)
     ? [...state.trackOrder.filter((id) => id !== hiddenTrackId), hiddenTrackId]
     : [...TRACK_ORDER_DEFAULT, hiddenTrackId];
@@ -1299,9 +178,38 @@ export function buildOverlayOnlyState(state) {
       [hiddenTrackId]: { kind: 'video', hidden: true, muted: true },
     },
     items: (state.items ?? []).map((item) => (
-      item.kind === 'video' || item.kind === 'audio' || item.kind === 'mosaic'
+      item.kind === 'video' || item.kind === 'audio' || item.kind === 'mosaic' || excluded?.has(item.id)
         ? { ...item, track: hiddenTrackId }
         : item
+    )),
+  };
+}
+
+export function buildUnderlayOnlyState(state, underlayItemIds = []) {
+  const hiddenTrackId = '__cc_hidden_media__';
+  const keepSet = new Set(underlayItemIds);
+  const trackOrder = Array.isArray(state.trackOrder)
+    ? [...state.trackOrder.filter((id) => id !== hiddenTrackId), hiddenTrackId]
+    : [...TRACK_ORDER_DEFAULT, hiddenTrackId];
+  const tracks = {
+    ...(state.tracks ?? {}),
+    [hiddenTrackId]: { kind: 'video', hidden: true, muted: true },
+  };
+  for (const [id, tr] of Object.entries(tracks)) {
+    if (trackKind(state, id) === 'caption') {
+      tracks[id] = { ...tr, hidden: true, captions: tr?.captions ? { ...tr.captions, enabled: false } : tr?.captions };
+    }
+  }
+  return {
+    ...state,
+    transitions: [],
+    captionsHidden: true,
+    captions: state.captions ? { ...state.captions, enabled: false } : state.captions,
+    watermark: state.watermark ? { ...state.watermark, enabled: false } : state.watermark,
+    trackOrder,
+    tracks,
+    items: (state.items ?? []).map((item) => (
+      keepSet.has(item.id) ? item : { ...item, track: hiddenTrackId }
     )),
   };
 }
@@ -1362,8 +270,6 @@ export function buildSparseOverlayPlan(state, rangeStart, rangeEnd, captionSumma
   const cuts = new Set([rangeStart, rangeEnd]);
   const animated = [];
   const active = [];
-  const tracks = state.tracks ?? {};
-  const captionsHidden = state.captionsHidden === true;
 
   if (state.watermark?.enabled && state.watermark.text?.trim()) {
     active.push([rangeStart, rangeEnd]);
@@ -1376,8 +282,7 @@ export function buildSparseOverlayPlan(state, rangeStart, rangeEnd, captionSumma
 
   for (const item of state.items ?? []) {
     if (!OVERLAY_KINDS.has(item.kind)) continue;
-    if (tracks[item.track]?.hidden) continue;
-    if (captionsHidden && item.kind === 'text') continue;
+    if (!isVisualOverlayItemVisible(state, item)) continue;
     const itemStart = item.startFrame;
     const itemEnd = itemStart + item.durationInFrames;
     const s = Math.max(rangeStart, itemStart);
@@ -1402,7 +307,7 @@ export function buildSparseOverlayPlan(state, rangeStart, rangeEnd, captionSumma
       }
     }
 
-    if (item.zoom || (item.effects?.length ?? 0) > 0) {
+    if (item.kind === 'gif' || item.zoom || (item.effects?.length ?? 0) > 0) {
       animated.push([s, e]);
     } else if (item.keyframes) {
       for (const kfList of Object.values(item.keyframes)) {
@@ -1503,6 +408,167 @@ function encodePng(width, height, colorType, raw) {
   ]);
 }
 
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+/** Inspect the PNG IHDR header without decoding pixel data; returns null for non-PNG stubs. */
+export function inspectPngIhdr(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 33) return null;
+  if (!buf.subarray(0, 8).equals(PNG_SIGNATURE)) return null;
+  if (buf.readUInt32BE(8) !== 13 || buf.toString('ascii', 12, 16) !== 'IHDR') return null;
+  return {
+    width: buf.readUInt32BE(16),
+    height: buf.readUInt32BE(20),
+    bitDepth: buf[24],
+    colorType: buf[25],
+    compression: buf[26],
+    filter: buf[27],
+    interlace: buf[28],
+  };
+}
+
+function paethPredictor(a, b, c) {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  if (pa <= pb && pa <= pc) return a;
+  if (pb <= pc) return b;
+  return c;
+}
+
+function unfilterPngScanlines(inflated, width, height, bpp) {
+  const stride = width * bpp;
+  const rowBytes = 1 + stride;
+  if (inflated.length !== height * rowBytes) return null;
+  const pixels = Buffer.alloc(height * stride);
+  for (let y = 0; y < height; y++) {
+    const srcOff = y * rowBytes;
+    const dstOff = y * stride;
+    const prevOff = (y - 1) * stride;
+    const filterType = inflated[srcOff];
+    for (let i = 0; i < stride; i++) {
+      const raw = inflated[srcOff + 1 + i];
+      const a = i >= bpp ? pixels[dstOff + i - bpp] : 0;
+      const b = y > 0 ? pixels[prevOff + i] : 0;
+      const c = y > 0 && i >= bpp ? pixels[prevOff + i - bpp] : 0;
+      let val;
+      if (filterType === 0) val = raw;
+      else if (filterType === 1) val = (raw + a) & 0xff;
+      else if (filterType === 2) val = (raw + b) & 0xff;
+      else if (filterType === 3) val = (raw + ((a + b) >> 1)) & 0xff;
+      else if (filterType === 4) val = (raw + paethPredictor(a, b, c)) & 0xff;
+      else return null;
+      pixels[dstOff + i] = val;
+    }
+  }
+  return pixels;
+}
+
+function convertSimple8BitPngToRgba(buf, ihdr) {
+  if (ihdr.bitDepth !== 8 || ihdr.interlace !== 0) return null;
+  const srcBpp = ihdr.colorType === 0 ? 1 : ihdr.colorType === 2 ? 3 : ihdr.colorType === 4 ? 2 : 0;
+  if (!srcBpp) return null;
+  const idats = [];
+  let offset = 8;
+  while (offset + 12 <= buf.length) {
+    const len = buf.readUInt32BE(offset);
+    const type = buf.toString('ascii', offset + 4, offset + 8);
+    const dataEnd = offset + 8 + len;
+    if (dataEnd + 4 > buf.length) return null;
+    if (type === 'tRNS') return null;
+    if (type === 'IDAT') idats.push(buf.subarray(offset + 8, dataEnd));
+    offset = dataEnd + 4;
+    if (type === 'IEND') break;
+  }
+  if (!idats.length) return null;
+  const inflated = zlib.inflateSync(Buffer.concat(idats));
+  const pixels = unfilterPngScanlines(inflated, ihdr.width, ihdr.height, srcBpp);
+  if (!pixels) return null;
+  const outRowBytes = 1 + ihdr.width * 4;
+  const outRaw = Buffer.alloc(ihdr.height * outRowBytes);
+  for (let y = 0; y < ihdr.height; y++) {
+    const rowOff = y * outRowBytes;
+    outRaw[rowOff] = 0;
+    for (let x = 0; x < ihdr.width; x++) {
+      const s = (y * ihdr.width + x) * srcBpp;
+      const d = rowOff + 1 + x * 4;
+      if (srcBpp === 3) {
+        outRaw[d] = pixels[s];
+        outRaw[d + 1] = pixels[s + 1];
+        outRaw[d + 2] = pixels[s + 2];
+        outRaw[d + 3] = 255;
+      } else if (srcBpp === 1) {
+        const v = pixels[s];
+        outRaw[d] = v;
+        outRaw[d + 1] = v;
+        outRaw[d + 2] = v;
+        outRaw[d + 3] = 255;
+      } else {
+        const v = pixels[s];
+        outRaw[d] = v;
+        outRaw[d + 1] = v;
+        outRaw[d + 2] = v;
+        outRaw[d + 3] = pixels[s + 1];
+      }
+    }
+  }
+  return encodePng(ihdr.width, ihdr.height, 6, outRaw);
+}
+
+/**
+ * Ensure an overlay/underlay PNG plate is 8-bit non-interlaced RGBA (`colorType = 6`)
+ * at `width x height`. Mixed `rgba` + `rgb24`/`gray` PNGs in a single `ffconcat` input
+ * force FFmpeg filtergraph reconfiguration mid-stream, dropping frames and desyncing clips.
+ */
+export async function normalizePngToRgba({ pngPath, width, height, ffmpegExecutable, signal, run = directCutCommand }) {
+  const buf = await readFile(pngPath);
+  const ihdr = inspectPngIhdr(buf);
+  if (!ihdr) return false;
+  if (ihdr.width === width && ihdr.height === height && ihdr.bitDepth === 8 && ihdr.colorType === 6 && ihdr.interlace === 0) {
+    return false;
+  }
+  const tmpPath = `${pngPath}.rgba.tmp.png`;
+  const converted = ihdr.width === width && ihdr.height === height ? convertSimple8BitPngToRgba(buf, ihdr) : null;
+  if (converted) {
+    await writeFile(tmpPath, converted);
+    await rename(tmpPath, pngPath);
+    return true;
+  }
+  if (!ffmpegExecutable) {
+    throw new Error(`Cannot normalize PNG plate ${pngPath} (colorType=${ihdr.colorType}, ${ihdr.width}x${ihdr.height}) without ffmpegExecutable`);
+  }
+  await run(ffmpegExecutable, [
+    '-hide_banner', '-loglevel', 'error', '-nostdin',
+    '-i', pngPath,
+    '-vf', `scale=${width}:${height}:flags=lanczos,format=rgba`,
+    '-pix_fmt', 'rgba',
+    '-frames:v', '1',
+    '-y', tmpPath,
+  ], { signal, timeoutMs: 30_000, collect: false });
+  await rename(tmpPath, pngPath);
+  return true;
+}
+
+export async function normalizeOverlayPlatesToRgba({ plateFiles, width, height, ffmpegExecutable, signal, run = directCutCommand }) {
+  if (!plateFiles || plateFiles.size === 0) return 0;
+  const uniquePaths = [...new Set([...plateFiles.values()].filter((p) => typeof p === 'string' && existsSync(p)))];
+  if (!uniquePaths.length) return 0;
+  let nextIdx = 0;
+  let convertedCount = 0;
+  const workers = Array.from({ length: Math.min(4, uniquePaths.length) }, async () => {
+    while (true) {
+      signal?.throwIfAborted();
+      const idx = nextIdx++;
+      if (idx >= uniquePaths.length) return;
+      if (await normalizePngToRgba({ pngPath: uniquePaths[idx], width, height, ffmpegExecutable, signal, run })) {
+        convertedCount += 1;
+      }
+    }
+  });
+  await Promise.all(workers);
+  return convertedCount;
+}
+
 /** Generate a minimal valid fully transparent RGBA PNG image of given dimensions (pure Node zlib). */
 function createBlankTransparentPng(width, height) {
   const rowBytes = 1 + width * 4; // filter byte (0) + RGBA zeros
@@ -1556,20 +622,11 @@ function createFeatheredShapeMaskPng({
   return encodePng(rw, rh, 0, raw);
 }
 
-export function buildClipFilterChain(seg, segIdx, fps, width, height, options = {}) {
-  const durationSec = (seg.frames / fps).toFixed(6);
-  if (seg.kind === 'black') {
-    return {
-      usesInput: false,
-      filter: `color=c=black:s=${width}x${height}:r=${fps}:d=${durationSec},format=yuv420p,trim=end_frame=${seg.frames},setpts=PTS-STARTPTS,setsar=1[bv${segIdx}]`,
-      outLabel: `[bv${segIdx}]`,
-    };
-  }
+export function buildVideoTrimSteps(seg, fps) {
   const rate = seg.playbackRate ?? 1;
   const isRetimed = Math.abs(rate - 1) >= 1e-6;
   const vf = seg.visualFade;
   const loc0 = seg.clipLocalStart ?? 0;
-  const loc1 = loc0 + seg.frames;
   const rawFadePre = vf ? Math.max(
     0,
     vf.fadeIn && vf.fadeIn.until > loc0 && vf.fadeIn.from < loc0 ? Math.round(loc0 - vf.fadeIn.from) : 0,
@@ -1579,7 +636,10 @@ export function buildClipFilterChain(seg, segIdx, fps, width, height, options = 
   let fadePre = 0;
   let seekSec = 0;
   const steps = [];
-  if (!isRetimed) {
+  const useIntegerFrameFastTrim = !isRetimed
+    && !seg.sourceIsVfr
+    && Number.isInteger(seg.sourceFrame);
+  if (useIntegerFrameFastTrim) {
     fadePre = Math.min(seg.sourceFrame, rawFadePre);
     const preroll = Math.min(seg.sourceFrame - fadePre, PREROLL_FRAMES);
     const localTrimStart = preroll;
@@ -1589,32 +649,97 @@ export function buildClipFilterChain(seg, segIdx, fps, width, height, options = 
     seekSec = (seg.sourceFrame - fadePre - preroll) / fps;
   } else {
     fadePre = Math.min(Math.floor(seg.sourceFrame / rate), rawFadePre);
-    const srcStartFrame = Math.max(0, seg.sourceFrame - fadePre * rate);
-    const seekFrameInt = Math.max(0, Math.floor(srcStartFrame) - PREROLL_FRAMES);
-    seekSec = seekFrameInt / fps;
-    const relStartSec = Math.max(0, (srcStartFrame - seekFrameInt) / fps);
+    const exactSrcStartFrame = Math.max(0, seg.sourceFrame - fadePre * rate);
+    const exactSrcStartSec = exactSrcStartFrame / fps;
+    const prerollSec = Math.min(exactSrcStartSec, Math.max(0.5, PREROLL_FRAMES / fps));
+    seekSec = Number(Math.max(0, exactSrcStartSec - prerollSec).toFixed(6));
+    const relStartSec = Math.max(0, exactSrcStartSec - seekSec);
     const relDurSec = ((fadePre + seg.frames) * rate) / fps;
+    const shiftExpr = relStartSec > 1e-6 ? `(PTS-${relStartSec.toFixed(6)}/TB)` : '(PTS-STARTPTS)';
     steps.push(
-      `trim=start=${relStartSec.toFixed(6)}:end=${(relStartSec + relDurSec + 0.1).toFixed(6)}`,
-      `setpts=(PTS-STARTPTS)/${rate.toFixed(6)}`,
-      `fps=${fps}`,
-      'tpad=stop_mode=clone:stop_duration=0.1',
-      `trim=end_frame=${fadePre + seg.frames}`,
+      `trim=end=${(relStartSec + relDurSec + 0.25).toFixed(6)}`,
+      `setpts=${shiftExpr}/${rate.toFixed(6)}`,
+      `fps=${fps}:start_time=0`,
+      'tpad=stop_mode=clone:stop_duration=0.15',
+      `trim=start_frame=0:end_frame=${fadePre + seg.frames}`,
       'setpts=PTS-STARTPTS',
       'setsar=1',
     );
   }
-  if (seg.sourcePixFmt && seg.sourcePixFmt !== 'yuv420p') {
-    const inRange = seg.sourceColorRange === 'pc' ? 'pc' : 'tv';
-    steps.push(`scale=in_range=${inRange}:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int`, 'format=yuv420p');
-  }
+  return { fadePre, seekSec, steps };
+}
 
+function videoDecoderArgs(seg) {
+  if (!seg?.sourceHasAlpha) return [];
+  if (seg.sourceCodec === 'vp9') return ['-c:v', 'libvpx-vp9'];
+  if (seg.sourceCodec === 'vp8') return ['-c:v', 'libvpx'];
+  return [];
+}
+
+function appendRgbFilterSteps(rgbSteps, filters, brightnessMul = 1, saturateMul = 1) {
+  const b = Number(filters?.brightness ?? 1) * brightnessMul;
+  const c = Number(filters?.contrast ?? 1);
+  const s = Number(filters?.saturate ?? 1) * saturateMul;
+  if (Math.abs(b - 1) > 1e-6) {
+    rgbSteps.push(`lutrgb=r='clip(val*${b},0,255)':g='clip(val*${b},0,255)':b='clip(val*${b},0,255)'`);
+  }
+  if (Math.abs(c - 1) > 1e-6) {
+    rgbSteps.push(`lutrgb=r='clip(127.5+${c}*(val-127.5),0,255)':g='clip(127.5+${c}*(val-127.5),0,255)':b='clip(127.5+${c}*(val-127.5),0,255)'`);
+  }
+  if (Math.abs(s - 1) > 1e-6) {
+    const rr = (0.2126 + 0.7874 * s).toFixed(6);
+    const rg = (0.7152 - 0.7152 * s).toFixed(6);
+    const rb = (0.0722 - 0.0722 * s).toFixed(6);
+    const gr = (0.2126 - 0.2126 * s).toFixed(6);
+    const gg = (0.7152 + 0.2848 * s).toFixed(6);
+    const gb = (0.0722 - 0.0722 * s).toFixed(6);
+    const br = (0.2126 - 0.2126 * s).toFixed(6);
+    const bg = (0.7152 - 0.7152 * s).toFixed(6);
+    const bb = (0.0722 + 0.9278 * s).toFixed(6);
+    rgbSteps.push(`colorchannelmixer=rr=${rr}:rg=${rg}:rb=${rb}:gr=${gr}:gg=${gg}:gb=${gb}:br=${br}:bg=${bg}:bb=${bb}`);
+  }
+}
+
+export function buildClipFilterChain(seg, segIdx, fps, width, height, options = {}) {
+  const durationSec = (seg.frames / fps).toFixed(6);
+  if (seg.kind === 'black') {
+    return {
+      usesInput: false,
+      filter: `color=c=black:s=${width}x${height}:r=${fps}:d=${durationSec},format=yuv420p,trim=end_frame=${seg.frames},setpts=PTS-STARTPTS,setsar=1[bv${segIdx}]`,
+      outLabel: `[bv${segIdx}]`,
+    };
+  }
+  const vf = seg.visualFade;
+  const loc0 = seg.clipLocalStart ?? 0;
+  const loc1 = loc0 + seg.frames;
+  const { fadePre, seekSec, steps } = buildVideoTrimSteps(seg, fps);
+  const decoderArgs = videoDecoderArgs(seg);
+  const bg = seg.backgroundFill ?? null;
+  const effectiveFit = bg ? 'contain' : seg.fit;
+  const borderRadius = Math.max(0, Number(seg.transform?.borderRadius ?? 0));
+  const rotDeg = Number(seg.transform?.rotation ?? 0) % 360;
+  const hasRotation = Math.abs(rotDeg) > 1e-4;
+  const sourceWidth = Number(seg.sourceWidth ?? width);
+  const sourceHeight = Number(seg.sourceHeight ?? height);
+  const fgRatio = effectiveFit === 'cover'
+    ? Math.max(width / sourceWidth, height / sourceHeight)
+    : Math.min(width / sourceWidth, height / sourceHeight);
+  const estFrameW = effectiveFit === 'cover' ? width : Math.max(2, Math.round(sourceWidth * fgRatio));
+  const estFrameH = effectiveFit === 'cover' ? height : Math.max(2, Math.round(sourceHeight * fgRatio));
+  const resolvedRadius = Math.min(borderRadius, Math.max(0, Math.floor(Math.min(estFrameW, estFrameH) / 2)));
+  const enhancedPath = Boolean(seg.sourceHasAlpha || bg || resolvedRadius > 0 || hasRotation);
+
+  const rgbInSteps = ['scale=in_color_matrix=bt709:in_range=tv:flags=accurate_rnd+full_chroma_int', 'format=rgb24'];
+  const rgbOutSteps = ['scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int', 'format=yuv420p'];
+  const blurs = seg.localGaussianBlurs ?? [];
+  const f = seg.filters;
+  const opacity = seg.transform?.opacity ?? 1;
   const crop = seg.transform?.crop;
   const cx = crop ? crop.x : 0;
   const cy = crop ? crop.y : 0;
   const cw = crop ? crop.width : width;
   const ch = crop ? crop.height : height;
-  if (cw <= 0 || ch <= 0) {
+  if (!bg && (cw <= 0 || ch <= 0)) {
     return {
       usesInput: false,
       filter: `color=c=black:s=${width}x${height}:r=${fps}:d=${durationSec},format=yuv420p,trim=end_frame=${seg.frames},setpts=PTS-STARTPTS,setsar=1[bv${segIdx}]`,
@@ -1635,7 +760,7 @@ export function buildClipFilterChain(seg, segIdx, fps, width, height, options = 
   const visY1 = Math.min(height, dy + scaledH);
   const visW = visX1 - visX0;
   const visH = visY1 - visY0;
-  if (visW <= 0 || visH <= 0) {
+  if (!bg && !hasRotation && (visW <= 0 || visH <= 0)) {
     return {
       usesInput: false,
       filter: `color=c=black:s=${width}x${height}:r=${fps}:d=${durationSec},format=yuv420p,trim=end_frame=${seg.frames},setpts=PTS-STARTPTS,setsar=1[bv${segIdx}]`,
@@ -1643,30 +768,363 @@ export function buildClipFilterChain(seg, segIdx, fps, width, height, options = 
     };
   }
 
-  const blurs = seg.localGaussianBlurs ?? [];
-  const sourceWidth = Number(seg.sourceWidth ?? width);
-  const sourceHeight = Number(seg.sourceHeight ?? height);
+  if (enhancedPath) {
+    if (seg.sourceHasAlpha) {
+      if (RGB_ALPHA_PIX_FMTS.test(String(seg.sourcePixFmt ?? ''))) {
+        steps.push('scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int', 'format=yuva444p');
+      } else {
+        steps.push('format=yuva444p');
+      }
+    } else if (seg.sourcePixFmt && seg.sourcePixFmt !== 'yuv420p') {
+      const inRange = seg.sourceColorRange === 'pc' ? 'pc' : 'tv';
+      steps.push(`scale=in_range=${inRange}:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int`, 'format=yuv420p');
+    }
+
+    const chainParts = [];
+    let bgOutLabel;
+    let activeSteps;
+    if (bg) {
+      const bgsLabel = `bgs${segIdx}`;
+      const fgInLabel = `fgi${segIdx}`;
+      steps.push(`split=2[${bgsLabel}][${fgInLabel}]`);
+      chainParts.push(steps.join(','));
+      const osW = Math.max(2, Math.round(width * bg.overscanScale));
+      const osH = Math.max(2, Math.round(height * bg.overscanScale));
+      const bgSteps = [
+        `[${bgsLabel}]scale=${osW}:${osH}:force_original_aspect_ratio=increase:flags=bilinear`,
+        `crop=${width}:${height}`,
+      ];
+      const bgRgbSteps = [];
+      appendRgbFilterSteps(bgRgbSteps, f, bg.brightness, bg.saturate);
+      if (bgRgbSteps.length > 0) bgSteps.push(...rgbInSteps, ...bgRgbSteps, ...rgbOutSteps);
+      const totalBlur = bg.blurPx + (f?.blur ?? 0);
+      if (totalBlur >= 8) {
+        const dw = Math.max(2, Math.round(width / 4) & ~1);
+        const dh = Math.max(2, Math.round(height / 4) & ~1);
+        bgSteps.push(`scale=${dw}:${dh}:flags=bilinear`, `gblur=sigma=${(totalBlur / 4).toFixed(3)}:steps=2`, `scale=${width}:${height}:flags=bilinear`);
+      } else if (totalBlur > 0) {
+        bgSteps.push(`gblur=sigma=${totalBlur.toFixed(3)}:steps=2`);
+      }
+      bgSteps.push('format=yuv420p');
+      bgOutLabel = `bgcov${segIdx}`;
+      chainParts.push(`${bgSteps.join(',')}[${bgOutLabel}]`);
+      activeSteps = [`[${fgInLabel}]format=yuva444p`];
+    } else {
+      steps.push('format=yuva444p');
+      activeSteps = steps;
+      const baseFrameCount = fadePre + seg.frames;
+      const baseDurationSec = (baseFrameCount / fps).toFixed(6);
+      bgOutLabel = `bgblk${segIdx}`;
+      chainParts.push(`color=c=black:s=${width}x${height}:r=${fps}:d=${baseDurationSec},format=yuv420p,trim=end_frame=${baseFrameCount},setpts=PTS-STARTPTS,setsar=1[${bgOutLabel}]`);
+    }
+
+    let frameW = width;
+    let frameH = height;
+    let needsPadToCanvas = false;
+    if (sourceWidth !== width || sourceHeight !== height) {
+      if (effectiveFit === 'cover') {
+        activeSteps.push(`scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos`, `crop=${width}:${height}`);
+      } else {
+        frameW = estFrameW;
+        frameH = estFrameH;
+        activeSteps.push(`scale=${frameW}:${frameH}:flags=lanczos`);
+        needsPadToCanvas = frameW !== width || frameH !== height;
+      }
+    }
+
+    const applyAlphaRgb = (rgbSteps, tag) => {
+      const sRgb = `crgbs_${segIdx}_${tag}`;
+      const sAlp = `calps_${segIdx}_${tag}`;
+      const oRgb = `crgbo_${segIdx}_${tag}`;
+      const oAlp = `calpo_${segIdx}_${tag}`;
+      activeSteps.push('format=yuva444p', `split=2[${sRgb}][${sAlp}]`);
+      chainParts.push(
+        activeSteps.join(','),
+        `[${sRgb}]${rgbInSteps.join(',')},${rgbSteps.join(',')}[${oRgb}]`,
+        `[${sAlp}]alphaextract[${oAlp}]`,
+      );
+      activeSteps = [`[${oRgb}][${oAlp}]alphamerge=eof_action=repeat`, 'format=yuva444p'];
+    };
+    const applyAlphaMask = (maskSpec, tag) => {
+      const fgLabel = `cmfg_${segIdx}_${tag}`;
+      const sBase = `cmb_${segIdx}_${tag}`;
+      const sOrigA = `cmoa_${segIdx}_${tag}`;
+      const combA = `cmca_${segIdx}_${tag}`;
+      const mLabel = `cmm_${segIdx}_${tag}`;
+      const maskInLabel = options.registerBlurMask
+        ? options.registerBlurMask(maskSpec)
+        : `[cmm_in_${segIdx}_${tag}]`;
+      activeSteps.push('format=yuva444p', `split=2[${fgLabel}][${sBase}]`);
+      chainParts.push(
+        activeSteps.join(','),
+        `[${sBase}]alphaextract[${sOrigA}]`,
+        `${maskInLabel}format=gray[${mLabel}]`,
+        `[${sOrigA}][${mLabel}]blend=all_expr='(A*B)/255'[${combA}]`,
+      );
+      activeSteps = [`[${fgLabel}][${combA}]alphamerge=eof_action=repeat`, 'format=yuva444p'];
+    };
+
+    for (let bi = 0; bi < blurs.length; bi++) {
+      const b = blurs[bi];
+      if (b.kind === 'pixelate') {
+        const bs = Math.max(1, Math.round(b.blockSize));
+        if (bs > 1) {
+          const dw = Math.max(1, Math.round(frameW / bs));
+          const dh = Math.max(1, Math.round(frameH / bs));
+          activeSteps.push('format=yuva444p', `scale=${dw}:${dh}:flags=neighbor`, `scale=${frameW}:${frameH}:flags=neighbor`, 'format=yuva444p');
+        }
+        continue;
+      }
+      if (b.kind === 'lut3d') {
+        const intensity = clamp(Number(b.intensity ?? 1), 0, 1);
+        if (intensity <= 0) continue;
+        const cubePath = b.cubePath ?? options.resolveLutPath?.(b.cubeRelPath);
+        if (!cubePath) continue;
+        const escaped = escapeFfmpegFilterPath(cubePath);
+        if (intensity >= 0.9999) {
+          applyAlphaRgb([`lut3d=file='${escaped}':interp=tetrahedral`], `l${bi}`);
+        } else {
+          const lBase = `clutb_${segIdx}_${bi}`;
+          const lWet = `clutw_${segIdx}_${bi}`;
+          const lGraded = `clutg_${segIdx}_${bi}`;
+          const dryW = (1 - intensity).toFixed(6);
+          const wetW = intensity.toFixed(6);
+          applyAlphaRgb([
+            `split=2[${lBase}][${lWet}]`,
+            `[${lWet}]lut3d=file='${escaped}':interp=tetrahedral[${lGraded}]`,
+            `[${lBase}][${lGraded}]blend=all_expr='A*${dryW}+B*${wetW}'`,
+          ], `l${bi}`);
+        }
+        continue;
+      }
+      if (b.kind === 'shape-mask') {
+        const halfW = b.shape === 'circle'
+          ? Math.max(0.5, b.radius * Math.min(frameW, frameH) * 0.5)
+          : Math.max(0.5, (b.widthRatio * frameW) / 2);
+        const halfH = b.shape === 'circle' ? halfW : Math.max(0.5, (b.heightRatio * frameH) / 2);
+        applyAlphaMask({
+          shape: b.shape === 'circle' ? 'ellipse' : 'rectangle',
+          rw: frameW,
+          rh: frameH,
+          localCx: b.centerX * frameW,
+          localCy: b.centerY * frameH,
+          halfW,
+          halfH,
+          feather: b.feather,
+          opacity: 1,
+          cornerRadius: b.cornerRadius ?? 0,
+          invert: Boolean(b.invert),
+          centeredFeather: true,
+        }, `sm${bi}`);
+        continue;
+      }
+      const bCx = b.centerX * frameW;
+      const bCy = b.centerY * frameH;
+      const halfW = (b.widthRatio * frameW) / 2;
+      const halfH = (b.heightRatio * frameH) / 2;
+      const x0 = Math.max(0, Math.floor(bCx - halfW));
+      const y0 = Math.max(0, Math.floor(bCy - halfH));
+      const x1 = Math.min(frameW, Math.ceil(bCx + halfW));
+      const y1 = Math.min(frameH, Math.ceil(bCy + halfH));
+      const rw = x1 - x0;
+      const rh = y1 - y0;
+      if (rw < 2 || rh < 2) continue;
+      const bLabel = `cgbb_${segIdx}_${bi}`;
+      const sLabel = `cgbs_${segIdx}_${bi}`;
+      const rLabel = `cgbr_${segIdx}_${bi}`;
+      if (b.kind === 'local-mosaic') {
+        const bs = Math.max(1, Math.round(b.blockSize));
+        if (bs <= 1) continue;
+        const dw = Math.max(1, Math.round(rw / bs));
+        const dh = Math.max(1, Math.round(rh / bs));
+        if (b.feather === 0 && x0 === 0 && y0 === 0 && x1 === frameW && y1 === frameH) {
+          activeSteps.push('format=yuva444p', `scale=${dw}:${dh}:flags=neighbor`, `scale=${frameW}:${frameH}:flags=neighbor`, 'format=yuva444p');
+          continue;
+        }
+        activeSteps.push(`split=2[${bLabel}][${sLabel}]`);
+        chainParts.push(activeSteps.join(','));
+        chainParts.push(
+          `[${sLabel}]format=yuva444p,crop=${rw}:${rh}:${x0}:${y0},scale=${dw}:${dh}:flags=neighbor,scale=${rw}:${rh}:flags=neighbor[${rLabel}]`,
+        );
+      } else {
+        if (b.feather === 0 && x0 === 0 && y0 === 0 && x1 === frameW && y1 === frameH) {
+          activeSteps.push(`gblur=sigma=${b.sigma}:steps=2`);
+          continue;
+        }
+        const pad = Math.ceil(b.sigma * 3);
+        const px0 = Math.max(0, x0 - pad);
+        const py0 = Math.max(0, y0 - pad);
+        const px1 = Math.min(frameW, x1 + pad);
+        const py1 = Math.min(frameH, y1 + pad);
+        const pw = px1 - px0;
+        const ph = py1 - py0;
+        const ix = x0 - px0;
+        const iy = y0 - py0;
+        activeSteps.push(`split=2[${bLabel}][${sLabel}]`);
+        chainParts.push(activeSteps.join(','));
+        chainParts.push(
+          `[${sLabel}]format=yuva444p,crop=${pw}:${ph}:${px0}:${py0},gblur=sigma=${b.sigma}:steps=2,crop=${rw}:${rh}:${ix}:${iy}[${rLabel}]`,
+        );
+      }
+      if (b.feather > 0) {
+        const maskLabel = options.registerBlurMask
+          ? options.registerBlurMask({ shape: 'rectangle', rw, rh, localCx: bCx - x0, localCy: bCy - y0, halfW, halfH, feather: b.feather, opacity: 1 })
+          : `[cgbm_in_${segIdx}_${bi}]`;
+        const mLabel = `cgbm_${segIdx}_${bi}`;
+        const aLabel = `cgba_${segIdx}_${bi}`;
+        chainParts.push(`${maskLabel}format=gray[${mLabel}]`, `[${rLabel}][${mLabel}]alphamerge=eof_action=repeat[${aLabel}]`);
+        activeSteps = [`[${bLabel}][${aLabel}]overlay=${x0}:${y0}:format=yuv444`, 'format=yuva444p'];
+      } else {
+        activeSteps = [`[${bLabel}][${rLabel}]overlay=${x0}:${y0}:format=yuv444`, 'format=yuva444p'];
+      }
+    }
+
+    if (resolvedRadius > 0) {
+      applyAlphaMask({
+        shape: 'rectangle',
+        rw: frameW,
+        rh: frameH,
+        localCx: frameW / 2,
+        localCy: frameH / 2,
+        halfW: frameW / 2,
+        halfH: frameH / 2,
+        feather: 1,
+        cornerRadius: resolvedRadius,
+        opacity: 1,
+        centeredFeather: true,
+      }, 'br');
+    }
+    if (needsPadToCanvas) {
+      activeSteps.push('format=yuva444p', `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`);
+    }
+    if (seg.clipMask) {
+      applyAlphaMask({ ...seg.clipMask, opacity: 1 }, 'cm');
+    }
+    if (crop) {
+      if (cw <= 0 || ch <= 0) {
+        activeSteps.push('format=yuva444p', `lut=a='0'`);
+      } else if (hasRotation) {
+        activeSteps.push('format=yuva444p', `crop=${cw}:${ch}:${cx}:${cy}`, `pad=${width}:${height}:${cx}:${cy}:color=0x00000000`);
+      } else {
+        activeSteps.push('format=yuva444p', `crop=${cw}:${ch}:${cx}:${cy}`);
+      }
+    }
+    if (f) {
+      const rgbSteps = [];
+      appendRgbFilterSteps(rgbSteps, f, 1, 1);
+      if (rgbSteps.length > 0) applyAlphaRgb(rgbSteps, 'flt');
+      if (f.blur > 0) activeSteps.push(`gblur=sigma=${f.blur}`);
+    }
+    if (!bg && opacity < 1) {
+      activeSteps.push('format=yuva444p', `lut=a='clip(val*${opacity},0,255)'`);
+    }
+
+    const fgReadyLabel = `fgrdy${segIdx}`;
+    let compSteps;
+    if (hasRotation) {
+      const scaledCanvasW = Math.max(2, Math.round(width * sx));
+      const scaledCanvasH = Math.max(2, Math.round(height * sy));
+      if (scaledCanvasW !== width || scaledCanvasH !== height) {
+        activeSteps.push(`scale=${scaledCanvasW}:${scaledCanvasH}:flags=bilinear`);
+      }
+      const rad = (rotDeg * Math.PI) / 180;
+      activeSteps.push('format=yuva444p', `rotate=${rad.toFixed(8)}:ow=rotw(${rad.toFixed(8)}):oh=roth(${rad.toFixed(8)}):c=none`);
+      const shiftX = Math.round((x / 100) * width);
+      const shiftY = Math.round((y / 100) * height);
+      chainParts.push(`${activeSteps.join(',')}[${fgReadyLabel}]`);
+      compSteps = [`[${bgOutLabel}][${fgReadyLabel}]overlay=x=(W-w)/2+(${shiftX}):y=(H-h)/2+(${shiftY}):shortest=1:format=yuv420`];
+    } else if (visW <= 0 || visH <= 0) {
+      chainParts.push(`${activeSteps.join(',')},nullsink`);
+      compSteps = [`[${bgOutLabel}]setsar=1`];
+    } else {
+      if (scaledW !== cw || scaledH !== ch) activeSteps.push(`scale=${scaledW}:${scaledH}:flags=bilinear`);
+      if (visW !== scaledW || visH !== scaledH) {
+        activeSteps.push('format=yuva444p', `crop=${visW}:${visH}:${visX0 - dx}:${visY0 - dy}`);
+      }
+      chainParts.push(`${activeSteps.join(',')}[${fgReadyLabel}]`);
+      compSteps = [`[${bgOutLabel}][${fgReadyLabel}]overlay=${visX0}:${visY0}:shortest=1:format=yuv420`];
+    }
+
+    if (bg && opacity < 1) {
+      compSteps.push(...rgbInSteps, `lutrgb=r='val*${opacity}':g='val*${opacity}':b='val*${opacity}'`, ...rgbOutSteps);
+    }
+
+    let compPrefix = '';
+    const hasIn = Boolean(vf?.fadeIn && vf.fadeIn.until > loc0 && vf.fadeIn.from < loc1);
+    const hasOut = Boolean(vf?.fadeOut && vf.fadeOut.until > loc0 && vf.fadeOut.from < loc1);
+    if (hasIn || hasOut) {
+      const decodeLoc0 = loc0 - fadePre;
+      const inEnd = hasIn ? Math.min(seg.frames, Math.ceil(vf.fadeIn.until - loc0)) : 0;
+      const outStart = hasOut ? Math.max(0, Math.floor(vf.fadeOut.from - loc0)) : seg.frames;
+      const fadeFrameCount = (hasIn ? inEnd : 0) + (hasOut ? seg.frames - outStart : 0);
+      if (inEnd < outStart && fadeFrameCount * 2 < seg.frames) {
+        const parts = [];
+        if (hasIn) parts.push({ label: `cfi${segIdx}`, a: 0, b: fadePre + inEnd, trimAfter: fadePre, kind: 'in' });
+        if (outStart > inEnd) parts.push({ label: `cfm${segIdx}`, a: fadePre + inEnd, b: fadePre + outStart, trimAfter: 0, kind: 'mid' });
+        if (hasOut) parts.push({ label: `cfo${segIdx}`, a: fadePre + outStart, b: fadePre + seg.frames, trimAfter: outStart === 0 ? fadePre : 0, kind: 'out' });
+        if (parts.length > 1) {
+          const splitLabels = parts.map((p) => `[s${p.label}]`).join('');
+          const subChains = parts.map((p) => {
+            const base = `[s${p.label}]trim=start_frame=${p.a}:end_frame=${p.b},setpts=PTS-STARTPTS`;
+            if (p.kind === 'mid') return `${base},setsar=1[${p.label}]`;
+            const fadeCfg = p.kind === 'in'
+              ? `fade=t=in:s=${Math.max(0, Math.round(vf.fadeIn.from - (loc0 + p.a - fadePre)))}:n=${Math.max(1, Math.round(vf.fadeIn.until - vf.fadeIn.from))}:c=black`
+              : `fade=t=out:s=${Math.max(0, Math.round(vf.fadeOut.from - (loc0 + p.a - fadePre)))}:n=${Math.max(1, Math.round(vf.fadeOut.until - vf.fadeOut.from))}:c=black`;
+            const post = p.trimAfter > 0 ? `,trim=start_frame=${p.trimAfter}:end_frame=${p.b - p.a},setpts=PTS-STARTPTS` : '';
+            return `${base},${rgbInSteps.join(',')},${fadeCfg}${post},${rgbOutSteps.join(',')},setsar=1[${p.label}]`;
+          });
+          compPrefix = `${compSteps.join(',')},split=${parts.length}${splitLabels};${subChains.join(';')};${parts.map((p) => `[${p.label}]`).join('')}concat=n=${parts.length}:v=1:a=0,setsar=1`;
+        }
+      }
+      if (!compPrefix) {
+        compSteps.push(...rgbInSteps);
+        if (hasIn) {
+          const s = Math.max(0, Math.round(vf.fadeIn.from - decodeLoc0));
+          const n = Math.max(1, Math.round(vf.fadeIn.until - vf.fadeIn.from));
+          compSteps.push(`fade=t=in:s=${s}:n=${n}:c=black`);
+        }
+        if (hasOut) {
+          const s = Math.max(0, Math.round(vf.fadeOut.from - decodeLoc0));
+          const n = Math.max(1, Math.round(vf.fadeOut.until - vf.fadeOut.from));
+          compSteps.push(`fade=t=out:s=${s}:n=${n}:c=black`);
+        }
+        if (fadePre > 0) compSteps.push(`trim=start_frame=${fadePre}:end_frame=${fadePre + seg.frames}`, 'setpts=PTS-STARTPTS');
+        compSteps.push(...rgbOutSteps);
+      }
+    }
+    const tailFilter = compPrefix ? `${compPrefix}[bv${segIdx}]` : `${compSteps.join(',')},setsar=1[bv${segIdx}]`;
+    const fullFilter = `${chainParts.join(';')};${tailFilter}`;
+    return {
+      usesInput: true,
+      seekSec,
+      decoderArgs,
+      filter: fullFilter,
+      outLabel: `[bv${segIdx}]`,
+    };
+  }
+
+  if (seg.sourcePixFmt && seg.sourcePixFmt !== 'yuv420p') {
+    const inRange = seg.sourceColorRange === 'pc' ? 'pc' : 'tv';
+    steps.push(`scale=in_range=${inRange}:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int`, 'format=yuv420p');
+  }
+
   let frameW = width;
   let frameH = height;
   let needsLetterboxPad = false;
   if (sourceWidth !== width || sourceHeight !== height) {
-    if (seg.fit !== 'cover' && blurs.length > 0) {
-      const ratio = Math.min(width / sourceWidth, height / sourceHeight);
-      frameW = Math.max(2, Math.round(sourceWidth * ratio));
-      frameH = Math.max(2, Math.round(sourceHeight * ratio));
+    if (effectiveFit !== 'cover' && blurs.length > 0) {
+      frameW = estFrameW;
+      frameH = estFrameH;
       steps.push(`scale=${frameW}:${frameH}:flags=lanczos`);
       needsLetterboxPad = frameW !== width || frameH !== height;
     } else {
-      const mode = seg.fit === 'cover' ? 'increase' : 'decrease';
+      const mode = effectiveFit === 'cover' ? 'increase' : 'decrease';
       const scale = `scale=${width}:${height}:force_original_aspect_ratio=${mode}:flags=lanczos`;
-      steps.push(seg.fit === 'cover'
+      steps.push(effectiveFit === 'cover'
         ? `${scale},crop=${width}:${height}`
         : `${scale},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black`);
     }
   }
-
-  const rgbInSteps = ['scale=in_color_matrix=bt709:in_range=tv:flags=accurate_rnd+full_chroma_int', 'format=rgb24'];
-  const rgbOutSteps = ['scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int', 'format=yuv420p'];
 
   const chainParts = [];
   let activeSteps = steps;
@@ -1827,6 +1285,18 @@ export function buildClipFilterChain(seg, segIdx, fps, width, height, options = 
   if (needsLetterboxPad) {
     activeSteps.push(`pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black`);
   }
+  if (seg.sourceHasAlpha) {
+    const fgLabel = `abfg${segIdx}`;
+    const bgLabel = `abbg${segIdx}`;
+    const baseFrameCount = fadePre + seg.frames;
+    const baseDurationSec = (baseFrameCount / fps).toFixed(6);
+    activeSteps.push('format=yuva444p');
+    chainParts.push(
+      `${activeSteps.join(',')}[${fgLabel}]`,
+      `color=c=black:s=${width}x${height}:r=${fps}:d=${baseDurationSec},format=yuv420p,trim=end_frame=${baseFrameCount},setpts=PTS-STARTPTS,setsar=1[${bgLabel}]`,
+    );
+    activeSteps = [`[${bgLabel}][${fgLabel}]overlay=0:0:shortest=1:format=yuv420`];
+  }
   if (seg.clipMask) {
     const cm = seg.clipMask;
     const maskFrameCount = fadePre + seg.frames;
@@ -1859,31 +1329,9 @@ export function buildClipFilterChain(seg, segIdx, fps, width, height, options = 
   }
   if (crop) activeSteps.push(`crop=${cw}:${ch}:${cx}:${cy}`);
 
-  const f = seg.filters;
-  const opacity = seg.transform?.opacity ?? 1;
   if (f || opacity < 1) {
     activeSteps.push(...rgbInSteps);
-    if (f && f.brightness !== 1) {
-      const b = f.brightness;
-      activeSteps.push(`lutrgb=r='clip(val*${b},0,255)':g='clip(val*${b},0,255)':b='clip(val*${b},0,255)'`);
-    }
-    if (f && f.contrast !== 1) {
-      const c = f.contrast;
-      activeSteps.push(`lutrgb=r='clip(127.5+${c}*(val-127.5),0,255)':g='clip(127.5+${c}*(val-127.5),0,255)':b='clip(127.5+${c}*(val-127.5),0,255)'`);
-    }
-    if (f && f.saturate !== 1) {
-      const s = f.saturate;
-      const rr = (0.2126 + 0.7874 * s).toFixed(6);
-      const rg = (0.7152 - 0.7152 * s).toFixed(6);
-      const rb = (0.0722 - 0.0722 * s).toFixed(6);
-      const gr = (0.2126 - 0.2126 * s).toFixed(6);
-      const gg = (0.7152 + 0.2848 * s).toFixed(6);
-      const gb = (0.0722 - 0.0722 * s).toFixed(6);
-      const br = (0.2126 - 0.2126 * s).toFixed(6);
-      const bg = (0.7152 - 0.7152 * s).toFixed(6);
-      const bb = (0.0722 + 0.9278 * s).toFixed(6);
-      activeSteps.push(`colorchannelmixer=rr=${rr}:rg=${rg}:rb=${rb}:gr=${gr}:gg=${gg}:gb=${gb}:br=${br}:bg=${bg}:bb=${bb}`);
-    }
+    appendRgbFilterSteps(activeSteps, f, 1, 1);
     if (f && f.blur > 0) activeSteps.push(`gblur=sigma=${f.blur}`);
     if (opacity < 1) activeSteps.push(`lutrgb=r='val*${opacity}':g='val*${opacity}':b='val*${opacity}'`);
     activeSteps.push(...rgbOutSteps);
@@ -1960,8 +1408,441 @@ export function buildClipFilterChain(seg, segIdx, fps, width, height, options = 
   return {
     usesInput: true,
     seekSec,
+    decoderArgs,
     filter: fullFilter,
     outLabel: `[bv${segIdx}]`,
+  };
+}
+
+function buildOverlayVideoFilterChain(ov, labelKey, fps, width, height, chunkFrom, chunkTo, options = {}) {
+  const ovStart = Math.max(chunkFrom, ov.startFrame);
+  const ovEnd = Math.min(chunkTo, ov.endFrame);
+  const ovFrames = ovEnd - ovStart;
+  if (ovFrames <= 0) return { usesInput: false };
+
+  const bg = ov.backgroundFill ?? null;
+  const effectiveFit = bg ? 'contain' : ov.fit;
+  const crop = ov.transform?.crop;
+  const cx = crop ? crop.x : 0;
+  const cy = crop ? crop.y : 0;
+  const cw = crop ? crop.width : width;
+  const ch = crop ? crop.height : height;
+  if (!bg && (cw <= 0 || ch <= 0)) return { usesInput: false };
+
+  const sx = ov.transform?.scaleX ?? 1;
+  const sy = ov.transform?.scaleY ?? 1;
+  const x = ov.transform?.x ?? 0;
+  const y = ov.transform?.y ?? 0;
+  const borderRadius = Math.max(0, Number(ov.transform?.borderRadius ?? 0));
+  const rotDeg = Number(ov.transform?.rotation ?? 0) % 360;
+  const hasRotation = Math.abs(rotDeg) > 1e-4;
+  const scaledW = Math.max(2, Math.round(cw * sx));
+  const scaledH = Math.max(2, Math.round(ch * sy));
+  const dx = Math.round((width - width * sx) / 2 + cx * sx + (x / 100) * width);
+  const dy = Math.round((height - height * sy) / 2 + cy * sy + (y / 100) * height);
+  const visX0 = Math.max(0, dx);
+  const visY0 = Math.max(0, dy);
+  const visX1 = Math.min(width, dx + scaledW);
+  const visY1 = Math.min(height, dy + scaledH);
+  const visW = visX1 - visX0;
+  const visH = visY1 - visY0;
+  if (!bg && !hasRotation && (visW <= 0 || visH <= 0)) return { usesInput: false };
+
+  const localStart = ovStart - chunkFrom;
+  const localEnd = ovEnd - 1 - chunkFrom;
+  const rate = ov.playbackRate ?? ov.rate ?? 1;
+  const clipLocalStart = ovStart - ov.startFrame;
+  const sourceFrame = ov.srcInFrame + clipLocalStart * rate;
+  const { fadePre, seekSec, steps } = buildVideoTrimSteps({
+    sourceFrame,
+    frames: ovFrames,
+    playbackRate: rate,
+    sourceFps: ov.sourceFps,
+    visualFade: ov.visualFade,
+    clipLocalStart,
+  }, fps);
+  const decoderArgs = videoDecoderArgs(ov);
+  const sourceWidth = Number(ov.sourceWidth ?? width);
+  const sourceHeight = Number(ov.sourceHeight ?? height);
+  const sizeDiffers = sourceWidth !== width || sourceHeight !== height;
+  const fgRatio = effectiveFit === 'cover'
+    ? Math.max(width / sourceWidth, height / sourceHeight)
+    : Math.min(width / sourceWidth, height / sourceHeight);
+  const estFrameW = effectiveFit === 'cover' ? width : Math.max(2, Math.round(sourceWidth * fgRatio));
+  const estFrameH = effectiveFit === 'cover' ? height : Math.max(2, Math.round(sourceHeight * fgRatio));
+  const resolvedRadius = Math.min(borderRadius, Math.max(0, Math.floor(Math.min(estFrameW, estFrameH) / 2)));
+
+  const opacity = ov.transform?.opacity ?? 1;
+  const vf = ov.visualFade;
+  const loc0 = clipLocalStart;
+  const loc1 = loc0 + ovFrames;
+  const hasIn = Boolean(vf?.fadeIn && vf.fadeIn.until > loc0 && vf.fadeIn.from < loc1);
+  const hasOut = Boolean(vf?.fadeOut && vf.fadeOut.until > loc0 && vf.fadeOut.from < loc1);
+  const preserveAlpha = Boolean(
+    ov.sourceHasAlpha
+    || bg
+    || opacity < 1
+    || ov.clipMask
+    || resolvedRadius > 0
+    || hasRotation
+    || hasIn
+    || hasOut
+    || (effectiveFit !== 'cover' && sizeDiffers),
+  );
+
+  if (preserveAlpha) {
+    if (ov.sourceHasAlpha && RGB_ALPHA_PIX_FMTS.test(String(ov.sourcePixFmt ?? ''))) {
+      steps.push('scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int', 'format=yuva444p');
+    } else if (!ov.sourceHasAlpha && ov.sourcePixFmt && ov.sourcePixFmt !== 'yuv420p') {
+      const inRange = ov.sourceColorRange === 'pc' ? 'pc' : 'tv';
+      steps.push(`scale=in_range=${inRange}:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int`, 'format=yuva444p');
+    } else if (!bg) {
+      steps.push('format=yuva444p');
+    }
+  } else if (ov.sourcePixFmt && ov.sourcePixFmt !== 'yuv420p') {
+    const inRange = ov.sourceColorRange === 'pc' ? 'pc' : 'tv';
+    steps.push(`scale=in_range=${inRange}:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int`, 'format=yuv420p');
+  }
+
+  const rgbInSteps = ['scale=in_color_matrix=bt709:in_range=tv:flags=accurate_rnd+full_chroma_int', 'format=rgb24'];
+  const rgbOutSteps = ['scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int', preserveAlpha ? 'format=yuva444p' : 'format=yuv420p'];
+  const chainParts = [];
+  const f = ov.filters;
+  let activeSteps = steps;
+  let bgOutLabel = null;
+  if (bg) {
+    const bgsLabel = `ovbgs_${labelKey}`;
+    const fgInLabel = `ovfgi_${labelKey}`;
+    steps.push(`split=2[${bgsLabel}][${fgInLabel}]`);
+    chainParts.push(steps.join(','));
+    const osW = Math.max(2, Math.round(width * bg.overscanScale));
+    const osH = Math.max(2, Math.round(height * bg.overscanScale));
+    const bgSteps = [
+      `[${bgsLabel}]scale=${osW}:${osH}:force_original_aspect_ratio=increase:flags=bilinear`,
+      `crop=${width}:${height}`,
+    ];
+    const bgRgbSteps = [];
+    appendRgbFilterSteps(bgRgbSteps, f, bg.brightness, bg.saturate);
+    if (bgRgbSteps.length > 0) bgSteps.push(...rgbInSteps, ...bgRgbSteps, 'scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int', 'format=yuv420p');
+    const totalBlur = bg.blurPx + (f?.blur ?? 0);
+    if (totalBlur >= 8) {
+      const dw = Math.max(2, Math.round(width / 4) & ~1);
+      const dh = Math.max(2, Math.round(height / 4) & ~1);
+      bgSteps.push(`scale=${dw}:${dh}:flags=bilinear`, `gblur=sigma=${(totalBlur / 4).toFixed(3)}:steps=2`, `scale=${width}:${height}:flags=bilinear`);
+    } else if (totalBlur > 0) {
+      bgSteps.push(`gblur=sigma=${totalBlur.toFixed(3)}:steps=2`);
+    }
+    bgSteps.push('format=yuva444p');
+    bgOutLabel = `ovbgcov_${labelKey}`;
+    chainParts.push(`${bgSteps.join(',')}[${bgOutLabel}]`);
+    activeSteps = [`[${fgInLabel}]format=yuva444p`];
+  }
+
+  const blurs = ov.localGaussianBlurs ?? [];
+  let frameW = width;
+  let frameH = height;
+  let needsTransparentPad = false;
+  if (sizeDiffers) {
+    if (effectiveFit === 'cover') {
+      activeSteps.push(`scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos`, `crop=${width}:${height}`);
+    } else {
+      frameW = estFrameW;
+      frameH = estFrameH;
+      activeSteps.push(`scale=${frameW}:${frameH}:flags=lanczos`);
+      if (frameW !== width || frameH !== height) {
+        if (blurs.length > 0 || resolvedRadius > 0) needsTransparentPad = true;
+        else activeSteps.push('format=yuva444p', `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`);
+      }
+    }
+  }
+  const applyRgbWithPreservedAlpha = (rgbFilterSteps, tag) => {
+    if (!preserveAlpha) {
+      activeSteps.push(...rgbInSteps, ...rgbFilterSteps, ...rgbOutSteps);
+      return;
+    }
+    const sRgb = `ovrgbs_${labelKey}_${tag}`;
+    const sAlp = `ovalps_${labelKey}_${tag}`;
+    const oRgb = `ovrgbo_${labelKey}_${tag}`;
+    const oAlp = `ovalpo_${labelKey}_${tag}`;
+    activeSteps.push('format=yuva444p', `split=2[${sRgb}][${sAlp}]`);
+    chainParts.push(
+      activeSteps.join(','),
+      `[${sRgb}]${rgbInSteps.join(',')},${rgbFilterSteps.join(',')}[${oRgb}]`,
+      `[${sAlp}]alphaextract[${oAlp}]`,
+    );
+    activeSteps = [`[${oRgb}][${oAlp}]alphamerge=eof_action=repeat`, 'format=yuva444p'];
+  };
+  const applyMaskToAlpha = (maskSpec, tag) => {
+    const fgLabel = `ovmfg_${labelKey}_${tag}`;
+    const mLabel = `ovmm_${labelKey}_${tag}`;
+    const maskInLabel = options.registerBlurMask
+      ? options.registerBlurMask(maskSpec)
+      : `[ovm_in_${labelKey}_${tag}]`;
+    if (preserveAlpha) {
+      const sBase = `ovmb_${labelKey}_${tag}`;
+      const sOrigA = `ovmoa_${labelKey}_${tag}`;
+      const combA = `ovmca_${labelKey}_${tag}`;
+      activeSteps.push('format=yuva444p', `split=2[${fgLabel}][${sBase}]`);
+      chainParts.push(
+        activeSteps.join(','),
+        `[${sBase}]alphaextract[${sOrigA}]`,
+        `${maskInLabel}format=gray[${mLabel}]`,
+        `[${sOrigA}][${mLabel}]blend=all_expr='(A*B)/255'[${combA}]`,
+      );
+      activeSteps = [`[${fgLabel}][${combA}]alphamerge=eof_action=repeat`, 'format=yuva444p'];
+    } else {
+      activeSteps.push('format=yuva444p');
+      chainParts.push(`${activeSteps.join(',')}[${fgLabel}]`, `${maskInLabel}format=gray[${mLabel}]`);
+      activeSteps = [`[${fgLabel}][${mLabel}]alphamerge=eof_action=repeat`, 'format=yuva444p'];
+    }
+  };
+
+  for (let bi = 0; bi < blurs.length; bi++) {
+    const b = blurs[bi];
+    if (b.kind === 'pixelate') {
+      const bs = Math.max(1, Math.round(b.blockSize));
+      if (bs > 1) {
+        const dw = Math.max(1, Math.round(frameW / bs));
+        const dh = Math.max(1, Math.round(frameH / bs));
+        activeSteps.push(preserveAlpha ? 'format=yuva444p' : 'format=yuv444p', `scale=${dw}:${dh}:flags=neighbor`, `scale=${frameW}:${frameH}:flags=neighbor`, preserveAlpha ? 'format=yuva444p' : 'format=yuv420p');
+      }
+      continue;
+    }
+    if (b.kind === 'lut3d') {
+      const intensity = clamp(Number(b.intensity ?? 1), 0, 1);
+      if (intensity <= 0) continue;
+      const cubePath = b.cubePath ?? options.resolveLutPath?.(b.cubeRelPath);
+      if (!cubePath) continue;
+      const escaped = escapeFfmpegFilterPath(cubePath);
+      if (intensity >= 0.9999) {
+        applyRgbWithPreservedAlpha([`lut3d=file='${escaped}':interp=tetrahedral`], `l${bi}`);
+      } else {
+        const lBase = `ovlutb_${labelKey}_${bi}`;
+        const lWet = `ovlutw_${labelKey}_${bi}`;
+        const lGraded = `ovlutg_${labelKey}_${bi}`;
+        const dryW = (1 - intensity).toFixed(6);
+        const wetW = intensity.toFixed(6);
+        applyRgbWithPreservedAlpha([
+          `split=2[${lBase}][${lWet}]`,
+          `[${lWet}]lut3d=file='${escaped}':interp=tetrahedral[${lGraded}]`,
+          `[${lBase}][${lGraded}]blend=all_expr='A*${dryW}+B*${wetW}'`,
+        ], `l${bi}`);
+      }
+      continue;
+    }
+    if (b.kind === 'shape-mask') {
+      const halfW = b.shape === 'circle'
+        ? Math.max(0.5, b.radius * Math.min(frameW, frameH) * 0.5)
+        : Math.max(0.5, (b.widthRatio * frameW) / 2);
+      const halfH = b.shape === 'circle' ? halfW : Math.max(0.5, (b.heightRatio * frameH) / 2);
+      applyMaskToAlpha({
+        shape: b.shape === 'circle' ? 'ellipse' : 'rectangle',
+        rw: frameW,
+        rh: frameH,
+        localCx: b.centerX * frameW,
+        localCy: b.centerY * frameH,
+        halfW,
+        halfH,
+        feather: b.feather,
+        opacity: 1,
+        cornerRadius: b.cornerRadius ?? 0,
+        invert: Boolean(b.invert),
+        centeredFeather: true,
+      }, `sm${bi}`);
+      continue;
+    }
+    const bCx = b.centerX * frameW;
+    const bCy = b.centerY * frameH;
+    const halfW = (b.widthRatio * frameW) / 2;
+    const halfH = (b.heightRatio * frameH) / 2;
+    const x0 = Math.max(0, Math.floor(bCx - halfW));
+    const y0 = Math.max(0, Math.floor(bCy - halfH));
+    const x1 = Math.min(frameW, Math.ceil(bCx + halfW));
+    const y1 = Math.min(frameH, Math.ceil(bCy + halfH));
+    const rw = x1 - x0;
+    const rh = y1 - y0;
+    if (rw < 2 || rh < 2) continue;
+    const fmtWork = preserveAlpha ? 'yuva444p' : 'yuv444p';
+    const bLabel = `ovgbb_${labelKey}_${bi}`;
+    const sLabel = `ovgbs_${labelKey}_${bi}`;
+    const rLabel = `ovgbr_${labelKey}_${bi}`;
+    if (b.kind === 'local-mosaic') {
+      const bs = Math.max(1, Math.round(b.blockSize));
+      if (bs <= 1) continue;
+      const dw = Math.max(1, Math.round(rw / bs));
+      const dh = Math.max(1, Math.round(rh / bs));
+      if (b.feather === 0 && x0 === 0 && y0 === 0 && x1 === frameW && y1 === frameH) {
+        activeSteps.push(`format=${fmtWork}`, `scale=${dw}:${dh}:flags=neighbor`, `scale=${frameW}:${frameH}:flags=neighbor`, preserveAlpha ? 'format=yuva444p' : 'format=yuv420p');
+        continue;
+      }
+      activeSteps.push(`split=2[${bLabel}][${sLabel}]`);
+      chainParts.push(activeSteps.join(','));
+      chainParts.push(
+        `[${sLabel}]format=${fmtWork},crop=${rw}:${rh}:${x0}:${y0},scale=${dw}:${dh}:flags=neighbor,scale=${rw}:${rh}:flags=neighbor${b.feather > 0 ? ',format=yuva444p' : ''}[${rLabel}]`,
+      );
+    } else {
+      if (b.feather === 0 && x0 === 0 && y0 === 0 && x1 === frameW && y1 === frameH) {
+        activeSteps.push(`gblur=sigma=${b.sigma}:steps=2`);
+        continue;
+      }
+      const pad = Math.ceil(b.sigma * 3);
+      const px0 = Math.max(0, x0 - pad);
+      const py0 = Math.max(0, y0 - pad);
+      const px1 = Math.min(frameW, x1 + pad);
+      const py1 = Math.min(frameH, y1 + pad);
+      const pw = px1 - px0;
+      const ph = py1 - py0;
+      const ix = x0 - px0;
+      const iy = y0 - py0;
+      activeSteps.push(`split=2[${bLabel}][${sLabel}]`);
+      chainParts.push(activeSteps.join(','));
+      chainParts.push(
+        `[${sLabel}]format=${fmtWork},crop=${pw}:${ph}:${px0}:${py0},gblur=sigma=${b.sigma}:steps=2,crop=${rw}:${rh}:${ix}:${iy}${b.feather > 0 ? ',format=yuva444p' : ''}[${rLabel}]`,
+      );
+    }
+    if (b.feather > 0) {
+      const maskLabel = options.registerBlurMask
+        ? options.registerBlurMask({ shape: 'rectangle', rw, rh, localCx: bCx - x0, localCy: bCy - y0, halfW, halfH, feather: b.feather, opacity: 1 })
+        : `[ovgbm_in_${labelKey}_${bi}]`;
+      const mLabel = `ovgbm_${labelKey}_${bi}`;
+      const aLabel = `ovgba_${labelKey}_${bi}`;
+      chainParts.push(`${maskLabel}format=gray[${mLabel}]`, `[${rLabel}][${mLabel}]alphamerge=eof_action=repeat[${aLabel}]`);
+      activeSteps = [`[${bLabel}][${aLabel}]overlay=${x0}:${y0}:format=${preserveAlpha ? 'yuv444' : 'yuv420'}`];
+    } else {
+      activeSteps = [`[${bLabel}][${rLabel}]overlay=${x0}:${y0}:format=${preserveAlpha ? 'yuv444' : 'yuv420'}`];
+    }
+  }
+
+  if (resolvedRadius > 0) {
+    applyMaskToAlpha({
+      shape: 'rectangle',
+      rw: frameW,
+      rh: frameH,
+      localCx: frameW / 2,
+      localCy: frameH / 2,
+      halfW: frameW / 2,
+      halfH: frameH / 2,
+      feather: 1,
+      cornerRadius: resolvedRadius,
+      opacity: 1,
+      centeredFeather: true,
+    }, 'br');
+  }
+  if (needsTransparentPad) {
+    activeSteps.push('format=yuva444p', `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`);
+  }
+  if (ov.clipMask) {
+    applyMaskToAlpha({
+      shape: ov.clipMask.shape,
+      rw: ov.clipMask.rw,
+      rh: ov.clipMask.rh,
+      localCx: ov.clipMask.localCx,
+      localCy: ov.clipMask.localCy,
+      halfW: ov.clipMask.halfW,
+      halfH: ov.clipMask.halfH,
+      feather: ov.clipMask.feather,
+      opacity: 1,
+    }, 'cm');
+  }
+  if (crop) {
+    if (cw <= 0 || ch <= 0) {
+      activeSteps.push('format=yuva444p', `lut=a='0'`);
+    } else if (hasRotation) {
+      activeSteps.push('format=yuva444p', `crop=${cw}:${ch}:${cx}:${cy}`, `pad=${width}:${height}:${cx}:${cy}:color=0x00000000`);
+    } else {
+      activeSteps.push(`crop=${cw}:${ch}:${cx}:${cy}`);
+    }
+  }
+
+  if (f) {
+    const rgbSteps = [];
+    appendRgbFilterSteps(rgbSteps, f, 1, 1);
+    if (rgbSteps.length > 0) applyRgbWithPreservedAlpha(rgbSteps, 'flt');
+    if (f.blur > 0) activeSteps.push(`gblur=sigma=${f.blur}`);
+  }
+
+  let overlayX = visX0;
+  let overlayY = visY0;
+  let overlayXExpr = null;
+  let overlayYExpr = null;
+  if (hasRotation) {
+    const scaledCanvasW = Math.max(2, Math.round(width * sx));
+    const scaledCanvasH = Math.max(2, Math.round(height * sy));
+    if (scaledCanvasW !== width || scaledCanvasH !== height) {
+      activeSteps.push(`scale=${scaledCanvasW}:${scaledCanvasH}:flags=bilinear`);
+    }
+    const rad = (rotDeg * Math.PI) / 180;
+    activeSteps.push('format=yuva444p', `rotate=${rad.toFixed(8)}:ow=rotw(${rad.toFixed(8)}):oh=roth(${rad.toFixed(8)}):c=none`);
+    const shiftX = Math.round((x / 100) * width);
+    const shiftY = Math.round((y / 100) * height);
+    if (bgOutLabel) {
+      const fgRotLabel = `ovfgrot_${labelKey}`;
+      chainParts.push(`${activeSteps.join(',')}[${fgRotLabel}]`);
+      activeSteps = [`[${bgOutLabel}][${fgRotLabel}]overlay=x=(W-w)/2+(${shiftX}):y=(H-h)/2+(${shiftY}):shortest=1:format=yuv444`, 'format=yuva444p'];
+      overlayX = 0;
+      overlayY = 0;
+    } else {
+      overlayXExpr = `(W-w)/2+(${shiftX})`;
+      overlayYExpr = `(H-h)/2+(${shiftY})`;
+    }
+  } else {
+    if (scaledW !== cw || scaledH !== ch) activeSteps.push(`scale=${scaledW}:${scaledH}:flags=bilinear`);
+    const srcCropX = visX0 - dx;
+    const srcCropY = visY0 - dy;
+    if (visW !== scaledW || visH !== scaledH) {
+      if (!preserveAlpha && [visW, visH, srcCropX, srcCropY].some((v) => v % 2 !== 0)) {
+        activeSteps.push('scale=flags=accurate_rnd+full_chroma_int', 'format=yuv444p');
+      }
+      activeSteps.push(`crop=${visW}:${visH}:${srcCropX}:${srcCropY}`);
+    }
+    if (bgOutLabel) {
+      if (visW <= 0 || visH <= 0) {
+        chainParts.push(`${activeSteps.join(',')},nullsink`);
+        activeSteps = [`[${bgOutLabel}]setsar=1`];
+      } else {
+        const fgCovLabel = `ovfgcov_${labelKey}`;
+        chainParts.push(`${activeSteps.join(',')}[${fgCovLabel}]`);
+        activeSteps = [`[${bgOutLabel}][${fgCovLabel}]overlay=${visX0}:${visY0}:shortest=1:format=yuv444`, 'format=yuva444p'];
+      }
+      overlayX = 0;
+      overlayY = 0;
+    }
+  }
+
+  if (opacity < 1) {
+    activeSteps.push('format=yuva444p', `lut=a='clip(val*${opacity},0,255)'`);
+  }
+  if (hasIn || hasOut) {
+    const decodeLoc0 = loc0 - fadePre;
+    activeSteps.push('format=yuva444p');
+    if (hasIn) {
+      const s = Math.max(0, Math.round(vf.fadeIn.from - decodeLoc0));
+      const n = Math.max(1, Math.round(vf.fadeIn.until - vf.fadeIn.from));
+      activeSteps.push(`fade=t=in:s=${s}:n=${n}:alpha=1`);
+    }
+    if (hasOut) {
+      const s = Math.max(0, Math.round(vf.fadeOut.from - decodeLoc0));
+      const n = Math.max(1, Math.round(vf.fadeOut.until - vf.fadeOut.from));
+      activeSteps.push(`fade=t=out:s=${s}:n=${n}:alpha=1`);
+    }
+    if (fadePre > 0) activeSteps.push(`trim=start_frame=${fadePre}:end_frame=${fadePre + ovFrames}`, 'setpts=PTS-STARTPTS');
+  }
+  activeSteps.push('setsar=1', `settb=1/${fps}`, `setpts=N+${localStart}`);
+  const outLabel = `[ovv_${labelKey}]`;
+  const tailFilter = `${activeSteps.join(',')}${outLabel}`;
+  const fullFilter = chainParts.length ? `${chainParts.join(';')};${tailFilter}` : tailFilter;
+  return {
+    usesInput: true,
+    seekSec,
+    decoderArgs,
+    filter: fullFilter,
+    outLabel,
+    overlayX,
+    overlayY,
+    overlayXExpr,
+    overlayYExpr,
+    localStart,
+    localEnd,
   };
 }
 
@@ -2003,15 +1884,18 @@ function sliceOverlaySpans(spans, chunkFrom, chunkTo) {
   return out;
 }
 
-async function encodeChunk({
-  chunk, chunkIdx, plan, sources, plateFiles, blankPngPath, temporary, blurMaskCache, ffmpegExecutable,
+export async function encodeChunk({
+  chunk, chunkIdx, plan, sources, plateFiles, underlayPlateFiles, blankPngPath, temporary, blurMaskCache, ffmpegExecutable,
   h264Profile, videoBitrate, vaapiDevice, renderArgsOverride, onChunkFrame, checkResources, signal, run = directCutCommand,
+  verifyChunkFrames,
 }) {
   const { fps, width, height, outputWidth, outputHeight } = plan;
   const chunkFrames = chunk.to - chunk.from;
   const chunkSegs = sliceBaseSegments(plan.baseSegments, chunk.from, chunk.to);
   const chunkSpans = sliceOverlaySpans(chunk.spans, chunk.from, chunk.to);
+  const chunkUnderlaySpans = sliceOverlaySpans(chunk.underlaySpans ?? [], chunk.from, chunk.to);
   const hasAnyOverlay = chunkSpans.some((s) => s.sampleFrame !== null);
+  const hasAnyUnderlay = chunkUnderlaySpans.some((s) => s.sampleFrame !== null);
 
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
   const filters = [];
@@ -2047,12 +1931,12 @@ async function encodeChunk({
         pendingMasks.push({ token, spec });
         return token;
       },
-      resolveLutPath: (relPath) => defaultResolveLutPath(relPath, options.assetsDirectory),
+      resolveLutPath: (relPath) => defaultResolveLutPath(relPath, plan.assetsDirectory),
     });
     if (chain.usesInput) {
       const file = sources.get(videoSeg.src).file;
       const videoInputIdx = inputIdx++;
-      args.push('-ss', chain.seekSec.toFixed(6), '-i', file);
+      args.push('-ss', chain.seekSec.toFixed(6), ...(chain.decoderArgs ?? []), '-i', file);
       let resolvedFilter = chain.filter;
       for (const maskEntry of pendingMasks) {
         const maskPath = await ensureBlurMaskFile(maskEntry.spec);
@@ -2093,53 +1977,153 @@ async function encodeChunk({
     baseOutLabel = '[basev]';
   }
 
+  if (hasAnyUnderlay && underlayPlateFiles) {
+    const ffconcatLines = ['ffconcat version 1.0'];
+    const frameToMicroseconds = (frame) => Math.round((frame - chunk.from) * 1e6 / fps);
+    let lastPath = blankPngPath;
+    for (const span of chunkUnderlaySpans) {
+      const pngPath = span.sampleFrame === null ? blankPngPath : underlayPlateFiles.get(span.sampleFrame);
+      if (!pngPath || !existsSync(pngPath)) {
+        throw new Error(`Missing underlay plate for frame ${span.sampleFrame}`);
+      }
+      const escaped = pngPath.replace(/\\/g, '/').replace(/'/g, "'\\''");
+      const duration = (frameToMicroseconds(span.to) - frameToMicroseconds(span.from)) / 1e6;
+      ffconcatLines.push(`file '${escaped}'`, `option framerate ${fps}`, `duration ${duration.toFixed(6)}`);
+      lastPath = escaped;
+    }
+    ffconcatLines.push(`file '${lastPath}'`, `option framerate ${fps}`);
+    const concatPath = path.join(temporary, `underlay-${chunkIdx}.ffconcat`);
+    await writeFile(concatPath, ffconcatLines.join('\n') + '\n', 'utf8');
+    args.push('-f', 'concat', '-safe', '0', '-i', concatPath);
+    const ulIdx = inputIdx++;
+    filters.push(
+      `[${ulIdx}:v]scale=out_color_matrix=bt709:out_range=tv,format=yuva420p,fps=${fps},trim=end_frame=${chunkFrames},setpts=PTS-STARTPTS[ul]`,
+      `${baseOutLabel}[ul]overlay=0:0:eof_action=repeat:format=yuv420[ulout]`,
+    );
+    baseOutLabel = '[ulout]';
+  }
+
   const chunkMosaics = (plan.mosaics ?? []).filter((m) => m.endFrame > chunk.from && m.startFrame < chunk.to);
-  for (let mi = 0; mi < chunkMosaics.length; mi++) {
-    const m = chunkMosaics[mi];
-    if ((m.opacity ?? 1) <= 0 || m.w < 2 || m.h < 2) continue;
-    const localStart = Math.max(0, m.startFrame - chunk.from);
-    const localEnd = Math.min(chunkFrames - 1, m.endFrame - 1 - chunk.from);
-    if (localEnd < localStart) continue;
-    const needsMask = m.shape === 'ellipse' || (m.feather ?? 0) > 0 || (m.opacity ?? 1) < 1;
-    const pad = Math.ceil(m.sigma * 2);
-    const px0 = Math.max(0, m.x0 - pad);
-    const py0 = Math.max(0, m.y0 - pad);
-    const px1 = Math.min(width, m.x0 + m.w + pad);
-    const py1 = Math.min(height, m.y0 + m.h + pad);
-    const pw = px1 - px0;
-    const ph = py1 - py0;
-    const ix = m.x0 - px0;
-    const iy = m.y0 - py0;
-    const blurStep = `gblur=sigma=${m.sigma}:enable='between(n,${localStart},${localEnd})'`;
-    if (needsMask) {
-      const maskPath = await ensureBlurMaskFile({
-        shape: m.shape ?? 'rectangle',
-        rw: m.w,
-        rh: m.h,
-        localCx: m.localCx,
-        localCy: m.localCy,
-        halfW: m.halfW,
-        halfH: m.halfH,
-        feather: m.feather ?? 0,
-        opacity: m.opacity ?? 1,
-      });
+  const chunkOverlayVideos = (plan.overlayVideos ?? []).filter((ov) => ov.endFrame > chunk.from && ov.startFrame < chunk.to);
+  const trackOrderOf = (trackId) => {
+    const idx = plan.visualTrackIds?.indexOf(trackId) ?? -1;
+    return idx >= 0 ? idx : -1;
+  };
+  const upperLayers = [
+    ...chunkMosaics.map((m) => ({ kind: 'mosaic', track: m.track, startFrame: m.startFrame, data: m })),
+    ...chunkOverlayVideos.map((ov) => ({ kind: 'overlay-video', track: ov.track, startFrame: ov.startFrame, data: ov })),
+  ].sort((a, b) => (
+    trackOrderOf(b.track) - trackOrderOf(a.track)
+    || (a.kind === b.kind ? 0 : a.kind === 'mosaic' ? -1 : 1)
+    || a.startFrame - b.startFrame
+  ));
+
+  if (upperLayers.length > 0) {
+    filters.push(`${baseOutLabel}settb=1/${fps},setpts=N[base_tb]`);
+    baseOutLabel = '[base_tb]';
+  }
+
+  for (let ui = 0; ui < upperLayers.length; ui++) {
+    const layer = upperLayers[ui];
+    if (layer.kind === 'mosaic') {
+      const m = layer.data;
+      if ((m.opacity ?? 1) <= 0 || m.w < 2 || m.h < 2) continue;
+      const localStart = Math.max(0, m.startFrame - chunk.from);
+      const localEnd = Math.min(chunkFrames - 1, m.endFrame - 1 - chunk.from);
+      if (localEnd < localStart) continue;
+      const fiFrames = Math.max(0, Number(m.fadeInFrames ?? 0));
+      const foFrames = Math.max(0, Number(m.fadeOutFrames ?? 0));
+      const maFades = [];
+      if (fiFrames > 0) {
+        const fiStart = m.startFrame - chunk.from;
+        if (fiStart >= 0 && fiStart < chunkFrames) {
+          maFades.push(`fade=t=in:s=${fiStart}:n=${fiFrames}:alpha=1`);
+        }
+      }
+      if (foFrames > 0) {
+        const foStart = m.endFrame - foFrames - chunk.from;
+        if (foStart >= 0 && foStart < chunkFrames) {
+          maFades.push(`fade=t=out:s=${foStart}:n=${foFrames}:alpha=1`);
+        }
+      }
+      const needsMask = m.shape === 'ellipse' || (m.feather ?? 0) > 0 || (m.opacity ?? 1) < 1 || maFades.length > 0;
+      const pad = Math.ceil(m.sigma * 2);
+      const px0 = Math.max(0, m.x0 - pad);
+      const py0 = Math.max(0, m.y0 - pad);
+      const px1 = Math.min(width, m.x0 + m.w + pad);
+      const py1 = Math.min(height, m.y0 + m.h + pad);
+      const pw = px1 - px0;
+      const ph = py1 - py0;
+      const ix = m.x0 - px0;
+      const iy = m.y0 - py0;
+      const blurStep = `gblur=sigma=${m.sigma}:enable='between(n,${localStart},${localEnd})'`;
+      if (needsMask) {
+        const maskPath = await ensureBlurMaskFile({
+          shape: m.shape ?? 'rectangle',
+          rw: m.w,
+          rh: m.h,
+          localCx: m.localCx,
+          localCy: m.localCy,
+          halfW: m.halfW,
+          halfH: m.halfH,
+          feather: m.feather ?? 0,
+          opacity: m.opacity ?? 1,
+        });
+        const maskIdx = inputIdx++;
+        args.push('-i', maskPath);
+        const fadeSuffix = maFades.length > 0 ? `,${maFades.join(',')}` : '';
+        filters.push(
+          `${baseOutLabel}split=2[mb${ui}][mr${ui}]`,
+          `[mr${ui}]format=yuv444p,crop=${pw}:${ph}:${px0}:${py0},${blurStep},crop=${m.w}:${m.h}:${ix}:${iy},format=yuva444p[mblur${ui}]`,
+          `[${maskIdx}:v]format=gray[mmask${ui}]`,
+          `[mblur${ui}][mmask${ui}]alphamerge=eof_action=repeat${fadeSuffix}[ma${ui}]`,
+          `[mb${ui}][ma${ui}]overlay=${m.x0}:${m.y0}:enable='between(n,${localStart},${localEnd})':format=yuv420[mbase${ui}]`,
+        );
+      } else {
+        filters.push(
+          `${baseOutLabel}split=2[mb${ui}][mr${ui}]`,
+          `[mr${ui}]format=yuv444p,crop=${pw}:${ph}:${px0}:${py0},${blurStep},crop=${m.w}:${m.h}:${ix}:${iy}[mblur${ui}]`,
+          `[mb${ui}][mblur${ui}]overlay=${m.x0}:${m.y0}:enable='between(n,${localStart},${localEnd})':format=yuv420[mbase${ui}]`,
+        );
+      }
+      baseOutLabel = `[mbase${ui}]`;
+      continue;
+    }
+
+    const ov = layer.data;
+    const pendingMasks = [];
+    const chain = buildOverlayVideoFilterChain(ov, `u${ui}`, fps, width, height, chunk.from, chunk.to, {
+      registerBlurMask: (spec) => {
+        const token = `__CC_OV_MASK_${ui}_${pendingMasks.length}__`;
+        pendingMasks.push({ token, spec });
+        return token;
+      },
+      resolveLutPath: (relPath) => defaultResolveLutPath(relPath, plan.assetsDirectory),
+    });
+    if (!chain.usesInput) continue;
+    const file = sources.get(ov.src).file;
+    const ovInputIdx = inputIdx++;
+    args.push('-ss', chain.seekSec.toFixed(6), ...(chain.decoderArgs ?? []), '-i', file);
+    let resolvedFilter = chain.filter;
+    for (const maskEntry of pendingMasks) {
+      const maskPath = await ensureBlurMaskFile(maskEntry.spec);
       const maskIdx = inputIdx++;
       args.push('-i', maskPath);
-      filters.push(
-        `${baseOutLabel}split=2[mb${mi}][mr${mi}]`,
-        `[mr${mi}]format=yuv444p,crop=${pw}:${ph}:${px0}:${py0},${blurStep},crop=${m.w}:${m.h}:${ix}:${iy},format=yuva444p[mblur${mi}]`,
-        `[${maskIdx}:v]format=gray[mmask${mi}]`,
-        `[mblur${mi}][mmask${mi}]alphamerge=eof_action=repeat[ma${mi}]`,
-        `[mb${mi}][ma${mi}]overlay=${m.x0}:${m.y0}:enable='between(n,${localStart},${localEnd})':format=yuv420[mbase${mi}]`,
-      );
-    } else {
-      filters.push(
-        `${baseOutLabel}split=2[mb${mi}][mr${mi}]`,
-        `[mr${mi}]format=yuv444p,crop=${pw}:${ph}:${px0}:${py0},${blurStep},crop=${m.w}:${m.h}:${ix}:${iy}[mblur${mi}]`,
-        `[mb${mi}][mblur${mi}]overlay=${m.x0}:${m.y0}:enable='between(n,${localStart},${localEnd})':format=yuv420[mbase${mi}]`,
-      );
+      resolvedFilter = resolvedFilter.replace(maskEntry.token, `[${maskIdx}:v]`);
     }
-    baseOutLabel = `[mbase${mi}]`;
+    filters.push(`[${ovInputIdx}:v]${resolvedFilter}`);
+    const ovPosX = chain.overlayXExpr ?? chain.overlayX;
+    const ovPosY = chain.overlayYExpr ?? chain.overlayY;
+    // `overlay` framesync only increments `n` once the secondary stream's shifted PTS
+    // (`setpts=N+localStart`) begins, so `between(n, localStart, localEnd)` drops the first
+    // `localStart` frames — or the entire clip whenever `localStart >= duration`.
+    // Evaluate against `t` on `[base_tb]`'s exact `1/fps` clock with a ±0.5-frame margin.
+    const enableStart = `${chain.localStart - 0.5}/${fps}`;
+    const enableEnd = `${chain.localEnd + 0.5}/${fps}`;
+    filters.push(
+      `${baseOutLabel}${chain.outLabel}overlay=x=${ovPosX}:y=${ovPosY}:enable='between(t,${enableStart},${enableEnd})':eof_action=pass:format=yuv420[ovc${ui}]`,
+    );
+    baseOutLabel = `[ovc${ui}]`;
   }
 
   if (hasAnyOverlay) {
@@ -2176,9 +2160,13 @@ async function encodeChunk({
   }
   const outFile = path.join(temporary, `chunk-${chunkIdx}.mp4`);
   const effectiveBitrate = videoBitrate ?? resolveH264VideoBitrate({ width: outputWidth, height: outputHeight, fps });
+  const chunkFilterArgs = await filterComplexArgs(
+    filters.join(';'),
+    path.join(temporary, `filter-chunk-${chunkIdx}.txt`),
+  );
   const rawArgs = [
     ...args,
-    '-filter_complex', filters.join(';'),
+    ...chunkFilterArgs,
     '-map', baseOutLabel,
     '-an',
     '-r', String(fps),
@@ -2202,6 +2190,12 @@ async function encodeChunk({
     onFrame: (f) => onChunkFrame(chunkIdx, Math.min(chunkFrames, Math.max(0, Number(f)))),
     checkResources,
   });
+  if (verifyChunkFrames) {
+    const actualFrames = await verifyChunkFrames(outFile);
+    if (Number.isInteger(actualFrames) && actualFrames !== chunkFrames) {
+      throw new Error(`Overlay-hybrid chunk ${chunkIdx} [${chunk.from}, ${chunk.to}) produced ${actualFrames} frames, expected ${chunkFrames}`);
+    }
+  }
   return outFile;
 }
 
@@ -2221,37 +2215,42 @@ function packAudioLanes(audioSegments) {
   return lanes.map((l) => l.segments);
 }
 
-async function renderAudioTrack({ plan, sources, temporary, ffmpegExecutable, checkResources, signal, run = directCutCommand }) {
+export async function renderAudioTrack({ plan, sources, temporary, ffmpegExecutable, checkResources, signal, run = directCutCommand }) {
   if (!plan.audioSegments.length) return null;
-  const { fps, rangeStart, frames } = plan;
+  const { fps, rangeStart, rangeEnd, frames } = plan;
   const sampleRate = 48000;
   const totalSamples = Math.round((frames / fps) * sampleRate);
   const lanes = packAudioLanes(plan.audioSegments);
   const laneWavs = [];
 
-  for (let laneIdx = 0; laneIdx < lanes.length; laneIdx++) {
-    const segs = lanes[laneIdx];
+  const renderAudioBatch = async (segs, batchStartSample, batchEndSample, wavPath, filterScriptBase) => {
     const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
     const filters = [];
     const concatLabels = [];
-    let cursorFrame = rangeStart;
+    let cursorSample = batchStartSample;
     let inputIdx = 0;
 
     for (let i = 0; i < segs.length; i++) {
       const seg = segs[i];
-      if (seg.timelineStartFrame > cursorFrame) {
-        const gapSamples = Math.round(((seg.timelineStartFrame - cursorFrame) / fps) * sampleRate);
-        if (gapSamples > 0) {
-          filters.push(`anullsrc=r=${sampleRate}:cl=stereo,atrim=end_sample=${gapSamples},asetpts=PTS-STARTPTS[agap${i}]`);
-          concatLabels.push(`[agap${i}]`);
-        }
+      const segWindow = Number.isInteger(seg.timelineStartSample) && Number.isInteger(seg.timelineEndSample)
+        ? {
+            startSample: seg.timelineStartSample,
+            endSample: seg.timelineEndSample,
+            durationSamples: Math.max(0, seg.timelineEndSample - seg.timelineStartSample),
+          }
+        : computeAudioSampleWindow(seg.timelineStartFrame, seg.timelineStartFrame + seg.frames, rangeStart, fps, sampleRate);
+      if (segWindow.startSample > cursorSample) {
+        const gapSamples = segWindow.startSample - cursorSample;
+        filters.push(`anullsrc=r=${sampleRate}:cl=stereo,atrim=end_sample=${gapSamples},asetpts=PTS-STARTPTS[agap${i}]`);
+        concatLabels.push(`[agap${i}]`);
+        cursorSample += gapSamples;
       }
       const file = sources.get(seg.src).file;
       const rate = seg.playbackRate ?? 1;
       const startSec = seg.sourceFrame / fps;
       const durSec = (seg.frames * rate) / fps;
       args.push('-ss', startSec.toFixed(6), '-t', (durSec + 0.1).toFixed(6), '-i', file);
-      const targetSamples = Math.round((seg.frames / fps) * sampleRate);
+      const targetSamples = Math.max(1, segWindow.durationSamples || Math.round((seg.frames / fps) * sampleRate));
       const chain = [
         `aformat=sample_fmts=fltp:sample_rates=${sampleRate}:channel_layouts=stereo`,
         ...buildAtempoChain(rate),
@@ -2326,31 +2325,74 @@ async function renderAudioTrack({ plan, sources, temporary, ffmpegExecutable, ch
       filters.push(`[${inputIdx}:a]${chain.join(',')}[aseg${i}]`);
       concatLabels.push(`[aseg${i}]`);
       inputIdx += 1;
-      cursorFrame = seg.timelineStartFrame + seg.frames;
+      cursorSample += targetSamples;
     }
 
-    if (cursorFrame < plan.rangeEnd) {
-      const tailSamples = Math.max(0, Math.round(((plan.rangeEnd - cursorFrame) / fps) * sampleRate));
+    if (cursorSample < batchEndSample) {
+      const tailSamples = batchEndSample - cursorSample;
       if (tailSamples > 0) {
         filters.push(`anullsrc=r=${sampleRate}:cl=stereo,atrim=end_sample=${tailSamples},asetpts=PTS-STARTPTS[atail]`);
         concatLabels.push('[atail]');
       }
     }
 
-    const wavPath = path.join(temporary, `audio-lane-${laneIdx}.wav`);
+    const batchSamples = Math.max(1, batchEndSample - batchStartSample);
     const combinedFilter = concatLabels.length === 1
-      ? `${filters.join(';')};${concatLabels[0]}atrim=end_sample=${totalSamples}[aout]`
-      : `${filters.join(';')};${concatLabels.join('')}concat=n=${concatLabels.length}:v=0:a=1,atrim=end_sample=${totalSamples}[aout]`;
+      ? `${filters.join(';')};${concatLabels[0]}atrim=end_sample=${batchSamples}[aout]`
+      : `${filters.join(';')};${concatLabels.join('')}concat=n=${concatLabels.length}:v=0:a=1,atrim=end_sample=${batchSamples}[aout]`;
+    const filterArgs = await filterComplexArgs(combinedFilter, filterScriptBase);
 
     await run(ffmpegExecutable, [
       ...args,
-      '-filter_complex', combinedFilter,
+      ...filterArgs,
       '-map', '[aout]',
       '-c:a', 'pcm_f32le',
       '-ar', String(sampleRate),
       '-ac', '2',
       '-y', wavPath,
     ], { signal, timeoutMs: 300_000, collect: false, checkResources });
+  };
+
+  for (let laneIdx = 0; laneIdx < lanes.length; laneIdx++) {
+    const segs = lanes[laneIdx];
+    const wavPath = path.join(temporary, `audio-lane-${laneIdx}.wav`);
+    if (segs.length <= MAX_AUDIO_INPUTS_PER_BATCH) {
+      await renderAudioBatch(segs, 0, totalSamples, wavPath, path.join(temporary, `filter-audio-lane-${laneIdx}.txt`));
+      laneWavs.push(wavPath);
+      continue;
+    }
+
+    const partWavs = [];
+    let batchCursorSample = 0;
+    for (let startIdx = 0, batchIdx = 0; startIdx < segs.length; startIdx += MAX_AUDIO_INPUTS_PER_BATCH, batchIdx += 1) {
+      const batchSegs = segs.slice(startIdx, startIdx + MAX_AUDIO_INPUTS_PER_BATCH);
+      const isLast = startIdx + MAX_AUDIO_INPUTS_PER_BATCH >= segs.length;
+      const lastSeg = batchSegs[batchSegs.length - 1];
+      const lastEndSample = Number.isInteger(lastSeg.timelineEndSample)
+        ? lastSeg.timelineEndSample
+        : computeAudioSampleWindow(lastSeg.timelineStartFrame, lastSeg.timelineStartFrame + lastSeg.frames, rangeStart, fps, sampleRate).endSample;
+      const batchEndSample = isLast
+        ? totalSamples
+        : Math.min(totalSamples, Math.max(batchCursorSample + 1, lastEndSample));
+      const partPath = path.join(temporary, `audio-lane-${laneIdx}-part-${batchIdx}.wav`);
+      await renderAudioBatch(batchSegs, batchCursorSample, batchEndSample, partPath, path.join(temporary, `filter-audio-lane-${laneIdx}-part-${batchIdx}.txt`));
+      partWavs.push(partPath);
+      batchCursorSample = batchEndSample;
+    }
+
+    const concatListPath = path.join(temporary, `audio-lane-${laneIdx}.ffconcat`);
+    const lines = [
+      'ffconcat version 1.0',
+      ...partWavs.map((f) => `file '${f.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`),
+    ];
+    await writeFile(concatListPath, lines.join('\n') + '\n', 'utf8');
+    await run(ffmpegExecutable, [
+      '-hide_banner', '-loglevel', 'error', '-nostdin',
+      '-f', 'concat', '-safe', '0', '-i', concatListPath,
+      '-c:a', 'copy',
+      '-y', wavPath,
+    ], { signal, timeoutMs: 300_000, collect: false, checkResources });
+    void rangeEnd;
     laneWavs.push(wavPath);
   }
 
@@ -2358,8 +2400,10 @@ async function renderAudioTrack({ plan, sources, temporary, ffmpegExecutable, ch
   const mixedWav = path.join(temporary, 'audio-mixed.wav');
   const mixArgs = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
   for (const wav of laneWavs) mixArgs.push('-i', wav);
+  const mixFilter = `amix=inputs=${laneWavs.length}:normalize=0:dropout_transition=0,atrim=end_sample=${totalSamples}[amixout]`;
+  const mixFilterArgs = await filterComplexArgs(mixFilter, path.join(temporary, 'filter-audio-mix.txt'));
   mixArgs.push(
-    '-filter_complex', `amix=inputs=${laneWavs.length}:normalize=0:dropout_transition=0,atrim=end_sample=${totalSamples}[amixout]`,
+    ...mixFilterArgs,
     '-map', '[amixout]',
     '-c:a', 'pcm_f32le',
     '-ar', String(sampleRate),
@@ -2375,37 +2419,71 @@ const probeRate = (value) => {
   return d > 0 ? n / d : NaN;
 };
 
-function hybridVideoSourceSupported(metadata, plan, segments) {
+async function probeVideoFrameCount(file, { ffprobeExecutable, signal, run = directCutCommand }) {
+  if (!ffprobeExecutable) return null;
+  try {
+    const raw = await run(ffprobeExecutable, [
+      '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=nb_frames', '-of', 'json', file,
+    ], { signal, timeoutMs: 10_000 });
+    const parsed = JSON.parse(raw);
+    const nb = Number(parsed?.streams?.[0]?.nb_frames);
+    return Number.isInteger(nb) && nb >= 0 ? nb : null;
+  } catch {
+    return null;
+  }
+}
+
+function hybridVideoSourceSupported(metadata, plan, segments, { allowAlpha = false } = {}) {
   const streams = metadata?.streams ?? [];
   const videos = streams.filter((s) => s.codec_type === 'video');
   const video = videos[0];
   const avgRate = probeRate(video?.avg_frame_rate);
   const realRate = probeRate(video?.r_frame_rate);
+  const hasAlpha = streamHasAlpha(video);
+  const pixFmtSupported = OPAQUE_HYBRID_PIX_FMTS.test(video?.pix_fmt ?? '') || (allowAlpha && hasAlpha);
   if (videos.length !== 1 || !SUPPORTED_HYBRID_VIDEO_CODECS.has(video?.codec_name)
-    || !OPAQUE_HYBRID_PIX_FMTS.test(video?.pix_fmt ?? '')
+    || !pixFmtSupported
     || !integer(video.width, 2) || !integer(video.height, 2)
     || !(avgRate > 0 && avgRate <= 240) || !(realRate > 0 && realRate <= 240)
-    || !['1:1', undefined].includes(video.sample_aspect_ratio)
+    || !['1:1', '0:1', 'N/A', '', undefined].includes(video.sample_aspect_ratio)
     || !['progressive', 'unknown', undefined].includes(video.field_order)
-    || Math.abs(Number(video.start_time ?? 0)) > 0.5
-    || Math.abs(Number(metadata.format?.start_time ?? 0)) > 0.5) return false;
+    || Math.abs(Number(video.start_time ?? 0)) > 2.0
+    || Math.abs(Number(metadata.format?.start_time ?? 0)) > 2.0) return false;
   const rawRot = video.tags?.rotate ?? video.side_data_list?.find((d) => Number.isFinite(Number(d.rotation)))?.rotation ?? 0;
   const normRot = ((Math.round(Number(rawRot) || 0) % 360) + 360) % 360;
   const swapped = normRot === 90 || normRot === 270;
   const dispW = swapped ? video.height : video.width;
   const dispH = swapped ? video.width : video.height;
+  const isVfr = avgRate > 0 && realRate > 0 && Math.abs(avgRate - realRate) / Math.max(avgRate, realRate) > 0.02;
   const sourceFrames = Number(video.nb_frames);
-  const duration = Number(video.duration ?? metadata.format?.duration);
-  const segConsumed = (s) => Math.ceil(s.frames * (s.playbackRate ?? 1));
-  if (integer(sourceFrames, 1)) {
-    if (segments.some((s) => s.sourceFrame + segConsumed(s) > sourceFrames)) return false;
-  } else if (!(duration > 0) || segments.some((s) => (s.sourceFrame + segConsumed(s)) / plan.fps > duration + 0.1)) return false;
+  const streamDur = Number(video.duration);
+  const formatDur = Number(metadata.format?.duration);
+  const nbFramesDur = (!isVfr && integer(sourceFrames, 1) && avgRate > 0) ? (sourceFrames / avgRate) : NaN;
+  const reliableStreamDur = Number.isFinite(streamDur) && streamDur > 0
+    ? streamDur
+    : (Number.isFinite(formatDur) && formatDur > 0 ? formatDur : NaN);
+  const videoDurationSec = isVfr
+    ? reliableStreamDur
+    : (Number.isFinite(nbFramesDur) && nbFramesDur > 0
+        ? (Number.isFinite(reliableStreamDur) ? Math.min(reliableStreamDur, nbFramesDur) : nbFramesDur)
+        : reliableStreamDur);
+  const segRequiredEndSec = (s) => (
+    (s.sourceFrame ?? s.srcInFrame ?? 0) + (s.frames ?? (s.endFrame - s.startFrame)) * (s.playbackRate ?? 1)
+  ) / plan.fps;
+  const tolSec = Math.max(0.02, 0.75 / Math.max(plan.fps, avgRate || 30));
+  if (!(Number.isFinite(videoDurationSec) && videoDurationSec > 0)
+    || segments.some((s) => segRequiredEndSec(s) > videoDurationSec + tolSec)) {
+    return false;
+  }
   for (const segment of segments) Object.assign(segment, {
     sourceWidth: dispW,
     sourceHeight: dispH,
     sourceFps: avgRate,
+    sourceIsVfr: isVfr,
     sourcePixFmt: video.pix_fmt,
     sourceColorRange: video.color_range,
+    sourceCodec: video.codec_name,
+    sourceHasAlpha: hasAlpha,
     fit: plan.fit,
   });
   return true;
@@ -2435,15 +2513,18 @@ export async function inspectOverlayHybridExport(options, { run = directCutComma
       if (s.kind === 'video') baseVideoLeafSegs.push(s);
       else if (s.kind === 'transition') baseVideoLeafSegs.push(s.outgoingSeg, s.incomingSeg);
     }
+    const overlayVideoSegs = plan.overlayVideos ?? [];
 
     // Resolve .cube LUT paths before probing.
-    for (const seg of baseVideoLeafSegs) {
+    for (const seg of [...baseVideoLeafSegs, ...overlayVideoSegs]) {
       for (const eff of seg.localGaussianBlurs ?? []) {
         if (eff.kind === 'lut3d') {
           const resolved = options.resolveLutPath?.(eff.cubeRelPath) ?? defaultResolveLutPath(eff.cubeRelPath, assetsDirectory);
           if (!resolved) {
             if (!allowCompatSpans) return { declineReason: 'video-clip-effects' };
-            extraCompat.push({ from: seg.timelineFrame, to: seg.timelineFrame + seg.frames, compatAudio: false, reason: 'video-clip-effects' });
+            const from = seg.timelineFrame ?? seg.startFrame;
+            const to = seg.endFrame ?? (seg.timelineFrame + seg.frames);
+            extraCompat.push({ from, to, compatAudio: false, reason: 'video-clip-effects' });
           } else {
             eff.cubePath = resolved;
           }
@@ -2453,14 +2534,17 @@ export async function inspectOverlayHybridExport(options, { run = directCutComma
 
     const allSrcs = new Set([
       ...baseVideoLeafSegs.map((s) => s.src),
+      ...overlayVideoSegs.map((s) => s.src),
       ...plan.audioSegments.map((s) => s.src),
     ]);
 
     for (const src of allSrcs) {
       const videoSegs = baseVideoLeafSegs.filter((s) => s.src === src);
+      const ovSegs = overlayVideoSegs.filter((s) => s.src === src);
       const audioSegs = plan.audioSegments.filter((s) => s.src === src);
       const markBadSrc = (reason, audioBad) => {
         for (const s of videoSegs) extraCompat.push({ from: s.timelineFrame, to: s.timelineFrame + s.frames, compatAudio: audioBad, reason });
+        for (const s of ovSegs) extraCompat.push({ from: s.startFrame, to: s.endFrame, compatAudio: audioBad, reason });
         if (audioBad) {
           for (const s of audioSegs) extraCompat.push({ from: s.timelineStartFrame, to: s.timelineStartFrame + s.frames, compatAudio: true, reason });
         }
@@ -2497,23 +2581,27 @@ export async function inspectOverlayHybridExport(options, { run = directCutComma
       const remainingAudioSegs = plan.audioSegments.filter((s) => s.src === src);
       const audioOk = !remainingAudioSegs.length || (
         audioStream
-        && [1, 2].includes(audioStream.channels)
-        && Math.abs(Number(audioStream.start_time ?? 0)) <= 0.5
-        && Math.abs(Number(metadata.format?.start_time ?? 0)) <= 0.5
+        && Number(audioStream.channels) >= 1
+        && Number(audioStream.channels) <= 8
+        && Math.abs(Number(audioStream.start_time ?? 0)) <= 2.0
+        && Math.abs(Number(metadata.format?.start_time ?? 0)) <= 2.0
         && Number(audioStream.sample_rate) > 0
         && remainingAudioSegs.every((s) => Number(audioStream.duration) >= (s.sourceFrame + s.frames * (s.playbackRate ?? 1)) / plan.fps - 0.1)
       );
-      const videoOk = !videoSegs.length || hybridVideoSourceSupported(metadata, plan, videoSegs);
+      const allVideoChecks = [...videoSegs, ...ovSegs];
+      const videoOk = !allVideoChecks.length || hybridVideoSourceSupported(metadata, plan, allVideoChecks, { allowAlpha: true });
       if (!videoOk || !audioOk) {
         if (!allowCompatSpans) return { declineReason: 'source-metadata' };
         markBadSrc('source-metadata', !audioOk);
         continue;
       }
       const vStream = metadata.streams?.find((s) => s.codec_type === 'video');
-      const firstSeg = videoSegs[0];
+      const firstSeg = allVideoChecks[0];
       sources.set(src, {
         file,
         hasAudio: Boolean(audioStream),
+        hasAlpha: Boolean(firstSeg?.sourceHasAlpha ?? streamHasAlpha(vStream)),
+        codec: firstSeg?.sourceCodec ?? vStream?.codec_name,
         width: firstSeg?.sourceWidth ?? vStream?.width,
         height: firstSeg?.sourceHeight ?? vStream?.height,
       });
@@ -2537,6 +2625,8 @@ export async function inspectOverlayHybridExport(options, { run = directCutComma
     plan.compatFrames = rebuilt.compatFrames;
     plan.compatReasons = rebuilt.compatReasons;
     plan.baseSegments = rebuilt.baseSegments;
+    plan.overlayVideos = rebuilt.overlayVideos ?? [];
+    plan.mosaics = rebuilt.mosaics ?? [];
     plan.hybridMode = plan.compatSpans.length > 0 ? 'segmented-hybrid' : 'overlay-plates';
     const secondPass = await probeSourceSet();
     if (secondPass.declineReason) {
@@ -2548,7 +2638,7 @@ export async function inspectOverlayHybridExport(options, { run = directCutComma
   return { plan, sources: firstPass.sources };
 }
 
-export function splitOutputChunks(totalStart, totalEnd, workerCount, baseSegments = []) {
+export function splitOutputChunks(totalStart, totalEnd, workerCount, baseSegments = [], mosaics = []) {
   const total = totalEnd - totalStart;
   const minChunkFrames = 150;
   const count = Math.max(1, Math.min(workerCount, Math.floor(total / minChunkFrames) || 1));
@@ -2562,6 +2652,14 @@ export function splitOutputChunks(totalStart, totalEnd, workerCount, baseSegment
     const base = seg.timelineFrame - (seg.clipLocalStart ?? 0);
     for (const w of [seg.visualFade.fadeIn, seg.visualFade.fadeOut]) {
       if (w) avoidRanges.push([base + Math.floor(w.from), base + Math.ceil(w.until)]);
+    }
+  }
+  for (const m of mosaics) {
+    if ((m.fadeInFrames ?? 0) > 0) {
+      avoidRanges.push([m.startFrame, Math.min(m.endFrame, m.startFrame + m.fadeInFrames)]);
+    }
+    if ((m.fadeOutFrames ?? 0) > 0) {
+      avoidRanges.push([Math.max(m.startFrame, m.endFrame - m.fadeOutFrames), m.endFrame]);
     }
   }
   const nudgeOutsideFade = (frame, minFrame, maxFrame) => {
@@ -2679,7 +2777,7 @@ export async function tryOverlayHybridExport(options, dependencies = {}) {
     const blurMaskCache = new Map();
 
     const platesStart = Date.now();
-    const overlayState = buildOverlayOnlyState(plan.state);
+    const overlayState = buildOverlayOnlyState(plan.state, plan.underlayItemIds);
     const plateResult = await renderOverlayPlates({
       overlayState,
       originalState: plan.state,
@@ -2688,16 +2786,53 @@ export async function tryOverlayHybridExport(options, dependencies = {}) {
       onPhaseProgress: (renderedCount, totalPlateCount) => {
         const plateWeight = totalPlateCount > 0 ? Math.min(0.45, Math.max(0.05, totalPlateCount / (totalPlateCount + plan.frames * 0.25))) : 0;
         const frac = totalPlateCount > 0 ? renderedCount / totalPlateCount : 1;
-        onProgress?.(frac * plateWeight);
+        onProgress?.(frac * plateWeight * (plan.hasUnderlays ? 0.5 : 1));
       },
       signal,
     });
+    const { spans, plateFiles } = plateResult;
+    await normalizeOverlayPlatesToRgba({
+      plateFiles,
+      width: plan.width,
+      height: plan.height,
+      ffmpegExecutable,
+      signal,
+      run,
+    });
+    let underlaySpans = [];
+    let underlayPlateFiles = new Map();
+    if (plan.hasUnderlays) {
+      const underlayPlatesDir = path.join(temporary, 'underlay-plates');
+      await mkdir(underlayPlatesDir, { recursive: true });
+      const underlayState = buildUnderlayOnlyState(plan.state, plan.underlayItemIds);
+      const underlayResult = await renderOverlayPlates({
+        overlayState: underlayState,
+        originalState: plan.state,
+        plan: { ...plan, hasOverlays: true, hasCaptions: false, hasWatermark: false },
+        platesDir: underlayPlatesDir,
+        onPhaseProgress: (renderedCount, totalPlateCount) => {
+          const frac = totalPlateCount > 0 ? renderedCount / totalPlateCount : 1;
+          onProgress?.(0.15 + frac * 0.15);
+        },
+        signal,
+      });
+      underlaySpans = underlayResult.spans ?? [];
+      underlayPlateFiles = underlayResult.plateFiles ?? new Map();
+      await normalizeOverlayPlatesToRgba({
+        plateFiles: underlayPlateFiles,
+        width: plan.width,
+        height: plan.height,
+        ffmpegExecutable,
+        signal,
+        run,
+      });
+    }
     const platesMs = Date.now() - platesStart;
 
     signal.throwIfAborted();
-    const { spans, plateFiles } = plateResult;
-    const plateWeight = plateFiles.size > 0
-      ? Math.min(0.45, Math.max(0.05, plateFiles.size / (plateFiles.size + plan.frames * 0.25)))
+    const totalPlateCount = plateFiles.size + underlayPlateFiles.size;
+    const plateWeight = totalPlateCount > 0
+      ? Math.min(0.45, Math.max(0.05, totalPlateCount / (totalPlateCount + plan.frames * 0.25)))
       : 0;
     onProgress?.(plateWeight);
 
@@ -2738,8 +2873,31 @@ export async function tryOverlayHybridExport(options, dependencies = {}) {
           chunks.push(piece);
         } else {
           const pieceSegs = sliceBaseSegments(plan.baseSegments, piece.from, piece.to);
-          for (const sub of splitOutputChunks(piece.from, piece.to, workerCount, pieceSegs)) {
-            chunks.push({ kind: 'fast', from: sub.from, to: sub.to, spans });
+          const pieceMosaics = (plan.mosaics ?? []).filter((m) => m.endFrame > piece.from && m.startFrame < piece.to);
+          for (const sub of splitOutputChunks(piece.from, piece.to, workerCount, pieceSegs, pieceMosaics)) {
+            const subOverlays = (plan.overlayVideos ?? [])
+              .filter((ov) => ov.endFrame > sub.from && ov.startFrame < sub.to)
+              .sort((a, b) => a.startFrame - b.startFrame);
+            if (subOverlays.length <= MAX_OVERLAY_VIDEOS_PER_CHUNK) {
+              chunks.push({ kind: 'fast', from: sub.from, to: sub.to, spans, underlaySpans });
+              continue;
+            }
+            let ovSubStart = sub.from;
+            while (ovSubStart < sub.to) {
+              const activeInWindow = subOverlays.filter((ov) => ov.endFrame > ovSubStart && ov.startFrame < sub.to);
+              if (activeInWindow.length <= MAX_OVERLAY_VIDEOS_PER_CHUNK) {
+                chunks.push({ kind: 'fast', from: ovSubStart, to: sub.to, spans, underlaySpans });
+                break;
+              }
+              const kth = activeInWindow[MAX_OVERLAY_VIDEOS_PER_CHUNK];
+              const splitAt = Math.max(ovSubStart + 30, Math.min(sub.to - 1, kth.startFrame));
+              if (splitAt <= ovSubStart || splitAt >= sub.to) {
+                chunks.push({ kind: 'fast', from: ovSubStart, to: sub.to, spans, underlaySpans });
+                break;
+              }
+              chunks.push({ kind: 'fast', from: ovSubStart, to: splitAt, spans, underlaySpans });
+              ovSubStart = splitAt;
+            }
           }
         }
       }
@@ -2769,6 +2927,10 @@ export async function tryOverlayHybridExport(options, dependencies = {}) {
         else fastIndices.push(i);
       }
 
+      const verifyChunkFrames = !dependencies.run && !dependencies.probe && ffprobeExecutable
+        ? (file) => probeVideoFrameCount(file, { ffprobeExecutable, signal: chunkSignal, run })
+        : undefined;
+
       let nextFastPos = 0;
       const maxConcurrent = Math.max(1, Math.min(workerCount, fastIndices.length || 1));
       const fastWorkers = fastIndices.length > 0
@@ -2783,6 +2945,7 @@ export async function tryOverlayHybridExport(options, dependencies = {}) {
               plan: { ...plan, assetsDirectory },
               sources,
               plateFiles,
+              underlayPlateFiles,
               blankPngPath,
               temporary,
               blurMaskCache,
@@ -2795,6 +2958,7 @@ export async function tryOverlayHybridExport(options, dependencies = {}) {
               checkResources,
               signal: chunkSignal,
               run,
+              verifyChunkFrames,
             });
           }
         })
@@ -2850,6 +3014,12 @@ export async function tryOverlayHybridExport(options, dependencies = {}) {
           onFrame: (f) => reportChunkFrame(idx, Math.min(chFrames, Math.max(0, Number(f)))),
           checkResources,
         });
+        if (verifyChunkFrames) {
+          const actualFrames = await verifyChunkFrames(normFile);
+          if (Number.isInteger(actualFrames) && actualFrames !== chFrames) {
+            throw new Error(`Overlay-hybrid compat chunk ${idx} [${ch.from}, ${ch.to}) produced ${actualFrames} frames, expected ${chFrames}`);
+          }
+        }
         reportChunkFrame(idx, chFrames);
         chunkFiles[idx] = normFile;
       }
@@ -2904,9 +3074,10 @@ export async function tryOverlayHybridExport(options, dependencies = {}) {
         const spliceFilter = spliceConcatLabels.length === 1
           ? `${spliceFilters.join(';')};${spliceConcatLabels[0]}atrim=end_sample=${totalSamples}[aout]`
           : `${spliceFilters.join(';')};${spliceConcatLabels.join('')}concat=n=${spliceConcatLabels.length}:v=0:a=1,atrim=end_sample=${totalSamples}[aout]`;
+        const spliceFilterArgs = await filterComplexArgs(spliceFilter, path.join(temporary, 'filter-splice.txt'));
         await run(ffmpegExecutable, [
           ...spliceArgs,
-          '-filter_complex', spliceFilter,
+          ...spliceFilterArgs,
           '-map', '[aout]',
           '-c:a', 'pcm_f32le',
           '-ar', String(sampleRate),
@@ -2942,6 +3113,12 @@ export async function tryOverlayHybridExport(options, dependencies = {}) {
         frames: plan.frames, fps: plan.fps, inputBytes: await totalFileBytes([videoOnlyFile, audioWav]),
       });
       await run(ffmpegExecutable, muxArgs, { signal, timeoutMs, collect: false, checkResources });
+      if (!dependencies.run && !dependencies.probe && ffprobeExecutable) {
+        const finalFrames = await probeVideoFrameCount(stagingOut, { ffprobeExecutable, signal, run });
+        if (Number.isInteger(finalFrames) && finalFrames !== plan.frames) {
+          throw new Error(`Overlay-hybrid final output produced ${finalFrames} frames, expected ${plan.frames}`);
+        }
+      }
       muxMs = Date.now() - muxStart;
       return stagingOut;
     };
@@ -2990,7 +3167,7 @@ export async function tryOverlayHybridExport(options, dependencies = {}) {
       ...(plan.compatReasons?.length ? { compatReasons: plan.compatReasons } : {}),
       ...(encoded.encoder ? { encoder: encoded.encoder } : {}),
       ...(encoded.encoderFallbackReason ? { encoderFallbackReason: encoded.encoderFallbackReason } : {}),
-      plateCount: plateFiles.size,
+      plateCount: totalPlateCount,
       totalFrames: plan.frames,
       workers: usedWorkers,
       concurrencyFallback,

@@ -43,8 +43,8 @@ export interface EditorPanelLayout {
 
 /** Media library + preview above a full-width timeline; no embedded chat column. */
 export function useEditorPanelLayout(): EditorPanelLayout {
-  const [storedLibraryRatio, setLibraryRatio] = usePersistedState('openchatcut.libraryRatio.ui-v3', DEFAULT_LIBRARY_RATIO);
-  const [storedTimelineRatio, setTimelineRatio] = usePersistedState('openchatcut.timelineRatio.ui-v2', DEFAULT_TIMELINE_RATIO);
+  const [storedLibraryRatio, setLibraryRatio] = usePersistedState('openchatcut.libraryRatio.ui-v3', DEFAULT_LIBRARY_RATIO, { writeDebounceMs: 250 });
+  const [storedTimelineRatio, setTimelineRatio] = usePersistedState('openchatcut.timelineRatio.ui-v2', DEFAULT_TIMELINE_RATIO, { writeDebounceMs: 250 });
   const libraryRatio = clamp(finiteRatio(storedLibraryRatio, DEFAULT_LIBRARY_RATIO), MIN_LIBRARY_RATIO, 1 - MIN_PREVIEW_RATIO);
   const timelineRatio = clamp(finiteRatio(storedTimelineRatio, DEFAULT_TIMELINE_RATIO), MIN_TIMELINE_RATIO, 1 - MIN_UPPER_RATIO);
   const libraryRatioAtDragStart = useRef(libraryRatio);

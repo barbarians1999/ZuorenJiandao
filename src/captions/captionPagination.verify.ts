@@ -199,4 +199,17 @@ const frameEdgePages = [
 assert.equal(hasCaptionCueStartedAt(1001, 1000, 30, 999), true, 'frame-rounded cut activates adjacent cue at boundary');
 assert.equal(activeCaptionPages(frameEdgePages, 1000, 30)[0]?.id, 'f2', 'playhead at cut frame prefers following cue');
 
+const gapPages = [
+  { ...basePage, id: 'p1', laneId: 'auto', laneOrder: 0, page: { start: 0, end: 1000, words: [{ text: '前一句', start: 0, end: 1000 }] } },
+  { ...basePage, id: 'p2', laneId: 'auto', laneOrder: 0, page: { start: 3000, end: 4000, words: [{ text: '后一句', start: 3000, end: 4000 }] } },
+  { ...basePage, id: 'm1', laneId: 'manual', laneOrder: 1, manual: true, page: { start: 1200, end: 2800, words: [{ text: '手动插句', start: 1200, end: 2800 }] } },
+];
+assert.deepEqual(activeCaptionPages(gapPages, 1100, 30), [], 'ended auto cue does not linger across gap');
+assert.deepEqual(
+  activeCaptionPages(gapPages, 1800, 30).map((item) => item.id),
+  ['m1'],
+  'manual cue inside auto-lane gap renders alone without stacking ended auto cue',
+);
+assert.deepEqual(activeCaptionPages(gapPages, 4500, 30), [], 'ended trailing auto cue clears after endMs');
+
 console.log('caption pagination check passed');

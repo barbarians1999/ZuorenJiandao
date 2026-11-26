@@ -38,8 +38,6 @@ const transition={id:'tr',type:'audio-cross-fade' as const,trackId:'A1',outgoing
 const extended=audioPlaybackWindows(clips.slice(0,2),clips,[{id:'voice',name:'voice',kind:'audio',src:'/voice.wav',durationInFrames:18000}],[transition],30,30);
 assert.equal(extended[0].to,105,'crossfade tails remain mounted');
 assert.equal(extended[1].from,45,'crossfade head plus premount remains mounted');
-const edited:TimelineItem={...clips[0],id:'edited',startFrame:900,durationInFrames:60,deletedWordIdx:[1],
-  transcript:[{text:'one',start:0,end:1000},{text:'two',start:1000,end:2000},{text:'three',start:2000,end:3000}]};
-assert.deepEqual(audioPlaybackWindows([edited],[edited],[],[],30,30).map(w=>[w.from,w.to]),[[870,960]],'word deletion follows the existing edited sequence timing');
-assert.equal(audioPlaybackWindows([{...edited,deletedWordIdx:[0,1,2]}],[edited],[],[],30,30).length,0,'fully removed speech never mounts audio');
+const splitAudio: TimelineItem = { ...clips[0], id: 'edited', startFrame: 900, durationInFrames: 60, srcInFrame: 60 };
+assert.deepEqual(audioPlaybackWindows([splitAudio], [splitAudio], [], [], 30, 30).map((w) => [w.from, w.to]), [[870, 960]], 'audio clip mounts using its track startFrame and durationInFrames');
 console.log('videoAudioRouting.verify: passed');

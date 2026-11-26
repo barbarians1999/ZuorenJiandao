@@ -25,9 +25,6 @@ export function pastedTimingSnapshot(items: TimelineItem[], track: TrackId): str
 export function applyPastedRecognition(items: TimelineItem[], results: ReadonlyMap<string, TranscriptWord[]>): TimelineItem[] {
   return items.map((item) => results.has(item.id) ? {
     ...item, transcript: results.get(item.id)!, transcriptStale: false,
-    // Old ASR indices cannot be applied to freshly recognized words. Keep the
-    // media trim used by the current preview; only the temporary timing copy changes.
-    deletedWordIdx: [], silenceFrames: undefined, gapCapsMs: undefined,
-    transcriptPlayOrder: undefined, cutPadFrames: undefined, variants: undefined,
+    variants: undefined,
   } : item);
 }

@@ -9,6 +9,14 @@ import { captionsOnTrack, defaultTrackId, resolveTrackId, timelineTrackIds, trac
 import { hasOperationalTranscript } from '../../transcript/types';
 import { applyDisplayTextEntries } from './captions-word-overrides';
 import { isCaptionMotionPreset } from '../../captions/captionMotion';
+import { newManualCaptions } from '../../captions/manualCaptions';
+import {
+  execCueAdd,
+  execCueRemove,
+  execCueUpdate,
+  execImportSrt,
+  execPasteTranscript,
+} from './captions-manual';
 
 // edit_captions uses one tool with a multi-action dispatcher. Most action data
 // arrives as a JSON string in `json`. Backed by OpenChatCut's captions overlay
@@ -128,9 +136,16 @@ export async function editCaptions(args: Args, ctx: AgentContext): Promise<Resul
   if (action === 'enable') {
     const transcribed = s.items.filter((it) => hasOperationalTranscript(it));
     const hasManualWords = !!c?.words?.length || !!c?.sourceEntries?.some((entry) => entry.words !== undefined);
-    if (!transcribed.length && !hasManualWords) return { error: 'no current transcript to caption; run transcribe_track first' };
     const presetArg = str(args.preset);
     const template: CaptionTemplate = presetArg && presetArg !== 'auto' && isTemplate(presetArg) ? presetArg : (c?.template ?? 'plain');
+    if (!transcribed.length && !hasManualWords) {
+      if (json.manual === true) {
+        const manualBase = { ...newManualCaptions(), template };
+        if (c) ctx.commands.updateCaptions(manualBase); else ctx.commands.setCaptions(manualBase);
+        return { ok: true, enabled: true, manual: true, template, pacing: manualBase.pacing };
+      }
+      return { error: 'no current transcript to caption; run transcribe_track first' };
+    }
     const pacing: CaptionPacing = c?.pacing ?? 'phrase';
     const base: CaptionsData = { ...(c ?? {}), enabled: true, template, pacing };
     const currentSource = c?.sourceItemId ? s.items.find((item) => item.id === c.sourceItemId) : undefined;
@@ -138,6 +153,9 @@ export async function editCaptions(args: Args, ctx: AgentContext): Promise<Resul
     if (c) ctx.commands.updateCaptions(base); else ctx.commands.setCaptions(base);
     return { ok: true, enabled: true, template, pacing, note: 'captions read the anchored source; for ALL audible tracks use action=source_set {mode:"timeline"}.' };
   }
+  if (action === 'cue_add') return execCueAdd(json, c, ctx, s, target);
+  if (action === 'import_srt') return execImportSrt(json, c, ctx, s, target, requested);
+  if (action === 'paste_transcript') return execPasteTranscript(args, json, c, ctx, s, target, requested);
   if (action === 'disable') {
     if (c) ctx.commands.updateCaptions({ enabled: false });
     return { ok: true, enabled: false };
@@ -162,6 +180,9 @@ export async function editCaptions(args: Args, ctx: AgentContext): Promise<Resul
   }
 
   if (!c) return { error: `captions are off; action=enable first (then ${action})` };
+
+  if (action === 'cue_update') return execCueUpdate(json, c, ctx, s, target);
+  if (action === 'cue_remove') return execCueRemove(json, c, ctx, s, target);
 
   // ── style / layout / display / track ──
   if (action === 'style') {

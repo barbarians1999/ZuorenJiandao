@@ -10,12 +10,14 @@ import {
   type TimelineState,
   type TrackId,
 } from '../editor/types';
-import { itemEditOpts, itemWindow, keptSegments } from '../transcript/edit';
-import { hasOperationalTranscript } from '../transcript/types';
 import { sourceWindowForTimelineRange, timelineFramesToSourceFrames } from '../editor/sourceLimit';
 import { motionGraphicRenderFilename, motionGraphicRenderKey } from './motionGraphicRefs';
 import { safeSourceFilename, stripInvalidXml10Characters } from '../media/sourceFilename';
 import { backgroundFillStrengthOf, isBackgroundFillActive } from '../editor/backgroundFill';
+import {
+  AUDIO_RATIONAL_DENOMINATOR,
+  resolveClipSourceWindow,
+} from '../../shared/timeline-media-schedule.mjs';
 
 /** Asset URL prefix: it is in mediaDir on the disk and has the same name. */
 const UPLOAD_PREFIX = '/media/uploads/';
@@ -81,24 +83,6 @@ export function resolveAssetSrc(src: string, mediaDir?: string): string {
   return `file://${src}`;
 }
 
-/**
- * Transcript editing of audio files (word deletion/mute/block rearrangement) is split into multiple segments at the playback layer
- * (AudioClip of TimelineComposition), the export must be split into the same multiple asset-clips —
- * Otherwise, NLE will play according to the continuous source interval, and the deleted words will be played back, and the entire subsequent content will be lost.
- * Share keptSegments with the rendering layer to ensure that both sides always have the same true source.
- * Deleting words from video files does not change the picture (plays continuously forever), so only audio needs to be segmented.
- */
-function transcriptSegments(
-  item: TimelineItem,
-  fps: number,
-): ReturnType<typeof keptSegments> | null {
-  if (item.kind !== 'audio' || !hasOperationalTranscript(item)) return null;
-  return keptSegments(item.transcript, new Set(item.deletedWordIdx ?? []), fps, item.startFrame, {
-    ...itemEditOpts(item),
-    window: itemWindow(item),
-  });
-}
-
 /** XML 1.0 character filtering plus attribute/text escaping. */
 function escapeXml(raw: string): string {
   return stripInvalidXml10Characters(raw)
@@ -126,7 +110,10 @@ function sanitizeId(raw: string): string {
  * industry practice denominator.
  */
 function rationalTime(frames: number, fps: number): string {
-  if (Number.isInteger(fps)) return `${frames}/${fps}s`;
+  if (Number.isInteger(frames) && Number.isInteger(fps)) return `${frames}/${fps}s`;
+  if (!Number.isInteger(frames)) {
+    return `${Math.round((frames / fps) * AUDIO_RATIONAL_DENOMINATOR)}/${AUDIO_RATIONAL_DENOMINATOR}s`;
+  }
   const scale = 1000;
   return `${Math.round(frames * scale)}/${Math.round(fps * scale)}s`;
 }
@@ -187,11 +174,7 @@ function collectAssets(state: TimelineState): Map<string, AssetInfo> {
   const bySrc = new Map<string, AssetInfo>();
   for (const item of state.items) {
     if (!item.src) continue;
-    // The source interval used in segmented parts is determined by the last paragraph, which may far exceed the duration after editing (word deletion removes the middle)
-    const segs = transcriptSegments(item, state.fps);
-    const usedTo = segs?.length
-      ? Math.max(...segs.map((seg) => seg.srcEndFrame))
-      : sourceWindowForTimelineRange(item, 0, item.durationInFrames).endFrame;
+    const usedTo = sourceWindowForTimelineRange(item, 0, item.durationInFrames).endFrame;
     const libraryAsset = state.assets?.find((asset) => asset.src === item.src);
     const full = Math.max(usedTo, libraryAsset?.durationInFrames ?? 0);
     const existing = bySrc.get(item.src);
@@ -365,14 +348,8 @@ function itemToSpineElement(
   const name = escapeXml(item.name);
   if (item.src) {
     const ref = assets.get(item.src)?.id ?? '';
-    const segs = transcriptSegments(item, fps);
-    if (segs?.length) {
-      // One clip for each reserved segment:offset is already the absolute frame of the timeline (keptSegments passed in startFrame)
-      return segs
-        .map((seg) => `<asset-clip ref="${ref}" lane="${lane}" offset="${rationalTime(seg.fromFrame, fps)}" duration="${rationalTime(seg.durFrames, fps)}" start="${rationalTime(seg.srcStartFrame, fps)}" name="${name}"/>`)
-        .join('\n        ');
-    }
-    const attributes = `ref="${ref}" lane="${lane}" offset="${offset}" duration="${duration}" start="${rationalTime(item.srcInFrame ?? 0, fps)}" name="${name}"`;
+    const srcWin = resolveClipSourceWindow(item, fps);
+    const attributes = `ref="${ref}" lane="${lane}" offset="${offset}" duration="${duration}" start="${rationalTime(srcWin.srcInFrameExact, fps)}" name="${name}"`;
     const retime = retimeXml(item, fps);
     const children = [retime, backgroundFillActive ? backgroundFillMetadataXml(item) : '']
       .filter(Boolean)

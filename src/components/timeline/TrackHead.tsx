@@ -13,7 +13,7 @@ import { TrackAudioControl } from '../audio/TrackAudioControl';
 
 
 const flagBtn = (active: boolean): React.CSSProperties => ({
-  width: 20, height: 20, display: 'grid', placeItems: 'center',
+  width: 18, height: 18, display: 'grid', placeItems: 'center',
   background: active ? theme.panelAlt : 'none', border: 'none', borderRadius: 4, cursor: 'pointer', padding: 0,
   color: active ? theme.accent : theme.textMuted, opacity: 1, flexShrink: 0,
 });
@@ -32,6 +32,11 @@ interface TrackHeadProps {
   onDelete: () => void;
   onStartReorder?: (event: ReactPointerEvent<HTMLDivElement>) => void;
   isReorderSource?: boolean;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onOpenContextMenu?: (x: number, y: number) => void;
   /** caption menu open on this track → raise head above neighbors */
   menuElevated: boolean;
   width: number;
@@ -56,7 +61,8 @@ function trackDeleteTitle(
 }
 
 export function TrackHead({
-  trackId, kind, isText = false, isEffect = false, trackName, customName, config, deleteBlockedReason, onDelete, onStartReorder, isReorderSource = false, menuElevated, width,
+  trackId, kind, isText = false, isEffect = false, trackName, customName, config, deleteBlockedReason, onDelete, onStartReorder, isReorderSource = false,
+  canMoveUp = false, canMoveDown = false, onMoveUp, onMoveDown, onOpenContextMenu, menuElevated, width,
   commands, onToggleCaptions, onToggleCaptionMenu, onToggleDuckMenu, duckMenuPos, onCloseDuckMenu, onBackDuckMenu, children,
 }: TrackHeadProps) {
   const t = useT();
@@ -72,10 +78,51 @@ export function TrackHead({
     : config.role === 'follower' ? `${baseTitle} · ${t('配乐（说话时压低）')}`
       : baseTitle;
   return (
-      
-
-    <div className={`cc-track-head${isReorderSource ? ' is-reorder-source' : ''}`} style={{ width, cursor: onStartReorder ? 'grab' : undefined, ...(menuElevated ? { zIndex: 40 } : {}) }} title={t('按住上下拖动调整轨道顺序')} onPointerDown={(event) => { if (!onStartReorder || event.button !== 0) return; const target = event.target instanceof Element ? event.target : null; if (target?.closest('button, input, select, textarea, [role="menu"], .cc-caption-style-menu, .cc-duck-menu')) return; onStartReorder(event); }}>
+    <div
+      className={`cc-track-head${isReorderSource ? ' is-reorder-source' : ''}`}
+      style={{ width, cursor: onStartReorder ? 'grab' : undefined, ...(menuElevated ? { zIndex: 40 } : {}) }}
+      title={t('点上下箭头或按住上下拖动调整轨道顺序')}
+      onLostPointerCapture={(event) => event.stopPropagation()}
+      onPointerDown={(event) => {
+        if (!onStartReorder || event.button !== 0) return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest('button, input, select, textarea, [role="menu"], .cc-caption-style-menu, .cc-duck-menu')) return;
+        onStartReorder(event);
+      }}
+      onContextMenu={(event) => {
+        if (!onOpenContextMenu) return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest('[role="menu"], .cc-caption-style-menu, .cc-duck-menu')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onOpenContextMenu(event.clientX, event.clientY);
+      }}
+    >
       <div className="cc-track-head-controls">
+        {(onMoveUp || onMoveDown) && (
+          <div className="cc-track-order-stepper" role="group" aria-label={t('调整轨道顺序')}>
+            <button
+              type="button"
+              className="cc-track-step-btn"
+              disabled={!canMoveUp}
+              title={canMoveUp ? t('上移轨道层级') : t('已在同类轨道最上层')}
+              aria-label={t('上移轨道层级')}
+              onClick={onMoveUp}
+            >
+              <Icon name="chevronUp" size={10} strokeWidth={2.2} />
+            </button>
+            <button
+              type="button"
+              className="cc-track-step-btn"
+              disabled={!canMoveDown}
+              title={canMoveDown ? t('下移轨道层级') : t('已在同类轨道最下层')}
+              aria-label={t('下移轨道层级')}
+              onClick={onMoveDown}
+            >
+              <Icon name="chevronDown" size={10} strokeWidth={2.2} />
+            </button>
+          </div>
+        )}
         <span className={`cc-track-name is-${kind}${isText ? ' is-text' : ''}${isEffect ? ' is-effect' : ''}`} title={t('{name}（{id}）', { name: nameTitle, id: trackId })} style={{ background: tagColor }}>
           <span className="cc-track-name-title">{trackName}</span>
         </span>

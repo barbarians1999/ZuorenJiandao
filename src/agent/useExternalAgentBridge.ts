@@ -150,11 +150,12 @@ async function pollEditor(
   signal: AbortSignal,
 ): Promise<void> {
   while (!signal.aborted) {
-    const binding = runtime.binding();
+    const cachedBaseRevision = browserProjectOwnership(projectId, runtime.getEditorInstanceId())?.baseRevision;
+    const binding = runtime.binding(cachedBaseRevision);
     const query = new URLSearchParams({
       projectId,
       editorId: binding.editorInstanceId,
-      baseRevision: browserProjectOwnership(projectId, binding.editorInstanceId)?.baseRevision ?? binding.baseRevision,
+      baseRevision: cachedBaseRevision ?? binding.baseRevision,
     });
     const response = await fetch(`/api/external-agent/poll?${query}`, {
       headers: editorBridgeHeaders(false, ownership.registrationCapability),

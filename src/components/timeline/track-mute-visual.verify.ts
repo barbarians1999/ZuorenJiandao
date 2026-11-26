@@ -11,6 +11,8 @@ assert.match(lane, /muted\s*&&\s*\(it\.kind === 'audio' \|\| it\.kind === 'video
 assert.match(lane, /is-audio-muted/);
 assert.match(lane, /cc-clip-muted-indicator[\s\S]*?volumeOff/);
 assert.match(css, /\.cc-timeline-clip\.is-audio-muted::after/);
+assert.match(css, /\.cc-timeline-clip\[data-clip-kind="video"\]\.is-audio-muted::after\s*\{\s*display:\s*none;/);
+assert.match(css, /\.cc-timeline-clip\[data-clip-kind="video"\]\.is-audio-muted\s+\.cc-clip-wave\.on-video/);
 assert.match(css, /\.cc-clip-muted-indicator/);
 
 console.log('track-mute-visual.verify: muted audio-bearing clips are visibly distinct');

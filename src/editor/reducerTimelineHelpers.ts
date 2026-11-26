@@ -1,8 +1,6 @@
 import type { MediaAsset, MediaAssetRelinkPatch, TimelineItem, TimelineState, TrackId, TrackKind } from './types';
 import { defaultTrackId, timelineTrackIds, trackKind } from './types';
 import { remainingSourceFrames, sourceFramesToTimelineFrames, timelineFramesToSourceFrames } from './sourceLimit';
-import { editedFrames, itemEditOpts } from '../transcript/edit';
-import { hasOperationalTranscript } from '../transcript/types';
 import type { CaptionsData } from '../captions/types';
 import type { Action } from './reducerActions';
 
@@ -89,18 +87,6 @@ export function relinkTiming(
   };
 }
 
-// recompute a transcript-edited clip's duration under its current edit state
-
-
-export function editedDuration(it: TimelineItem, deleted: Set<number>, fps: number): number {
-  if (!hasOperationalTranscript(it)) return it.durationInFrames;
-  // Duration after word operation = Full length of word stream after editing − There is left clipping (only audio: the starting point of the window for word-driven rendering).
-  // The left trim is retained after word deletion/silencing; the right trim is reset to "all remaining". video+transcript go
-  // Continuous rendering, srcInFrame is media frame semantics and does not participate in the word flow window.
-  const trim = it.kind === 'audio' ? (it.srcInFrame ?? 0) : 0;
-  return Math.max(1, editedFrames(it.transcript!, deleted, fps, itemEditOpts(it)) - trim);
-}
-
 /**
  * Starting from `fromFrame`, collect the following same-track connected chain
  * until the first gap. Legacy overlapping clips still count as connected so
@@ -136,16 +122,6 @@ export function retimePatchForItem(s: TimelineState, target: TimelineItem, actio
   let durationInFrames = Math.max(1, action.durationInFrames === undefined
     ? target.durationInFrames
     : Math.round(action.durationInFrames));
-  if (target.kind === 'audio' && hasOperationalTranscript(target)) {
-    const total = editedFrames(
-      target.transcript,
-      new Set(target.deletedWordIdx ?? []),
-      s.fps,
-      itemEditOpts(target),
-    );
-    srcInFrame = Math.min(srcInFrame ?? 0, Math.max(0, total - 1));
-    durationInFrames = Math.min(durationInFrames, Math.max(1, total - srcInFrame));
-  }
   const sourceLimit = remainingSourceFrames(target, srcInFrame ?? 0, s.assets);
   if (sourceLimit !== null) durationInFrames = Math.min(durationInFrames, sourceLimit);
   return {

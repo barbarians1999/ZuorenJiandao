@@ -28,9 +28,10 @@ import {
 } from './project-store-agent-session.ts';
 import { createProjectDocumentStoreOperation } from './project-store-project-document.ts';
 import {
-  initializeSqliteProjectStore,
+  ensureSqliteStoreReady,
   sqliteDeleteEntry,
   sqliteDeleteProjectEntries,
+  sqliteHasEntry,
   sqliteReadAll,
   sqliteReadEntry,
   sqliteStoreEnabled,
@@ -230,7 +231,7 @@ async function migrateLegacyStore(): Promise<void> {
 
 let legacyStoreReady: Promise<void> | undefined;
 async function ensureStoreReady(): Promise<void> {
-  await initializeSqliteProjectStore();
+  await ensureSqliteStoreReady();
   // SQLite backend: no JSON dir / .ready / legacy-file migration needed; the
   // database self-creates its directory and schema (phase 1 adds import).
   if (sqliteStoreEnabled()) return;
@@ -300,7 +301,7 @@ export async function setStoredEntry(key: string, value: unknown): Promise<void>
           // SQLite mode: documents live in the kv table, not the JSON dir.
           const projectKey = `project:${item.id}`;
           const present = sqliteStoreEnabled()
-            ? (await sqliteReadEntry(projectKey)).found
+            ? sqliteHasEntry(projectKey)
             : await access(entryPath(projectKey)).then(() => true);
           if (present) existing.push(item);
         } catch {

@@ -3,6 +3,8 @@
 import assert from 'node:assert';
 import type { TimelineItem, TimelineState, ProjectDoc, Timeline } from '../editor/types';
 import { makeDraft } from '../editor/store';
+import { reduce } from '../editor/reduce';
+import { resolveTranscriptUnit } from '../transcript/trackEditCompiler';
 import { serializeTimeline } from './serialize';
 import { applyScript } from './apply';
 import { CURRENT_PROJECT_VERSION } from '../../shared/project-version';
@@ -14,7 +16,7 @@ const speechWords = [...W(['Hello', 'brave', 'new', 'world.']), ...W(['Keep', 't
 
 const speech: TimelineItem = {
   id: 'it_speech', track: 'A1', startFrame: 0, durationInFrames: 101,
-  name: 'voice.mp3', kind: 'audio', src: '/a.mp3', transcript: speechWords, deletedWordIdx: [],
+  name: 'voice.mp3', kind: 'audio', src: '/a.mp3', transcript: speechWords,
 };
 const clipA: TimelineItem = { id: 'it_a', track: 'V1', startFrame: 0, durationInFrames: 44, name: 'a.mp4', kind: 'video', src: '/a.mp4' };
 const clipB: TimelineItem = { id: 'it_b', track: 'V1', startFrame: 74, durationInFrames: 46, name: 'b.mp4', kind: 'video', src: '/b.mp4' };
@@ -41,14 +43,15 @@ assert.ok(md.includes(`script-stamp:${stamp}`), 'stamp comment');
   assert.strictEqual(d.takeActions().length, 0, 'no actions recorded');
 }
 
-// ── 2. word strike → deletion (删词=删视频) ──
+// ── 2. word strike → deletion (删词=删音频轨道片段) ──
 {
   const d = makeDraft(doc(state));
   const edited = md.replace('[s1] Hello brave new world.', '[s1] Hello ~~brave new~~ world.');
   applyScript(d.getState, d.commands, edited);
-  const it = d.getState().items.find((x) => x.id === 'it_speech')!;
-  assert.deepStrictEqual([...(it.deletedWordIdx ?? [])].sort(), [1, 2], 'brave+new deleted');
-  assert.ok(it.durationInFrames < 101, 'duration re-derived shorter');
+  const unit = resolveTranscriptUnit(d.getState(), 'it_speech')!;
+  assert.deepStrictEqual([...unit.deletedWordIdx].sort(), [1, 2], 'brave+new deleted on track');
+  const totalDur = unit.clips.reduce((sum, c) => sum + c.durationInFrames, 0);
+  assert.ok(totalDur < 101, 'duration re-derived shorter');
 }
 
 // ── 3. whole-row strike → whole segment deleted ──
@@ -56,23 +59,20 @@ assert.ok(md.includes(`script-stamp:${stamp}`), 'stamp comment');
   const d = makeDraft(doc(state));
   const edited = md.replace('[s2] Keep this sentence.', '~~[s2] Keep this sentence.~~');
   applyScript(d.getState, d.commands, edited);
-  const it = d.getState().items.find((x) => x.id === 'it_speech')!;
-  assert.deepStrictEqual([...(it.deletedWordIdx ?? [])].sort(), [4, 5, 6], 'segment 2 words deleted');
+  const unit = resolveTranscriptUnit(d.getState(), 'it_speech')!;
+  assert.deepStrictEqual([...unit.deletedWordIdx].sort(), [4, 5, 6], 'segment 2 words deleted');
 }
 
 // ── 4. restore: re-adding previously deleted words ──
 {
-  const withDeleted: TimelineState = {
-    ...state,
-    items: state.items.map((it) => (it.id === 'it_speech' ? { ...it, deletedWordIdx: [1, 2], durationInFrames: 70 } : it)),
-  };
+  const withDeleted = reduce(state, { type: 'deleteWords', id: 'it_speech', idxs: [1, 2] });
   const cur = serializeTimeline(withDeleted);
   assert.ok(cur.md.includes('[s1] Hello world.'), 'deleted words absent from serialization');
   const d = makeDraft(doc(withDeleted));
   const edited = cur.md.replace('[s1] Hello world.', '[s1] Hello brave new world.');
   const r = applyScript(d.getState, d.commands, edited);
-  const it = d.getState().items.find((x) => x.id === 'it_speech')!;
-  assert.deepStrictEqual(it.deletedWordIdx ?? [], [], 'words restored');
+  const unit = resolveTranscriptUnit(d.getState(), 'it_speech')!;
+  assert.deepStrictEqual(unit.deletedWordIdx, [], 'words restored');
   assert.ok(r.changes.some((c) => c.includes('恢复')), 'restore audited');
 }
 
@@ -114,8 +114,8 @@ assert.ok(md.includes(`script-stamp:${stamp}`), 'stamp comment');
   const d = makeDraft(doc(state));
   const edited = md.replace('[s1] Hello brave new world.', '[s1] hello BRAVE ~~new~~ world');
   applyScript(d.getState, d.commands, edited);
-  const it = d.getState().items.find((x) => x.id === 'it_speech')!;
-  assert.deepStrictEqual([...(it.deletedWordIdx ?? [])], [2], 'only ~~new~~ deleted despite case/punct drift');
+  const unit = resolveTranscriptUnit(d.getState(), 'it_speech')!;
+  assert.deepStrictEqual([...unit.deletedWordIdx], [2], 'only ~~new~~ deleted despite case/punct drift');
 }
 
 console.log('script.check OK');

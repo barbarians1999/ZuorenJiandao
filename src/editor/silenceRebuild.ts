@@ -5,7 +5,6 @@ import type { Action } from './reduce';
 import type { TimelineItem } from './types';
 import { sourceFramesToTimelineFrames, sourceWindowForTimelineRange } from './sourceLimit';
 import type { SilenceSpan } from '../audio/silence';
-import { hasOperationalTranscript } from '../transcript/types';
 
 /** The cut segments are too fragmented and meaningless: if the reserved segments between static segments are shorter than this number of frames, they will be merged and deleted. */
 const MIN_KEEP_FRAMES = 6;
@@ -131,8 +130,5 @@ export function silenceRemovalBlocker(item: TimelineItem): string | null {
   if (!item.src) return '无媒体源';
   if ((item.playbackRate ?? 1) !== 1) return '已变速(playbackRate≠1) — 先删静音再变速,或用 clean_script';
   if (item.zoom) return '带动画缩放(zoom) — 分段会打断缩放曲线,先移除 zoom';
-  if (hasOperationalTranscript(item) && (item.deletedWordIdx?.length || item.silenceFrames !== undefined || item.gapCapsMs)) {
-    return '已有词级编辑/静音压缩 — 转写 clip 请用 clean_script 的静音上限(它按词间隙精确处理)';
-  }
   return null;
 }

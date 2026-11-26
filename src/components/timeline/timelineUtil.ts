@@ -255,6 +255,7 @@ export interface Drag {
   plannedState?: TimelineState;
   planError?: string;
   limitMessage?: string;
+  foldGroupId?: string;
   newTrackDrop?: boolean;
   newTrackPlacement?: 'top' | 'bottom';
 }

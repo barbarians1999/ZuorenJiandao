@@ -8,7 +8,9 @@ import {
   timelineTrackIds, trackAlias, trackKind, isTextTrack, type TrackId,
 } from '../../editor/types';
 import { slipPreview as buildSlipPreview } from '../../editor/slip';
+import { isFoldGroupVisuallyCollapsed, resolveFoldGroupSpan } from '../../editor/foldGroups';
 import { mainTrackId } from '../../editor/magneticTimeline';
+import { hasPotentialClipAudio } from '../../../shared/timeline-media-schedule.mjs';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import type { FxClip } from './ClipContextMenu';
 import { useRecorder } from '../../audio/recorder';
@@ -37,7 +39,7 @@ import {
   seekTimelineFromPointer, timelineGestureHasDragged, timelinePointerShouldSeek,
   timelinePointerStartKind, collectTimelineSeekBoundaries, snapTimelineSeekFrame, timelineSeekContinuousFrameAtClientX,
 } from './timelineSeek';
-import { createTimelineAutoScrollController } from './timelineAutoScroll';
+import { createTimelineAutoScrollController, isPlayheadVisibleForPlaybackFollow, playbackPageScrollLeft } from './timelineAutoScroll';
 import {
   HEADER_W, MAX_ROW, MIN_ROW, RULER_H, TRACK_ROW, buildTimelineIndexes,
   rulerMajorSeconds, rulerMinorCount, timelineFrameWindow, timelinePinnedItemIds,
@@ -47,6 +49,10 @@ import { useT } from '../../i18n/locale';
 import type { TimelineProps } from './timelineTypes';
 import { useTimelineTrackMenus } from './useTimelineTrackMenus';
 import { useTimelineMediaActions } from './useTimelineMediaActions';
+import { timelineAttachmentFeedback } from './timelineAttachmentFeedback';
+import type { TimelineState } from '../../editor/types';
+
+const EMPTY_SELECTED_IDS: string[] = [];
 
 export function useTimelineController({
   state, commands, playerRef, projectId, onRecordVoiceover, shortcutApiRef,
@@ -56,17 +62,46 @@ export function useTimelineController({
 }: TimelineProps) {
   const t = useT();
 
-  const total = useMemo(() => timelineFitTotalFrames(state), [state]);
+  const {
+    items: stateItems,
+    fps: stateFps,
+    tracks: stateTracks,
+    trackOrder: stateTrackOrder,
+    captions: stateCaptions,
+    transitions: stateTransitions,
+    markers: stateMarkers,
+  } = state;
+  const total = useMemo(
+    () => timelineFitTotalFrames({
+      items: stateItems,
+      fps: stateFps,
+      tracks: stateTracks,
+      trackOrder: stateTrackOrder,
+      captions: stateCaptions,
+    } as TimelineState),
+    [stateCaptions, stateFps, stateItems, stateTrackOrder, stateTracks],
+  );
   const empty = total === 0;
   const liveStateRef = useRef(state);
   liveStateRef.current = state;
   const onScrubActiveChangeRef = useRef(onScrubActiveChange);
   onScrubActiveChangeRef.current = onScrubActiveChange;
-  const trackIds = timelineTrackIds(state);
-  const indexes = useMemo(
-    () => buildTimelineIndexes(state),
-    [state],
+  const stateMainTrackId = state.interaction?.mainTrackId;
+  const trackIds = useMemo(
+    () => timelineTrackIds({
+      items: stateItems,
+      tracks: stateTracks,
+      trackOrder: stateTrackOrder,
+      captions: stateCaptions,
+      interaction: stateMainTrackId ? { mainTrackId: stateMainTrackId } : undefined,
+    } as TimelineState),
+    [stateCaptions, stateItems, stateMainTrackId, stateTrackOrder, stateTracks],
   );
+  const indexes = useMemo(
+    () => buildTimelineIndexes({ items: stateItems, transitions: stateTransitions } as TimelineState),
+    [stateItems, stateTransitions],
+  );
+  const attachmentFeedback = useMemo(() => timelineAttachmentFeedback(state), [state]);
   const innerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const seekGestureRef = useRef<{
@@ -74,6 +109,7 @@ export function useTimelineController({
     button: number;
     startX: number;
     startY: number;
+    startFrame: number | null;
     dragged: boolean;
     kind: 'blank' | 'scrub';
     seekAllowed: boolean;
@@ -120,8 +156,9 @@ export function useTimelineController({
   const endAutoScroll = useCallback((pointerId?: number) => {
     autoScrollRef.current?.stop(pointerId);
   }, []);
-  const [hoverPreviewFrame, setHoverPreviewFrame] = useState<number | null>(null);
+  const hoverGuideRef = useRef<HTMLDivElement | null>(null);
   const hoverPreviewFrameRef = useRef<number | null>(null);
+  const hoverPreviewNotifyTimerRef = useRef<number | null>(null);
   const [captionSelectionMovePreview, setCaptionSelectionMovePreview] = useState<TimelineSelectionMovePreview | null>(null);
   const captionClipboardRef = useRef<CaptionTimelineClipboard | null>(null);
   const timelineId = (state as { id?: string }).id;
@@ -137,7 +174,7 @@ export function useTimelineController({
     if (next !== current) commands.applyState(next);
   }, [commands]);
   const getPlayheadFrameRef = useRef<() => number>(() => 0);
-  const { zoom, zoomMin, setZoom, zoomBy, fitToView, pixelsPerFrame: px, trackScale } =
+  const { zoom, zoomMin, setZoom, zoomBy, fitToView, getExpectedScrollLeft, pixelsPerFrame: px, trackScale } =
     useTimelineZoomController({ scrollRef, totalFrames: total, fps: state.fps, projectId, timelineId, getPlayheadFrame: () => getPlayheadFrameRef.current() });
   const metaOf = (id: TrackId) => {
     const kind = trackKind(state, id);
@@ -151,27 +188,55 @@ export function useTimelineController({
   // playhead / marker placement can follow the media element's own clock during
   // playback (see usePlayheadPaint). Audio items are the source of truth for
   // beat marking; video timelines keep the wall-clock behavior.
+  const audibleAudioItems = useMemo(
+    () => state.items.filter((it) =>
+      it.kind === 'audio' && !!it.src && hasPotentialClipAudio(it)
+      && !state.tracks?.[it.track]?.muted && !state.tracks?.[it.track]?.hidden,
+    ),
+    [state.items, state.tracks],
+  );
+  const audibleAudioItemsRef = useRef(audibleAudioItems);
+  audibleAudioItemsRef.current = audibleAudioItems;
   const getAudibleItem = useCallback((playheadFrame: number): AudibleAudioItem | null => {
-    const s = liveStateRef.current;
-    const audible = s.items.find((it) =>
-      it.kind === 'audio' && !!it.src && (it.volume ?? 1) > 0
-      && playheadFrame >= it.startFrame && playheadFrame < it.startFrame + it.durationInFrames
-      && !s.tracks?.[it.track]?.muted && !s.tracks?.[it.track]?.hidden,
+    const candidates = audibleAudioItemsRef.current;
+    if (!candidates.length) return null;
+    const audible = candidates.find((it) =>
+      it.kind === 'audio' && !!it.src
+      && playheadFrame >= it.startFrame && playheadFrame < it.startFrame + it.durationInFrames,
     );
     if (!audible) return null;
     return {
       startFrame: audible.startFrame,
+      durationInFrames: audible.durationInFrames,
       playbackRate: audible.playbackRate ?? 1,
       srcInFrame: audible.srcInFrame ?? 0,
       src: audible.src!,
     };
   }, []);
+  const playbackFollowSuspendedRef = useRef(false);
+  const programmaticScrollRef = useRef<{ expected: number; expiresAt: number } | null>(null);
+  const onPlaybackFrameRef = useRef<(frame: number, info: { started: boolean; jumpedBack: boolean }) => void>(() => undefined);
   const {
     playheadRef, playheadLineRef, toolbarTimecodeRef, rulerTimecodeRef,
-    paintPlayhead, persistHead, setTimecodePreviewFrame, playing,
+    paintPlayhead, syncPlayheadSeek, persistHead, setTimecodePreviewFrame, playing,
   } =
-    usePlayheadPaint({ playerRef, projectId, timelineId, fps: state.fps, total, px, scrubSeek, getAudibleItem });
+    usePlayheadPaint({
+      playerRef,
+      projectId,
+      timelineId,
+      fps: state.fps,
+      total,
+      px,
+      scrubSeek,
+      getAudibleItem,
+      onPlaybackFrame: (frame, info) => onPlaybackFrameRef.current(frame, info),
+    });
   getPlayheadFrameRef.current = () => playheadRef.current;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  useEffect(() => {
+    if (!playing) playbackFollowSuspendedRef.current = false;
+  }, [playing, projectId, timelineId]);
   // editing mode (Selection A / Blade B / Trim N / Pen P). selection =
   // drag/move; blade = click a clip to cut it there; trim = edge-trim ripples
   // following clips; pen = draw opacity keyframes on the selected clip.
@@ -188,12 +253,8 @@ export function useTimelineController({
   const [hoverPreviewEnabled, setHoverPreviewEnabled] = usePersistedState('cc.hoverPreviewEnabled', true);
   const hoverPreviewEnabledRef = useRef(hoverPreviewEnabled);
   hoverPreviewEnabledRef.current = hoverPreviewEnabled;
-  const textClipCount = state.items.filter((item) => item.kind === 'text' || item.kind === 'motion-graphic').length;
-  const captionsVisible = state.captionsHidden === true
-    ? false
-    : state.captionsHidden === false
-      ? true
-      : captionTrackEntries(state).some((entry) => entry.captions?.enabled) || textClipCount > 0;
+  const captionsVisible = state.captionsHidden !== true
+    && captionTrackEntries(state).some((entry) => entry.captions?.enabled);
   const {
     captionMenu, setCaptionMenu, trackMenu, setTrackMenu, transitionMenu, setTransitionMenu,
     captionError, setCaptionError, duckMenu, setDuckMenu,
@@ -270,6 +331,33 @@ export function useTimelineController({
     window: timelineFrameWindow(0, 0, px, 720),
   });
   const syncVisibleWindowRef = useRef<() => void>(() => {});
+  onPlaybackFrameRef.current = (frame, info) => {
+    if (info.started) playbackFollowSuspendedRef.current = false;
+    if (
+      playbackFollowSuspendedRef.current
+      || scrubSeek.pending
+      || seekGestureRef.current !== null
+      || autoScrollRef.current?.getActivePointerId() !== null
+    ) {
+      return;
+    }
+    const el = scrollRef.current;
+    if (!el) return;
+    const nextScrollLeft = playbackPageScrollLeft({
+      frame,
+      pixelsPerFrame: pxRef.current,
+      headerWidth: HEADER_W,
+      clientWidth: el.clientWidth,
+      scrollLeft: el.scrollLeft,
+      maxScrollLeft: Math.max(0, el.scrollWidth - el.clientWidth),
+      revealIfBeforeLeft: info.started || info.jumpedBack,
+    });
+    if (nextScrollLeft === null) return;
+    const prevScrollLeft = el.scrollLeft;
+    el.scrollLeft = nextScrollLeft;
+    programmaticScrollRef.current = { expected: el.scrollLeft, expiresAt: performance.now() + 400 };
+    if (el.scrollLeft !== prevScrollLeft) syncVisibleWindowRef.current();
+  };
   // content is at least as wide as the panel, so track rows/ruler never stop
   // short of the right edge when the project is short or zoomed out.
   const innerW = Math.max(HEADER_W + total * px + 240, clientWidth);
@@ -302,7 +390,11 @@ export function useTimelineController({
       }
       const nextWindow = timelineFrameWindow(scrollLeft, width, curPx, 720);
       windowMetaRef.current = { px: curPx, clientWidth: width, window: nextWindow };
-      setVisibleWindow(nextWindow);
+      setVisibleWindow((prev) => (
+        prev.startFrame === nextWindow.startFrame && prev.endFrame === nextWindow.endFrame
+          ? prev
+          : nextWindow
+      ));
     };
     syncVisibleWindowRef.current = () => {
       if (windowMetaRef.current.clientWidth > 0) syncWindow();
@@ -324,6 +416,43 @@ export function useTimelineController({
   useLayoutEffect(() => {
     syncVisibleWindowRef.current();
   }, [px]);
+  const effectiveVisibleWindow = useMemo(() => {
+    const meta = windowMetaRef.current;
+    if (meta.px !== px && meta.clientWidth > 0) {
+      return timelineFrameWindow(getExpectedScrollLeft(), meta.clientWidth, px, 720);
+    }
+    return visibleWindow;
+  }, [getExpectedScrollLeft, px, visibleWindow]);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (!playingRef.current || scrubSeek.pending) return;
+      const programmatic = programmaticScrollRef.current;
+      if (
+        programmatic
+        && performance.now() <= programmatic.expiresAt
+        && Math.abs(el.scrollLeft - programmatic.expected) <= 2
+      ) {
+        programmaticScrollRef.current = null;
+        return;
+      }
+      const visibility = isPlayheadVisibleForPlaybackFollow({
+        frame: playheadRef.current,
+        pixelsPerFrame: pxRef.current,
+        headerWidth: HEADER_W,
+        clientWidth: el.clientWidth,
+        scrollLeft: el.scrollLeft,
+      });
+      if (visibility === 'before' || visibility === 'after') {
+        playbackFollowSuspendedRef.current = true;
+      } else if (visibility === 'inside') {
+        playbackFollowSuspendedRef.current = false;
+      }
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [playheadRef, scrubSeek, scrollRef]);
 
   // Equal-height tracks; scale via Alt+Shift+wheel, Alt+wheel scrolls horizontally.
   // Duck role is set via agent edit_track / track menu — not permanent track-header widgets.
@@ -422,10 +551,22 @@ export function useTimelineController({
     state, commands, liveStateRef, onDropExternalFiles, placeMode, t,
   });
 
-  const seekBoundaries = useMemo(() => collectTimelineSeekBoundaries(state), [state]);
+  const seekBoundaries = useMemo(
+    () => collectTimelineSeekBoundaries({
+      items: stateItems,
+      markers: stateMarkers,
+      tracks: stateTracks,
+      trackOrder: stateTrackOrder,
+      captions: stateCaptions,
+      fps: stateFps,
+    } as TimelineState),
+    [stateCaptions, stateFps, stateItems, stateMarkers, stateTrackOrder, stateTracks],
+  );
   const seekPointerFrame = (frame: number) => {
+    playbackFollowSuspendedRef.current = false;
+    clearHoverPreview();
     const clamped = Math.max(0, Math.min(frame, total - 1));
-    seekTimelineFromPointer(playerRef.current, clamped, paintPlayhead);
+    seekTimelineFromPointer(playerRef.current, clamped, syncPlayheadSeek);
   };
 
   const scrubFrameAtClientX = (clientX: number) => {
@@ -434,8 +575,10 @@ export function useTimelineController({
     return snapTimelineSeekFrame(raw, seekBoundaries, { pixelsPerFrame: px, totalFrames: total, snapping });
   };
   const seekTo = (clientX: number) => {
+    playbackFollowSuspendedRef.current = false;
+    clearHoverPreview();
     const frame = scrubFrameAtClientX(clientX);
-    scrubSeek.commit(frame, paintPlayhead);
+    scrubSeek.commit(frame, syncPlayheadSeek);
     return frame;
   };
   const scrubTo = (clientX: number, fromScroll = false) => {
@@ -446,7 +589,7 @@ export function useTimelineController({
       gesture.scrubbed = true;
       onScrubActiveChangeRef.current?.(true);
     }
-    scrubSeek.move(scrubFrameAtClientX(clientX - gesture.grabOffsetPx), paintPlayhead);
+    scrubSeek.move(scrubFrameAtClientX(clientX - gesture.grabOffsetPx), syncPlayheadSeek);
   };
   seekClientXRef.current = scrubTo;
 
@@ -461,14 +604,17 @@ export function useTimelineController({
     const maxScrollLeft = Math.max(0, el.scrollWidth - el.clientWidth);
     const nextScrollLeft = Math.max(0, Math.min(maxScrollLeft, frame * px - usable * 0.35));
     el.scrollLeft = nextScrollLeft;
+    programmaticScrollRef.current = { expected: el.scrollLeft, expiresAt: performance.now() + 400 };
     syncVisibleWindowRef.current();
   };
 
   const seekFrame = (f: number) => {
+    playbackFollowSuspendedRef.current = false;
+    clearHoverPreview();
     scrubSeek.cancel();
     const c = Math.max(0, Math.min(f, total - 1));
     playerRef.current?.seekTo(c);
-    paintPlayhead(c);
+    syncPlayheadSeek(c);
     revealPlayheadInViewport(c);
   };
 
@@ -490,11 +636,26 @@ export function useTimelineController({
   // over 60 moves, against 200 once coalesced.
   const hoverFrames = useRef<FrameCoalescer<number> | null>(null);
   hoverFrames.current ??= createFrameCoalescer<number>(requestAnimationFrame, cancelAnimationFrame);
+  const paintHoverGuide = (frame: number | null) => {
+    const el = hoverGuideRef.current;
+    if (!el) return;
+    if (frame === null) {
+      el.style.display = 'none';
+      el.style.transform = '';
+    } else {
+      el.style.display = '';
+      el.style.transform = `translate3d(${HEADER_W + frame * pxRef.current}px,0,0)`;
+    }
+  };
   const clearHoverPreview = () => {
     hoverFrames.current?.cancel();
+    if (hoverPreviewNotifyTimerRef.current !== null) {
+      window.clearTimeout(hoverPreviewNotifyTimerRef.current);
+      hoverPreviewNotifyTimerRef.current = null;
+    }
     if (hoverPreviewFrameRef.current === null) return;
     hoverPreviewFrameRef.current = null;
-    setHoverPreviewFrame(null);
+    paintHoverGuide(null);
     setTimecodePreviewFrame(null);
     onHoverPreviewFrameChange?.(null);
   };
@@ -505,10 +666,26 @@ export function useTimelineController({
     const frame = frameAtClientX(clientX);
     if (frame === hoverPreviewFrameRef.current) return;
     hoverPreviewFrameRef.current = frame;
-    setHoverPreviewFrame(frame);
+    paintHoverGuide(frame);
     setTimecodePreviewFrame(frame);
-    onHoverPreviewFrameChange?.(frame);
+    if (hoverPreviewNotifyTimerRef.current !== null) {
+      window.clearTimeout(hoverPreviewNotifyTimerRef.current);
+      hoverPreviewNotifyTimerRef.current = null;
+    }
+    if (frame === null) {
+      onHoverPreviewFrameChange?.(null);
+    } else {
+      hoverPreviewNotifyTimerRef.current = window.setTimeout(() => {
+        hoverPreviewNotifyTimerRef.current = null;
+        if (hoverPreviewFrameRef.current === frame) {
+          onHoverPreviewFrameChange?.(frame);
+        }
+      }, 110);
+    }
   };
+  useLayoutEffect(() => {
+    if (hoverPreviewFrameRef.current !== null) paintHoverGuide(hoverPreviewFrameRef.current);
+  }, [px]);
   const updateHoverPreview = (event: ReactPointerEvent<HTMLDivElement>) => {
     // Clearing stays synchronous: the moment a drag or playback starts, the
     // stale hover marker has to go, and dropping it a frame late is visible.
@@ -520,7 +697,13 @@ export function useTimelineController({
   // A scheduled frame must not fire after unmount.
   useEffect(() => {
     const coalescer = hoverFrames.current;
-    return () => coalescer?.cancel();
+    return () => {
+      coalescer?.cancel();
+      if (hoverPreviewNotifyTimerRef.current !== null) {
+        window.clearTimeout(hoverPreviewNotifyTimerRef.current);
+        hoverPreviewNotifyTimerRef.current = null;
+      }
+    };
   }, []);
   useEffect(() => {
     clearHoverPreviewForActivity(
@@ -552,6 +735,7 @@ export function useTimelineController({
     });
 
     if (kind === 'scrub') {
+      clearHoverPreview();
       const captureTarget = playheadGrip ?? ruler;
       if (!captureTarget) return;
       const rect = playheadLineGrip ? innerRef.current?.getBoundingClientRect() : null;
@@ -560,18 +744,20 @@ export function useTimelineController({
         : 0;
       seekGestureRef.current = {
         pointerId: event.pointerId, button: event.button, startX: event.clientX, startY: event.clientY,
-        dragged: false, kind: 'scrub', seekAllowed: !pickModeRef.current, grabOffsetPx, captureTarget,
+        startFrame: null, dragged: false, kind: 'scrub', seekAllowed: !pickModeRef.current, grabOffsetPx, captureTarget,
         lineGrab: !!playheadLineGrip, scrubbed: false,
       };
       beginAutoScroll(event.pointerId, event.clientX, event.clientY);
       return;
     }
     if (kind !== 'blank') return;
+    clearHoverPreview();
     seekGestureRef.current = {
       pointerId: event.pointerId,
       button: event.button,
       startX: event.clientX,
       startY: event.clientY,
+      startFrame: frameAtClientX(event.clientX),
       dragged: false,
       kind: 'blank',
       seekAllowed: !pickModeRef.current,
@@ -594,15 +780,20 @@ export function useTimelineController({
       seekGestureRef.current = null;
       if (gesture.kind === 'blank' && gesture.seekAllowed
         && timelinePointerShouldSeek(gesture.button, pickModeRef.current, gesture.dragged)) {
-        const frame = frameAtClientX(event.clientX);
+        const frame = gesture.startFrame ?? frameAtClientX(event.clientX);
         if (frame !== null) {
           seekPointerFrame(frame);
           persistHead(frame);
         }
       } else if (gesture.kind === 'scrub' && gesture.seekAllowed && !pickModeRef.current
-        && gesture.captureTarget?.hasPointerCapture(event.pointerId)
-        && (!gesture.lineGrab || gesture.scrubbed || Math.abs(event.clientX - gesture.startX) >= 1)) {
-        persistHead(seekTo(event.clientX - gesture.grabOffsetPx));
+        && gesture.captureTarget?.hasPointerCapture(event.pointerId)) {
+        if (gesture.scrubbed || gesture.dragged || (gesture.lineGrab && Math.abs(event.clientX - gesture.startX) >= 1)) {
+          persistHead(seekTo(event.clientX - gesture.grabOffsetPx));
+        } else if (!gesture.lineGrab) {
+          persistHead(playheadRef.current);
+        } else {
+          scrubSeek.cancel(paintPlayhead);
+        }
       } else if (gesture.kind === 'scrub') {
         scrubSeek.cancel(paintPlayhead);
       }
@@ -654,31 +845,49 @@ export function useTimelineController({
   }, [projectId, timelineId, scrubSeek]);
   useEffect(() => () => onHoverPreviewFrameChange?.(null), [onHoverPreviewFrameChange]);
 
-  // blade (B): split the selected clip at the playhead. splitItem no-ops if the
-  // playhead is outside the clip, so no guard needed here.
+  // blade (B / Ctrl+B): split the selected clip (or collapsed fold group) at the playhead.
   const bladeSelected = () => {
-    const frame = playheadRef.current;
-    const isSplittable = (item: (typeof state.items)[number]) =>
-      !state.tracks?.[item.track]?.locked
-      && frame > item.startFrame
-      && frame < item.startFrame + item.durationInFrames;
-    const primary = state.selectedId ? indexes.itemById.get(state.selectedId) : undefined;
-    if (primary && isSplittable(primary)) {
-      commands.splitItem(primary.id, frame);
-      return;
-    }
-    const selectedSplittable = selectedIdsOf(state)
-      .map((id) => indexes.itemById.get(id))
-      .find((item): item is (typeof state.items)[number] => !!item && isSplittable(item));
-    if (selectedSplittable) {
-      commands.splitItem(selectedSplittable.id, frame);
-      return;
-    }
-    const main = mainTrackId(state);
-    const fallback = (main ? state.items.find((item) => item.track === main && isSplittable(item)) : undefined)
-      ?? state.items.find((item) => !isTextTrack(state, item.track, main) && isSplittable(item))
-      ?? state.items.find(isSplittable);
-    if (fallback) commands.splitItem(fallback.id, frame);
+    const currentState = commands.getState?.() ?? liveStateRef.current;
+    const frame = Math.round(playheadRef.current);
+    const trySplit = (item: (typeof currentState.items)[number]): boolean => {
+      if (currentState.tracks?.[item.track]?.locked) return false;
+      const group = currentState.foldGroups?.find((entry) => entry.itemIds.includes(item.id));
+      if (group && isFoldGroupVisuallyCollapsed(group)) {
+        const span = resolveFoldGroupSpan(currentState, group);
+        if (span && frame > span.startFrame && frame < span.startFrame + span.durationInFrames) {
+          commands.splitFoldGroup(group.id, frame);
+          return true;
+        }
+        return false;
+      }
+      if (frame > item.startFrame && frame < item.startFrame + item.durationInFrames) {
+        commands.splitItem(item.id, frame);
+        return true;
+      }
+      return false;
+    };
+    const isSplittable = (item: (typeof currentState.items)[number]) => {
+      if (currentState.tracks?.[item.track]?.locked) return false;
+      const group = currentState.foldGroups?.find((entry) => entry.itemIds.includes(item.id));
+      if (group && isFoldGroupVisuallyCollapsed(group)) {
+        const span = resolveFoldGroupSpan(currentState, group);
+        return !!span && frame > span.startFrame && frame < span.startFrame + span.durationInFrames;
+      }
+      return frame > item.startFrame && frame < item.startFrame + item.durationInFrames;
+    };
+    const primary = currentState.selectedId
+      ? currentState.items.find((item) => item.id === currentState.selectedId)
+      : undefined;
+    if (primary && trySplit(primary)) return;
+    const selectedSplittable = selectedIdsOf(currentState)
+      .map((id) => currentState.items.find((item) => item.id === id))
+      .find((item): item is (typeof currentState.items)[number] => !!item && isSplittable(item));
+    if (selectedSplittable && trySplit(selectedSplittable)) return;
+    const main = mainTrackId(currentState);
+    const fallback = (main ? currentState.items.find((item) => item.track === main && isSplittable(item)) : undefined)
+      ?? currentState.items.find((item) => !isTextTrack(currentState, item.track, main) && isSplittable(item))
+      ?? currentState.items.find(isSplittable);
+    if (fallback) trySplit(fallback);
   };
   // markers (manage_markers): add at the playhead + open its note editor
   const [editMarker, setEditMarker] = useState<string | null>(null);
@@ -686,7 +895,8 @@ export function useTimelineController({
   // Shortcut API assembly + I/O interval/JKL shuttle/fragment clipboard (the whole machine is in useTimelineShortcuts)
   const { zoneIn, zoneOut } = useTimelineShortcuts({
     shortcutApiRef, state, commands, playerRef, playheadRef, total,
-    seekFrame, paintPlayhead, editMode, setEditMode, selectedCaptions, setSnapping, fitToView, zoomBy,
+    seekFrame, paintPlayhead, cancelPendingScrubSeek: () => scrubSeek.cancel(),
+    editMode, setEditMode, selectedCaptions, setSnapping, fitToView, zoomBy,
     bladeSelected, setEditMarker, fxClip, setFxClip,
     copySelectedCaptions: copyCaptionSelections, pasteCaptionClipboard,
     onSelectCaptionRange: onMarqueeCaptionSelect,
@@ -696,7 +906,11 @@ export function useTimelineController({
   }, [onZoneChange, zoneIn, zoneOut]);
 
   const editing = markers.find((m) => m.id === editMarker) ?? null;
-  const selectedIds = selectedIdsOf(state);
+  const selectedIdsKey = selectedIdsOf(state).join('\u0000');
+  const selectedIds = useMemo(
+    () => (selectedIdsKey ? selectedIdsKey.split('\u0000') : EMPTY_SELECTED_IDS),
+    [selectedIdsKey],
+  );
   const pinnedItemIds = useMemo(() => timelinePinnedItemIds(
     selectedIds,
     [drag?.id, drag?.rightId, pointer.penDrag?.itemId, ctxMenu?.id, libDropTarget, pickDrag?.item?.id,
@@ -705,18 +919,18 @@ export function useTimelineController({
         return previous && (previous.startFrame !== next.startFrame || previous.durationInFrames !== next.durationInFrames
           || previous.track !== next.track || previous.srcInFrame !== next.srcInFrame) ? [next.id] : [];
       }))],
-    state.transitions ?? [],
+    stateTransitions ?? [],
   ), [
     ctxMenu?.id, drag?.id, drag?.plannedState, drag?.rightId, indexes, libDropTarget, pickDrag?.item?.id,
-    pointer.penDrag?.itemId, selectedIds, state.transitions,
+    pointer.penDrag?.itemId, selectedIds, stateTransitions,
   ]);
 
   return {
     state, commands, playerRef, onRecordVoiceover, onReviewItem, onDropExternalFiles,
     selectedCaptions, onSelectCaption, onMarqueeCaptionSelect,
-    t, total, empty, trackIds, indexes, innerRef, scrollRef,
+    t, total, empty, trackIds, indexes, attachmentFeedback, innerRef, scrollRef,
     relinkInputRef, trackInsertInputRef,
-    hoverPreviewFrame, captionSelectionMovePreview, setCaptionSelectionMovePreview,
+    hoverGuideRef, captionSelectionMovePreview, setCaptionSelectionMovePreview,
     commitTimelineSelectionMove, zoom, zoomMin, setZoom, px, trackScale, metaOf,
     playheadRef, playheadLineRef, toolbarTimecodeRef, rulerTimecodeRef,
     paintPlayhead, playing, editMode, placeMode, setPlaceMode, snapping, hoverPreviewEnabled, setHoverPreviewEnabled,
@@ -726,7 +940,7 @@ export function useTimelineController({
     closeTrackDrillMenu, backFromTrackDrillMenu, recorder, toggleCaptions,
     pickMode, ctxMenu, setCtxMenu, fxClip, setFxClip, clipJob, setClipJob,
     beginRelink, relinkFile, beginTrackInsert, insertTrackFiles, exportMg, convertToVideo,
-    innerW, visibleWindow, rowHeightOf, tracksHeight,
+    innerW, visibleWindow: effectiveVisibleWindow, rowHeightOf, tracksHeight,
     majorFrames, minorFrames, minorTicksPerMajor, rulerSpanFrames,
     frameFromClientX, trackFromClientY, copyCaptionSelections, pasteCaptionClipboard,
     pointer, drag, marquee, pickDrag, startPick, onPointerMove, onPointerUp, onPointerCancel,

@@ -1,7 +1,6 @@
 // Runnable check: `npx tsx src/editor/slip.verify.ts`.
 import assert from 'node:assert/strict';
 import { CURRENT_PROJECT_VERSION } from '../../shared/project-version';
-import { editedStreamFrames, itemEditOpts, itemWindow, keptSegments } from '../transcript/edit';
 import { historyReduce, reduce, type History } from './reduce';
 import { planSlip, slipPreview } from './slip';
 import type { MediaAsset, ProjectDoc, Timeline, TimelineItem, TimelineState } from './types';
@@ -40,7 +39,6 @@ const transcriptItem = (playbackRate: number, patch: Partial<TimelineItem> = {})
     durationInFrames: 30,
     srcInFrame: 15,
     transcript,
-    deletedWordIdx: [1],
     ...patch,
   });
 
@@ -112,72 +110,42 @@ for (const [rate, expectedSrcIn] of [
 }
 
 {
-  for (const rate of [0.5, 1, 2]) {
+  for (const [rate, expectedSrcIn, expectedDelta] of [
+    [0.5, 20, 10],
+    [1, 25, 10],
+    [2, 35, 10],
+  ] as const) {
     const candidate = transcriptItem(rate);
     const plan = planSlip(stateOf(candidate), candidate.id, 10);
     assert.equal(plan.ok, true);
     if (plan.ok) {
-      assert.equal(plan.srcInFrame, 25, `word-driven audio at ${rate}x moves 1:1 in edited-stream frames`);
-      assert.equal(plan.appliedDeltaInFrames, 10);
-      assert.equal(plan.sourceDomain, 'edited-stream');
-      assert.deepEqual(plan.sourceWindow, { startFrame: 25, endFrame: 55 });
+      assert.equal(plan.srcInFrame, expectedSrcIn, `transcribed audio at ${rate}x uses unified continuous media coordinates`);
+      assert.equal(plan.appliedDeltaInFrames, expectedDelta);
+      assert.equal(plan.sourceDomain, 'media');
     }
   }
 }
 
 {
-  const candidate = transcriptItem(2);
+  const candidate = transcriptItem(2, { srcInFrame: 200 });
   const preview = slipPreview(stateOf(candidate), candidate.id, 999);
   assert.ok(preview);
-  assert.equal(preview?.plan.sourceDomain, 'edited-stream');
-  assert.deepEqual(preview?.plan.sourceWindow, { startFrame: 30, endFrame: 60 });
-  assert.equal(
-    preview?.sourceOutFrame,
-    59,
-    '2x transcript preview and inspector use the edited-stream outpoint instead of multiplying by playbackRate',
-  );
+  assert.equal(preview?.plan.sourceDomain, 'media');
+  assert.equal(preview?.plan.srcInFrame, 240);
+  assert.equal(preview?.plan.sourceWindow.endFrame, 300);
 }
 
 {
-  const candidate = transcriptItem(2);
-  const deleted = new Set(candidate.deletedWordIdx);
-  const editOpts = itemEditOpts(candidate);
-  const total = editedStreamFrames(transcript, deleted, 30, editOpts);
-  assert.equal(total, 60, 'deleted middle word leaves a 60-frame edited stream, not the 300-frame asset');
-
-  for (const [delta, expectedSrcIn] of [
-    [-999, 0],
-    [999, 30],
-  ] as const) {
-    const plan = planSlip(stateOf(candidate), candidate.id, delta);
-    assert.equal(plan.ok, true);
-    if (!plan.ok) continue;
-    assert.equal(plan.srcInFrame, expectedSrcIn);
-    assert.ok(plan.sourceWindow.startFrame >= 0);
-    assert.ok(plan.sourceWindow.endFrame <= total, 'slip window stays inside the edited stream');
-
-    const slipped = { ...candidate, srcInFrame: plan.srcInFrame };
-    const visibleSegments = keptSegments(transcript, deleted, 30, 0, {
-      ...itemEditOpts(slipped),
-      window: itemWindow(slipped),
-    });
-    assert.ok(visibleSegments.length > 0, 'maximum left/right slip still renders kept transcript audio');
-  }
-}
-
-{
-  const candidate = transcriptItem(1, { deletedWordIdx: [0, 1, 2] });
-  const state = stateOf(candidate);
-  assert.equal(editedStreamFrames(transcript, new Set(candidate.deletedWordIdx), 30, itemEditOpts(candidate)), 0);
-  const unavailable = planSlip(state, candidate.id, 10);
+  const candidate = transcriptItem(1, { srcInFrame: 0, durationInFrames: 300 });
+  const noHandleState = stateOf(candidate);
+  const unavailable = planSlip(noHandleState, candidate.id, 10);
   assert.deepEqual(
     { ok: unavailable.ok, code: unavailable.ok ? null : unavailable.code },
     { ok: false, code: 'no-source-handles' },
   );
   assert.strictEqual(
-    reduce(state, { type: 'slip', id: candidate.id, deltaInFrames: 10 }),
-    state,
-    'an unusable word stream leaves the original item and timeline state untouched',
+    reduce(noHandleState, { type: 'slip', id: candidate.id, deltaInFrames: 10 }),
+    noHandleState,
   );
 }
 

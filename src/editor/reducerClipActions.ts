@@ -1,6 +1,5 @@
 import type { TimelineItem, TimelineState } from './types';
 import { trackEnd } from './types';
-import { hasOperationalTranscript } from '../transcript/types';
 import { capFade } from './clipFit';
 import { scaleItemKeyframes, upsertKeyframe } from './keyframes';
 import { timelineFramesToSourceFrames } from './sourceLimit';
@@ -18,6 +17,7 @@ import { clampMoveDeltaToTrackGaps } from './trackCollision';
 import { attachToMainClip, mainTrackId, planMagneticInsert, planMagneticMove, planMagneticTrim } from './magneticTimeline';
 import type { Action } from './reducerActions';
 import { contiguousFollowers, EMPTY_CURVE, isRelinkableMediaKind, lockedItem, relinkTiming, retimePatchForItem, type RelinkableTimelineItem } from './reducerTimelineHelpers';
+import { MAX_SPEED_RATE, MIN_SPEED_RATE } from './speedDuration';
 
 export function applyClipAction(s: TimelineState, a: Action): TimelineState | undefined {
   switch (a.type) {
@@ -269,11 +269,7 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
       if (lockedItem(s, a.id) || !Number.isFinite(a.rate)) return s;
       const target = s.items.find((it) => it.id === a.id);
       if (!target) return s;
-      // Word-driven audio is rate-free by design: the kept-segment stream is
-      // rendered without playbackRate, so changing it would desync duration
-      // vs rendered audio and captions (audio overruns the clip end).
-      if (target.kind === 'audio' && hasOperationalTranscript(target)) return s;
-      const rate = Math.max(0.1, Math.min(8, a.rate));
+      const rate = Math.max(MIN_SPEED_RATE, Math.min(MAX_SPEED_RATE, a.rate));
       // preserve the source span: newDuration = sourceSpan / rate
       const sourceSpan = timelineFramesToSourceFrames(target, target.durationInFrames);
       const durationInFrames = Math.max(1, Math.round(sourceSpan / rate));
@@ -282,6 +278,32 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
       // The right edge moves with the speed → push the following same-track clip to fill in/get out of the way. Push only the closest continuous chain:
       // The gap intentionally left by the user is the boundary. One speed change should not drag away everything behind the entire track.
       const rippled = deltaEnd === 0 ? null : contiguousFollowers(s.items, target.track, oldEnd);
+      const shiftedStarts = new Map<string, number>();
+      if (rippled?.size) {
+        for (const it of s.items) {
+          if (rippled.has(it.id)) shiftedStarts.set(it.id, Math.max(0, it.startFrame + deltaEnd));
+        }
+      }
+      // If slowing down expands past an empty gap and collides with later clips on the same track,
+      // push only the collided followers forward so introducesTrackOverlap does not silently reject the edit.
+      if (deltaEnd > 0) {
+        let frontier = target.startFrame + durationInFrames;
+        if (rippled?.size) {
+          for (const it of s.items) {
+            if (rippled.has(it.id)) {
+              frontier = Math.max(frontier, shiftedStarts.get(it.id)! + it.durationInFrames);
+            }
+          }
+        }
+        const remaining = s.items
+          .filter((it) => it.track === target.track && it.id !== a.id && !rippled?.has(it.id) && it.startFrame >= oldEnd)
+          .toSorted((x, y) => x.startFrame - y.startFrame);
+        for (const it of remaining) {
+          if (it.startFrame >= frontier) break;
+          shiftedStarts.set(it.id, frontier);
+          frontier = frontier + it.durationInFrames;
+        }
+      }
       return {
         ...s,
         items: s.items.map((it) => {
@@ -293,8 +315,9 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
               ...(it.keyframes ? { keyframes: scaleItemKeyframes(it.keyframes, durationInFrames / it.durationInFrames) } : {}),
             });
           }
-          if (rippled?.has(it.id)) {
-            return { ...it, startFrame: Math.max(0, it.startFrame + deltaEnd) };
+          const nextStart = shiftedStarts.get(it.id);
+          if (nextStart !== undefined) {
+            return { ...it, startFrame: nextStart };
           }
           return it;
         }),

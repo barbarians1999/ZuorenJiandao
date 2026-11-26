@@ -20,22 +20,22 @@ try {
     onCreate() { throw Error('render must not create subtitles'); },
   }));
   const unrecognized = html([voice]);
-  assert.match(unrecognized, /识别时间并生成字幕/);
-  assert.doesNotMatch(unrecognized, /disabled=""[^>]*>识别时间并生成字幕/);
+  assert.match(unrecognized, />生成字幕<\/button>/);
+  assert.doesNotMatch(unrecognized, /disabled=""[^>]*>生成字幕/);
   assert.match(unrecognized, /你好，这是口播文字稿。/);
-  assert.match(unrecognized, /生成前会再次确认/);
-  assert.match(unrecognized, /重新检查模型/);
+  assert.doesNotMatch(unrecognized, /本机识别模型已就绪|生成前会再次确认|重新检查模型|粘贴文字稿生成字幕|识别时间并生成字幕/);
   assert.doesNotMatch(unrecognized, /还有 1 个片段没有口播时间|字幕来源：A1|选择口播轨道 →/);
   const ready = html([{ ...voice, transcript: [{ text: '你好', start: 0, end: 1000 }] }]);
   assert.match(ready, />生成字幕<\/button>/);
+  assert.doesNotMatch(ready, /disabled=""[^>]*>生成字幕/);
   assert.doesNotMatch(ready, /口播时间已就绪；生成后会进入字幕列表逐句校对/);
   assert.doesNotMatch(ready, /识别时间并生成字幕/);
-  assert.doesNotMatch(ready, /重新检查模型/, 'cached timing must not require installing a model');
+  assert.doesNotMatch(ready, /未下载识别模型|识别模型不可用|重新检查模型/, 'cached timing must not require installing a model');
   const empty = html([]);
-  assert.match(empty, /请先把口播视频或音频拖入时间线/);
+  assert.match(empty, /暂无口播轨道/);
   assert.match(empty, /disabled=""[^>]*>生成字幕/);
-  assert.match(empty, /双击时间线上的子草稿/);
-  console.log('pastedTranscriptPanel.verify: unrecognized track has an enabled action, cached timing is reused, draft survives and empty input explains next step');
+  assert.doesNotMatch(empty, /双击时间线上的子草稿/);
+  console.log('pastedTranscriptPanel.verify: compact layout, enabled actions, cached timing reuse, and concise empty state OK');
 } finally {
   if (originalStorage) Object.defineProperty(globalThis, 'sessionStorage', originalStorage);
   else Reflect.deleteProperty(globalThis, 'sessionStorage');
