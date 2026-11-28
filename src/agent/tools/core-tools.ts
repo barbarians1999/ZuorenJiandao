@@ -61,10 +61,18 @@ function execTemplateCatalog(name: string, args: Args, ctx: AgentContext): unkno
   if (!matches.length) return { error: `no template matching "${args.templateName}"`, available: ctx.templates.map((template) => template.name) };
   const template = matches[0];
   const state = ctx.getState();
-  const track = resolveTrackId(state, args.track ?? 'V1', 'video') ?? defaultTrackId(state, 'video');
-  if (!track) return { error: 'no video track; create one with edit_track first' };
+  const track = args.track !== undefined && String(args.track).trim() !== ''
+    ? resolveTrackId(state, args.track, 'video')
+    : (defaultTrackId(state, 'video') ?? undefined);
+  if (!track) {
+    return {
+      error: args.track !== undefined
+        ? `unknown or incompatible video track "${String(args.track)}"`
+        : 'no video track; create one with edit_track first',
+    };
+  }
   const startFrame = typeof args.startFrame === 'number' ? args.startFrame : undefined;
-  ctx.commands.addMotionGraphic(template, { track, startFrame, ripple: args.ripple === true });
+  ctx.commands.addMotionGraphic(template, { track: args.track !== undefined ? track : undefined, strictTrack: args.track !== undefined, startFrame, ripple: args.ripple === true });
   return { ok: true, added: template.name, trackId: track, track: trackAlias(ctx.getState(), track) };
 }
 

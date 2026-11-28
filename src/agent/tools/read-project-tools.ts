@@ -195,6 +195,11 @@ export async function execReadProjectTool(
         outgoingItemId: t.outgoingItemId,
         incomingItemId: t.incomingItemId,
         trackId: t.trackId,
+        ...(t.direction ? { direction: t.direction } : {}),
+        ...(t.originX !== undefined ? { originX: t.originX } : {}),
+        ...(t.originY !== undefined ? { originY: t.originY } : {}),
+        ...(t.lineColor ? { lineColor: t.lineColor } : {}),
+        ...(t.lineWidthPx !== undefined ? { lineWidthPx: t.lineWidthPx } : {}),
       })),
       markers: (state.markers ?? []).map((m) => ({
         id: m.id,

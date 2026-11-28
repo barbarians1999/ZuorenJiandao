@@ -12,7 +12,7 @@ import {
 import { isProposalStale, type Proposal } from './proposal';
 import { replayActions } from '../editor/store';
 import type { ProjectDoc } from '../editor/types';
-import { saveProject } from '../persist/projectStore';
+import { saveProject, migrateProjectDoc } from '../persist/projectStore';
 import { saveAutomaticVersion } from '../persist/versionStore';
 import { saveExternalProposal } from '../persist/externalProposalStore';
 
@@ -141,7 +141,8 @@ export async function commitExternalProposal(
   }
   const chosen = input.proposal.options[0].operations
     .filter((_, index) => input.selected.has(index));
-  const result = replayActions(currentDoc, chosen.flatMap((operation) => operation.actions));
+  const rawResult = replayActions(currentDoc, chosen.flatMap((operation) => operation.actions));
+  const result = migrateProjectDoc(rawResult) ?? rawResult;
   await input.persistence.saveAutomaticVersion(input.projectId, '外部 Agent 修改前', currentDoc);
   throwIfExternalCallCancelled(input.signal);
   const saved = await input.persistence.saveProject(input.projectId, result);

@@ -54,7 +54,7 @@ export function TimelineTabs({ doc, commands }: TimelineTabsProps) {
 
   return (
     <div className="cc-timeline-tabs" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderTop: `0.5px solid ${theme.border}`, background: theme.panel, overflowX: 'auto', flexShrink: 0 }}>
-      {parent && <button type="button" style={tabBtn} title={t('返回进入这个子草稿的上层时间线')} onClick={() => commands.switchTimeline(parent.id)}>{t('← 返回 {name}', { name: parent.name })}</button>}
+      {parent && <button type="button" style={{ ...tabBtn, background: themeAlpha.accent(0.16), border: `0.5px solid ${theme.accent}`, color: theme.text, fontWeight: 600 }} title={t('返回进入这个复合片段的上层时间线')} onClick={() => commands.switchTimeline(parent.id)}>{t('← 返回上层：{name}', { name: parent.name })}</button>}
       {timelines.map((tl) => {
         const active = tl.id === doc.activeTimelineId;
         return (

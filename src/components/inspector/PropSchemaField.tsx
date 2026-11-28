@@ -26,6 +26,20 @@ const FIELD_STYLE: CSSProperties = {
 
 export function PropSchemaField(props: PropSchemaFieldProps) {
   const label = props.spec.label ?? props.spec.key;
+  if (props.spec.type === 'boolean') {
+    return (
+      <label className="cc-switch-row">
+        <span title={props.spec.key}>{label}{props.mixed ? ' —' : ''}</span>
+        <input
+          className="cc-switch"
+          type="checkbox"
+          role="switch"
+          checked={!!props.value}
+          onChange={(event) => props.onChange(event.target.checked)}
+        />
+      </label>
+    );
+  }
   return (
     <label className="cc-insp-mg-field">
       <span title={props.spec.key}>{label}{props.mixed ? ' —' : ''}</span>
@@ -35,7 +49,7 @@ export function PropSchemaField(props: PropSchemaFieldProps) {
 }
 
 function PropControl({ spec, value, onChange }: PropSchemaFieldProps): ReactNode {
-  if (spec.type === 'boolean') return <input type="checkbox" checked={!!value} onChange={(event) => onChange(event.target.checked)} style={{ accentColor: theme.accent }} />;
+  if (spec.type === 'boolean') return <input className="cc-switch" type="checkbox" role="switch" checked={!!value} onChange={(event) => onChange(event.target.checked)} />;
   if (spec.type === 'color') return <input type="color" value={String(value ?? '#000000')} onChange={(event) => onChange(event.target.value)} />;
   if (spec.type === 'number') return <NumberField spec={spec} value={value} onChange={onChange} />;
   if (spec.type === 'font') return <FontField spec={spec} value={value} onChange={onChange} />;
@@ -55,25 +69,28 @@ function NumberField({ spec, value, onChange }: PropSchemaFieldProps) {
   useInspectorWheel(numberRef, { value: current, min, max, step, onChange });
   const input = <input
     ref={numberRef}
+    className="cc-insp-number"
     type="number"
     min={spec.min}
     max={spec.max}
     step={step}
     value={value == null ? '' : Number(value)}
-    onChange={(event) => onChange(event.target.value === '' ? 0 : Number(event.target.value))}
-    style={bounded ? { ...FIELD_STYLE, width: 72, flex: 'none' } : FIELD_STYLE}
+    onChange={(event) => onChange(event.target.value === '' ? (typeof spec.defaultValue === 'number' ? spec.defaultValue : 0) : Number(event.target.value))}
+    style={bounded ? { width: 72, flex: 'none' } : { width: '100%', textAlign: 'left' }}
   />;
   if (!bounded) return input;
+  const progress = Math.min(100, Math.max(0, ((current - (spec.min ?? 0)) / Math.max(1e-6, (spec.max ?? 100) - (spec.min ?? 0))) * 100));
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <input
         type="range"
+        className="cc-insp-range"
+        style={{ '--cc-insp-range-fill': `${progress}%`, flex: 1, minWidth: 0 } as CSSProperties}
         min={spec.min}
         max={spec.max}
         step={step}
         value={current}
         onChange={(event) => onChange(Number(event.target.value))}
-        style={{ flex: 1, minWidth: 0 }}
       />
       {input}
     </div>
@@ -84,7 +101,7 @@ function FontField({ spec, value, onChange }: PropSchemaFieldProps) {
   const t = useT();
   const selected = String(value ?? spec.defaultValue ?? 'Inter');
   return (
-    <select value={selected} onChange={(event) => onChange(event.target.value)} style={{ ...FIELD_STYLE, fontFamily: selected }}>
+    <select className="cc-insp-select" value={selected} onChange={(event) => onChange(event.target.value)} style={{ fontFamily: selected }}>
       {FONT_CATALOG.map((font) => <option key={font.family} value={font.family} style={{ fontFamily: font.family }}>
         {font.family}{font.aliases[0] ? ` · ${font.aliases[0]}` : ''}{font.loadable ? '' : ` ${t('(预览)')}`}
       </option>)}
@@ -96,7 +113,7 @@ function FontField({ spec, value, onChange }: PropSchemaFieldProps) {
 function SelectField({ spec, value, onChange }: PropSchemaFieldProps) {
   const options = (spec.options ?? []).map((option) => typeof option === 'string' ? { label: option, value: option } : option);
   return (
-    <select value={String(value ?? '')} onChange={(event) => onChange(event.target.value)} style={FIELD_STYLE}>
+    <select className="cc-insp-select" value={String(value ?? '')} onChange={(event) => onChange(event.target.value)}>
       {options.length === 0 && <option value={String(value ?? '')}>{String(value ?? '—')}</option>}
       {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>

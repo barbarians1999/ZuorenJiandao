@@ -97,15 +97,20 @@ export interface EditorWorkspacePanels {
 }
 
 interface EditorWorkspacePanelsInput {
-  commands: Pick<EditorCommands, 'addMotionGraphic'>;
+  commands: Pick<EditorCommands, 'addMotionGraphic'> & Partial<Pick<EditorCommands, 'selectItem'>>;
+  getPlayhead?: () => number;
 }
 
 export function useEditorWorkspacePanels({
   commands,
+  getPlayhead,
 }: EditorWorkspacePanelsInput): EditorWorkspacePanels {
   const panelLayout = useEditorPanelLayout();
   const [inspectorCollapsed, setInspectorCollapsed] = usePersistedState('cc.inspectorCollapsed', false);
-  const addTemplate = useCallback((template: Tpl) => commands.addMotionGraphic(template), [commands]);
+  const addTemplate = useCallback((template: Tpl) => {
+    const id = commands.addMotionGraphic(template, getPlayhead ? { startFrame: getPlayhead() } : undefined);
+    commands.selectItem?.(id);
+  }, [commands, getPlayhead]);
 
   return {
     panelLayout,

@@ -21,8 +21,16 @@ export function desktopFontKey(face: DesktopFontFace): string {
 
 export function fontPickerEntries(assets: readonly MediaAsset[], faces: readonly DesktopFontFace[]): FontPickerEntry[] {
   const entries: FontPickerEntry[] = [
-    ...FONT_CATALOG.map((font): FontPickerEntry => ({ key: `family:${font.family}`, family: font.family,
-      label: font.aliases[0] ?? font.family, aliases: font.aliases, source: font.source })),
+    ...FONT_CATALOG.map((font): FontPickerEntry => {
+      const zhAlias = font.aliases.find((alias) => /[\u4e00-\u9fff]/.test(alias));
+      return {
+        key: `family:${font.family}`,
+        family: font.family,
+        label: zhAlias ?? font.aliases[0] ?? font.family,
+        aliases: font.aliases,
+        source: font.source,
+      };
+    }),
     ...(['sans-serif', 'serif', 'monospace'] as const).map((family, index): FontPickerEntry => ({
       key: `family:${family}`, family, label: ['默认黑体', '默认宋体', '默认等宽'][index]!, aliases: [], source: 'generic',
     })),
@@ -43,14 +51,21 @@ export function fontPickerEntries(assets: readonly MediaAsset[], faces: readonly
 export function filterFontEntries(entries: readonly FontPickerEntry[], tab: FontPickerTab, query: string,
   favorites: readonly string[], recent: readonly string[]): FontPickerEntry[] {
   const q = normalizeFontKey(query);
+  const matchesQuery = (entry: FontPickerEntry) =>
+    !q || [entry.label, entry.family, ...entry.aliases].some((name) => normalizeFontKey(name).includes(q));
   const filtered = entries.filter((entry) => {
-    const visible = tab === 'bundled' ? entry.source === 'bundled' || entry.source === 'generic'
+    const visible = tab === 'bundled'
+      ? entry.source === 'bundled' || entry.source === 'generic' || (Boolean(q) && entry.source === 'google')
       : tab === 'system' ? entry.source === 'system'
       : tab === 'imported' ? entry.source === 'imported'
       : tab === 'more' ? entry.source === 'google'
       : tab === 'favorite' ? favorites.includes(entry.key) : recent.includes(entry.key);
-    return visible && (!q || [entry.label, entry.family, ...entry.aliases].some((name) => normalizeFontKey(name).includes(q)));
+    return visible && matchesQuery(entry);
   });
+  if (tab === 'bundled' && q) {
+    const rank = (source: FontPickerEntry['source']) => (source === 'bundled' || source === 'generic' ? 0 : 1);
+    return [...filtered].sort((a, b) => rank(a.source) - rank(b.source));
+  }
   return tab === 'recent' ? filtered.sort((a, b) => recent.indexOf(a.key) - recent.indexOf(b.key)) : filtered;
 }
 

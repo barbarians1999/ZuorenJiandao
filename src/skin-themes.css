@@ -187,11 +187,9 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
 
 html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-topbar,
 html[data-cc-skin-family='liquid-glass'] .cc-dashboard .cc-dashboard-titlebar {
-  background:
-    linear-gradient(180deg, rgba(var(--cc-ink-rgb), 0.05) 0%, rgba(var(--cc-ink-rgb), 0.015) 100%),
-    color-mix(in srgb, var(--cc-bg) 92%, var(--cc-panel) 8%) !important;
+  background: var(--cc-panel) !important;
   border-bottom: 1px solid rgba(var(--cc-ink-rgb), 0.09) !important;
-  box-shadow: inset 0 -1px 0 rgba(var(--cc-shadow-rgb), 0.24);
+  box-shadow: none !important;
 }
 
 html[data-cc-skin-family='liquid-glass'] :is(
@@ -210,6 +208,11 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
   .cc-editor-settings-entry .cc-topbar-icon-button,
   .cc-skin-picker-trigger,
   .cc-topbar-utility-cluster
+),
+html[data-cc-skin-family='liquid-glass'] .cc-dashboard .cc-dashboard-header-actions :is(
+  .cc-utilities-trigger,
+  .cc-skin-picker-trigger,
+  .cc-topbar-icon-button
 ) {
   background: linear-gradient(
     180deg,
@@ -233,7 +236,7 @@ html[data-cc-skin-family='liquid-glass'] .cc-editor-shell .cc-topbar-utility-clu
   box-shadow: none !important;
 }
 
-html[data-cc-skin-family='liquid-glass'] .cc-editor-shell :is(
+html[data-cc-skin-family='liquid-glass'] :is(.cc-editor-shell, .cc-dashboard) :is(
   .cc-topbar-home,
   .cc-utilities-trigger,
   .cc-topbar-icon-button,
@@ -446,10 +449,9 @@ html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-s
 
 html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell .cc-topbar,
 html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-dashboard .cc-dashboard-titlebar {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.66) 100%) !important;
+  background: var(--cc-panel) !important;
   border-bottom: 1px solid rgba(var(--cc-ink-rgb), 0.08) !important;
-  box-shadow: inset 0 -1px 0 rgba(var(--cc-ink-rgb), 0.06);
+  box-shadow: none !important;
 }
 
 html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(
@@ -458,26 +460,31 @@ html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-s
   .cc-editor-settings-entry .cc-topbar-icon-button,
   .cc-skin-picker-trigger,
   .cc-topbar-utility-cluster
+),
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-dashboard .cc-dashboard-header-actions :is(
+  .cc-utilities-trigger,
+  .cc-skin-picker-trigger,
+  .cc-topbar-icon-button
 ) {
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.78) 0%,
-    rgba(255, 255, 255, 0.56) 100%
+    rgba(var(--cc-ink-rgb), 0.045) 0%,
+    rgba(var(--cc-ink-rgb), 0.02) 100%
   ) !important;
-  border: 1px solid rgba(var(--cc-ink-rgb), 0.09) !important;
+  border: 1px solid rgba(var(--cc-ink-rgb), 0.11) !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    0 1px 4px rgba(var(--cc-shadow-rgb), 0.08) !important;
+    0 1px 3px rgba(var(--cc-shadow-rgb), 0.06) !important;
 }
 
-html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] .cc-editor-shell :is(
+html[data-cc-skin-family='liquid-glass'][data-cc-skin-mode='light'] :is(.cc-editor-shell, .cc-dashboard) :is(
   .cc-topbar-home,
   .cc-utilities-trigger,
   .cc-topbar-icon-button,
   .cc-skin-picker-trigger
 ):hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.92) !important;
-  border-color: rgba(var(--cc-ink-rgb), 0.14) !important;
+  background: rgba(var(--cc-ink-rgb), 0.075) !important;
+  border-color: rgba(var(--cc-ink-rgb), 0.16) !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 1),
     0 2px 6px rgba(var(--cc-shadow-rgb), 0.10) !important;
@@ -778,7 +785,10 @@ html[data-cc-skin-family='constructivism'] :is(
   .cc-project-mini-action,
   .cc-project-confirm-cancel,
   .cc-project-confirm-delete,
-  .cc-project-confirm-busy
+  .cc-project-confirm-busy,
+  .cc-preview-audio-meter,
+  .cc-preview-audio-meter-bar-track,
+  .cc-preview-audio-meter-clip
 ) {
   border-radius: 0 !important;
 }

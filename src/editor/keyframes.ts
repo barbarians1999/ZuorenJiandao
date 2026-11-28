@@ -10,12 +10,19 @@ const NAMED_BEZIER: Record<string, readonly [number, number, number, number]> = 
   easeIn: [0.42, 0, 1, 1],
   easeOut: [0, 0, 0.58, 1],
   easeInOut: [0.42, 0, 0.58, 1],
+  // Fast-out slow-stop deceleration (editorial cubic-out)
+  cubicOut: [0.22, 1, 0.36, 1],
+  // Crisp micro-rebound (~4.2% overshoot) that settles cleanly without wobble
+  springOut: [0.34, 1.36, 0.64, 1],
 };
 
 /** boundary validation for LLM/user-supplied easing values. */
 export function isValidEasing(e: unknown): e is KeyframeEasing {
-  if (e === 'linear' || e === 'easeIn' || e === 'easeOut' || e === 'easeInOut') return true;
-  return Array.isArray(e) && e.length === 4 && e.every((n) => typeof n === 'number' && Number.isFinite(n));
+  if (e === 'linear' || e === 'easeIn' || e === 'easeOut' || e === 'easeInOut'
+    || e === 'cubicOut' || e === 'springOut') return true;
+  return Array.isArray(e) && e.length === 4
+    && e.every((n) => typeof n === 'number' && Number.isFinite(n))
+    && e[0] >= 0 && e[0] <= 1 && e[2] >= 0 && e[2] <= 1;
 }
 
 const bezierOf = (e: KeyframeEasing | undefined): readonly [number, number, number, number] | null => {
@@ -130,9 +137,10 @@ function subdivideEasing(easing: KeyframeEasing | undefined, p: number): {
   const [mx, my] = lerpPt(r1, r2, t);
   if (mx <= 1e-6 || mx >= 1 - 1e-6) return { my }; // cut at a segment end → nothing to subdivide
   // ponytail: a flat half (my≈0 or ≈1) is value-constant, its curve shape is unobservable → linear
-  const left: KeyframeEasing | undefined = my <= 1e-6 ? undefined
+  // Use Math.abs(...) so overshooting curves (where my > 1 and 1 - my < 0) preserve their right-half curve.
+  const left: KeyframeEasing | undefined = Math.abs(my) <= 1e-6 ? undefined
     : [q1[0] / mx, q1[1] / my, r1[0] / mx, r1[1] / my];
-  const right: KeyframeEasing | undefined = 1 - my <= 1e-6 ? undefined
+  const right: KeyframeEasing | undefined = Math.abs(1 - my) <= 1e-6 ? undefined
     : [(r2[0] - mx) / (1 - mx), (r2[1] - my) / (1 - my), (q3[0] - mx) / (1 - mx), (q3[1] - my) / (1 - my)];
   return { my, left, right };
 }

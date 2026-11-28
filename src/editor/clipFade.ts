@@ -3,6 +3,7 @@ import type { TimelineItem } from './types';
 import { flexCropClipPath, flexCropRect, hasFlexCrop, type FlexCropRect } from './flexCrop';
 import { clipMaskPath, resolveMaskAt, type ResolvedClipMask } from './clipMask';
 import { pictureAnimationAt } from './clipAnimation';
+import { resolveTextAnchorDesignOrigin, resolveTextStyle } from './textStyles';
 
 /** Fade multiplier at a Sequence-relative frame. */
 export function clipFadeFactor(
@@ -52,8 +53,10 @@ export function appearanceAt(
   };
   const transform = item.transform;
   const scale = keyframeValue('scale');
-  const scaleX = keyframeValue('scaleX') ?? transform?.scaleX ?? scale ?? transform?.scale ?? 1;
-  const scaleY = keyframeValue('scaleY') ?? transform?.scaleY ?? scale ?? transform?.scale ?? 1;
+  const rawScaleX = keyframeValue('scaleX') ?? transform?.scaleX ?? scale ?? transform?.scale ?? 1;
+  const rawScaleY = keyframeValue('scaleY') ?? transform?.scaleY ?? scale ?? transform?.scale ?? 1;
+  const scaleX = scale !== undefined || keyframeValue('scaleX') !== undefined ? Math.max(0.001, rawScaleX) : rawScaleX;
+  const scaleY = scale !== undefined || keyframeValue('scaleY') !== undefined ? Math.max(0.001, rawScaleY) : rawScaleY;
   const hasScale = scale !== undefined || keyframeValue('scaleX') !== undefined || keyframeValue('scaleY') !== undefined
     || transform?.scale !== undefined || transform?.scaleX !== undefined || transform?.scaleY !== undefined;
   const hasTransform = transform || keyframeValue('x') !== undefined || keyframeValue('y') !== undefined
@@ -67,12 +70,27 @@ export function appearanceAt(
   const opacity = clipOpacityAt(item, frame, hiddenByCaptions);
   const filters = item.filters;
   const mask = resolveMaskAt(item, frame, canvas);
+  let transformOrigin = '50% 50%';
+  if (item.kind === 'text') {
+    const dw = item.width && item.width > 0 ? item.width : 1920;
+    const dh = item.height && item.height > 0 ? item.height : 1080;
+    const style = resolveTextStyle(item.props ?? {});
+    const designOrigin = resolveTextAnchorDesignOrigin(dw, dh, style.anchor);
+    if (canvas.width > 0 && canvas.height > 0) {
+      const scale = Math.min(canvas.width / dw, canvas.height / dh);
+      const px = ((canvas.width / 2 + (designOrigin.x - dw / 2) * scale) / canvas.width) * 100;
+      const py = ((canvas.height / 2 + (designOrigin.y - dh / 2) * scale) / canvas.height) * 100;
+      transformOrigin = `${px.toFixed(4)}% ${py.toFixed(4)}%`;
+    } else {
+      transformOrigin = `${((designOrigin.x / dw) * 100).toFixed(4)}% ${((designOrigin.y / dh) * 100).toFixed(4)}%`;
+    }
+  }
   return {
     opacity,
     borderRadius: Math.max(0, keyframeValue('borderRadius') ?? transform?.borderRadius ?? 0),
     foregroundStyle: {
       transform: [motion.transform, cssTransform].filter(Boolean).join(' ') || undefined,
-      transformOrigin: '50% 50%',
+      transformOrigin,
       transformBox: 'border-box',
       filter: filters || motion.blur > 0
         ? `brightness(${filters?.brightness ?? 1}) contrast(${filters?.contrast ?? 1}) saturate(${filters?.saturate ?? 1}) blur(${(filters?.blur ?? 0) + motion.blur}px)`

@@ -102,6 +102,9 @@ function commitTransitionPlan(ctx: AgentContext, plan: OpResult): OpResult {
     plan.durationInFrames as number | undefined,
     plan.custom as { frag: string; uniforms: Record<string, number>; label: string } | undefined,
   );
+  if (plan.extraPatch && typeof plan.extraPatch === 'object') {
+    ctx.commands.setTransition(id, plan.extraPatch as Record<string, unknown>);
+  }
   return {
     ok: true,
     kind: 'transition',
@@ -112,6 +115,7 @@ function commitTransitionPlan(ctx: AgentContext, plan: OpResult): OpResult {
       durationInFrames: plan.durationInFrames,
       outgoingItemId: plan.outgoingItemId,
       incomingItemId: plan.incomingItemId,
+      ...(plan.extraPatch ? (plan.extraPatch as Record<string, unknown>) : {}),
     },
   };
 }
@@ -144,17 +148,23 @@ function commitAudioPlan(ctx: AgentContext, plan: OpResult, ripple: boolean): Op
 function commitMotionGraphicPlan(ctx: AgentContext, plan: OpResult, ripple: boolean): OpResult {
   const template = ctx.templates.find((item) => item.id === plan.templateId);
   if (!template) return { error: `template vanished: ${plan.templateId}` };
-  ctx.commands.addMotionGraphic(template, {
+  const itemId = ctx.commands.addMotionGraphic(template, {
     track: plan.track as string | undefined,
+    strictTrack: plan.strictTrack === true,
     startFrame: plan.startFrame as number | undefined,
+    durationInFrames: plan.durationInFrames as number | undefined,
+    name: plan.name as string | undefined,
+    props: plan.props as Record<string, unknown> | undefined,
     ripple,
   });
+  const placedTrack = ctx.getState().items.find((i) => i.id === itemId)?.track ?? plan.track;
   return {
     ok: true,
     kind: 'motion-graphic',
+    itemId,
     templateId: template.id,
-    name: template.name,
-    track: plan.track,
+    name: plan.name ?? template.name,
+    track: placedTrack,
     ripple,
   };
 }
@@ -170,6 +180,9 @@ function commitMediaPlan(ctx: AgentContext, plan: OpResult): OpResult {
     startFrame: plan.startFrame as number | undefined,
     srcInFrame: plan.srcInFrame as number | undefined,
   });
+  if (plan.props && typeof plan.props === 'object') {
+    ctx.commands.updateItemProps(itemId, plan.props as Record<string, unknown>);
+  }
   return {
     ok: true,
     kind: plan.kind,
@@ -189,6 +202,7 @@ function commitMediaPlan(ctx: AgentContext, plan: OpResult): OpResult {
 function commitTextPlan(ctx: AgentContext, plan: OpResult, ripple: boolean): OpResult {
   const itemId = ctx.commands.addTextClip({
     track: plan.track as string | undefined,
+    strictTrack: plan.strictTrack === true,
     startFrame: plan.startFrame as number | undefined,
     durationInFrames: plan.durationInFrames as number | undefined,
     ripple,
@@ -199,6 +213,10 @@ function commitTextPlan(ctx: AgentContext, plan: OpResult, ripple: boolean): OpR
     fontWeight: plan.fontWeight as number | undefined,
     align: plan.align as 'left' | 'center' | 'right' | undefined,
   });
+  if (plan.props && typeof plan.props === 'object') {
+    ctx.commands.updateItemProps(itemId, plan.props as Record<string, unknown>);
+  }
+  const placedTrack = ctx.getState().items.find((i) => i.id === itemId)?.track ?? plan.track;
   return {
     ok: true,
     kind: 'text',
@@ -206,7 +224,7 @@ function commitTextPlan(ctx: AgentContext, plan: OpResult, ripple: boolean): OpR
       itemId,
       name: plan.name ?? '文字',
       text: plan.text,
-      track: plan.track,
+      track: placedTrack,
       startFrame: plan.startFrame ?? 'appended',
       durationInFrames: plan.durationInFrames ?? 90,
       color: plan.color,
@@ -219,12 +237,15 @@ function commitTextPlan(ctx: AgentContext, plan: OpResult, ripple: boolean): OpR
 function commitSolidPlan(ctx: AgentContext, plan: OpResult, ripple: boolean): OpResult {
   const itemId = ctx.commands.addSolidItem({
     track: plan.track as string | undefined,
+    strictTrack: plan.strictTrack === true,
     startFrame: plan.startFrame as number | undefined,
     durationInFrames: plan.durationInFrames as number | undefined,
     color: plan.color as string | undefined,
     name: plan.name as string | undefined,
+    props: plan.props as Record<string, unknown> | undefined,
     ripple,
   });
+  const placedTrack = ctx.getState().items.find((i) => i.id === itemId)?.track ?? plan.track;
   return {
     ok: true,
     kind: 'solid',
@@ -232,7 +253,7 @@ function commitSolidPlan(ctx: AgentContext, plan: OpResult, ripple: boolean): Op
       itemId,
       name: plan.name ?? '纯色',
       color: plan.color ?? '#1a1a1a',
-      track: plan.track,
+      track: placedTrack,
       startFrame: plan.startFrame ?? 'appended',
       durationInFrames: plan.durationInFrames ?? 150,
     },

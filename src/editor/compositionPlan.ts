@@ -1,12 +1,13 @@
 import { captionTrackEntries, CSS_TRANSITION_TYPES, GLSL_TRANSITION_TYPES, isAudioTransition, isRasterMediaKind, isVisualItemKind, timelineTrackIds, trackKind } from './types';
 import type { AspectFit, CssTransitionType, GlslTransitionType, TimelineItem, TimelineState, TransitionDirection } from './types';
 import { sourceFrameAt } from './sourceLimit';
-import { previewTransitionType } from './transitionPreview';
+import { previewTransitionType } from './transitionPreview.ts';
 import { isBackgroundFillActive } from './backgroundFill';
 import { continuousVideoAudioGroups, shareableVisualItem } from './transitionAudio';
 import { audioGainAt, hasSoloTrack, isTrackEffectivelyMuted } from './audioRouting';
 import { selectTransitionPreviewAdapter, staticEffectPreviewStatus, staticPreviewFallbackStatus } from '../gl/previewAdapter';
 import { hasPrivacyMosaic } from './mosaic';
+import { hasActiveImageStyling } from './imageStyling';
 import type { SelectedPreviewStatus } from '../gl/previewAdapter';
 
 export interface PreviewLayerRange {
@@ -142,11 +143,38 @@ export function compositionPlan(state: TimelineState, {
     .map((item) => item.id));
   const visualTransitions = enabledTransitions.filter((t) => !isAudioTransition(t.type)
     && !pictureDisabledIds.has(t.outgoingItemId) && !pictureDisabledIds.has(t.incomingItemId));
-  type PreviewEdge = { type: CssTransitionType; frames: number; dir: TransitionDirection; line?: boolean; isolated: boolean };
+  type PreviewEdge = {
+    type: CssTransitionType;
+    frames: number;
+    dir: TransitionDirection;
+    line?: boolean;
+    originX?: number;
+    originY?: number;
+    lineColor?: string;
+    lineWidthPx?: number;
+    isolated: boolean;
+  };
   const entranceOf = new Map<string, PreviewEdge>();
   const extendBefore = new Map<string, number>();
   const extendAfter = new Map<string, number>();
-  interface GlWindow { key: string; type: GlslTransitionType | 'custom-shader'; direction: TransitionDirection; from: number; L: number; outgoing: TimelineItem; incoming: TimelineItem; trimOut: number; trimIn: number; customFrag?: string; customUniforms?: Record<string, number>; previewTargetId?: string }
+  interface GlWindow {
+    key: string;
+    type: GlslTransitionType | 'custom-shader';
+    direction: TransitionDirection;
+    from: number;
+    L: number;
+    outgoing: TimelineItem;
+    incoming: TimelineItem;
+    trimOut: number;
+    trimIn: number;
+    customFrag?: string;
+    customUniforms?: Record<string, number>;
+    originX?: number;
+    originY?: number;
+    lineColor?: string;
+    lineWidthPx?: number;
+    previewTargetId?: string;
+  }
   const glWindows: GlWindow[] = [];
   const staticPreviewStatuses: SelectedPreviewStatus[] = [];
   const selectedEffectItem = mode === 'player'
@@ -194,6 +222,10 @@ export function compositionPlan(state: TimelineState, {
         frames: t.durationInFrames,
         dir: t.direction ?? 'left',
         line: t.type === 'clean-line-wipe',
+        originX: t.originX,
+        originY: t.originY,
+        lineColor: t.lineColor,
+        lineWidthPx: t.lineWidthPx,
         isolated: false,
       });
       glWindows.push({
@@ -206,13 +238,17 @@ export function compositionPlan(state: TimelineState, {
         incoming: inc!,
         trimOut: sourceFrameAt(out!, from - out!.startFrame),
         trimIn: sourceFrameAt(inc!, from - inc!.startFrame),
+        originX: t.originX,
+        originY: t.originY,
+        lineColor: t.lineColor,
+        lineWidthPx: t.lineWidthPx,
         previewTargetId: selected ? t.id : undefined,
         // custom-shader carries its GLSL + uniforms from the item to GlTransition
         ...(t.type === 'custom-shader' ? { customFrag: t.customFrag, customUniforms: t.customUniforms } : {}),
       });
       continue;
     }
-    const cssType = privacyTransition ? 'cross-dissolve' : mode === 'player'
+    const cssType = privacyTransition ? 'cross-dissolve' : (mode === 'player' || t.type === 'clean-line-wipe')
       ? previewTransitionType(t.type)
       : CSS_TRANSITION_TYPES.has(t.type) ? t.type as CssTransitionType : 'cross-dissolve';
     entranceOf.set(t.incomingItemId, {
@@ -220,6 +256,10 @@ export function compositionPlan(state: TimelineState, {
       frames: t.durationInFrames,
       dir: t.direction ?? 'left',
       line: t.type === 'clean-line-wipe',
+      originX: t.originX,
+      originY: t.originY,
+      lineColor: t.lineColor,
+      lineWidthPx: t.lineWidthPx,
       isolated: false,
     });
     if (selected) {
@@ -238,7 +278,7 @@ export function compositionPlan(state: TimelineState, {
     durationInFrames: window.L,
     itemIds: [window.outgoing.id, window.incoming.id],
   }));
-  const isShareableVideo = (item: TimelineItem) => shareableVisualItem({
+  const isShareableVideo = (item: TimelineItem) => !hasActiveImageStyling(item.props) && shareableVisualItem({
     item,
     player,
     hasGlEffect: (player && hasPrivacyMosaic(item))

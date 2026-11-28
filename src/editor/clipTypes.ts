@@ -74,7 +74,14 @@ export interface ZoomEffect {
 /** easing of a generic keyframe SEGMENT (this keyframe → the next): named CSS
  * curves or a cubic-bezier control tuple [x1,y1,x2,y2]. Default linear.
  * (PRD §4.5 "bezier easing"; storage format is customized.) */
-export type KeyframeEasing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | [number, number, number, number];
+export type KeyframeEasing =
+  | 'linear'
+  | 'easeIn'
+  | 'easeOut'
+  | 'easeInOut'
+  | 'cubicOut'
+  | 'springOut'
+  | [number, number, number, number];
 
 /** one generic transform keyframe. `frame` is the item-LOCAL edited frame
  * (0 = clip start), so keyframes travel with the clip when it moves. */

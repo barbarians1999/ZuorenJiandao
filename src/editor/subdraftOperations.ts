@@ -99,7 +99,8 @@ export function planExpandSubdraft(doc: ProjectDoc, itemId: string, uid: IdFacto
   if (parent.linkGroups?.some((group) => group.mode !== 'group' && group.itemIds.includes(itemId))
     || parent.multicamGroups?.some((group) => group.angles.some((angle) => angle.itemId === itemId))
     || child.multicamGroups?.length || item.multicamGroupId) return fail('请先解除子草稿的音画链接、同步锁定或多机位关系，再展开。');
-  if (captions(parent).some((caption) => caption!.sourceMode === 'timeline'
+  const childHasTranscript = child.items.some((entry) => hasOperationalTranscript(entry));
+  if (captions(parent).some((caption) => (caption!.sourceMode === 'timeline' && childHasTranscript)
     || caption!.sourceItemId === itemId || caption!.sources?.includes(itemId)
     || caption!.sourceEntries?.some((entry) => entry.itemId === itemId))) {
     return fail('当前字幕引用了这个子草稿，请先解除字幕来源关联，再展开。');

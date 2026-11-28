@@ -28,11 +28,13 @@ assert.deepEqual(
     sourceStartFrame: result.items[0]?.sourceStartFrame,
     sourceDurationInFrames: result.items[0]?.sourceDurationInFrames,
     sourceEndFrameExclusive: result.items[0]?.sourceEndFrameExclusive,
+    pictureDisabled: result.items[0]?.pictureDisabled,
   },
   {
     src: '/media/a.mp3', sourceAssetId: 'asset-a', resolvedSourceAssetId: 'asset-a', linkStatus: 'linked',
     keyframes: { volume: [{ frame: 0, value: 1, easing: 'easeOut' }] }, transform: null, filters: null, volume: 0.7, fadeInFrames: 2, fadeOutFrames: 5,
     sourceStartFrame: 7, sourceDurationInFrames: 120, sourceEndFrameExclusive: 127,
+    pictureDisabled: false,
   },
   'read_timeline shares the full media/state projection',
 );

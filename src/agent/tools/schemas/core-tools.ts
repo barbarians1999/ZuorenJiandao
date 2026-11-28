@@ -35,7 +35,10 @@ export const CORE_TOOL_SCHEMAS: AgentToolSchema[] = [
   },
   {
     name: 'update_item_props',
-    description: 'Change one or more editable props of a clip (e.g. text, colors). Only props from the template schema.',
+    description:
+      'Change one or more editable props of a clip (e.g. text, colors, card background, anchor). Only props from the template schema or text whitelist. '
+      + 'On text clips: setting backgroundColor without backgroundOpacity auto-enables visible opacity (100, or rgba/8-hex alpha), 0..1 opacity floats scale to %, and setting textStylePreset re-expands preset card/accent defaults. '
+      + 'Anchor positioning coordinates for transform.x/y (%): center origin (50%,50%) → x=tx-50, y=ty-50; top-left origin (5%,8.89%) → x=tx-5, y=ty-8.89; middle-left origin (5%,50%) → x=tx-5, y=ty-50.',
     input_schema: {
       type: 'object',
       properties: {

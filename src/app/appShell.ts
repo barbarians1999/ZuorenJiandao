@@ -103,12 +103,26 @@ export async function loadInitialProjects(
   return [await source.createDemo()];
 }
 
+function sameProjectMetaList(a: readonly ProjectMeta[], b: readonly ProjectMeta[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((item, index) => {
+    const other = b[index]!;
+    return item.id === other.id
+      && item.name === other.name
+      && item.updatedAt === other.updatedAt
+      && item.deletedAt === other.deletedAt;
+  });
+}
+
 export function useProjects(): {
   projects: ProjectMeta[] | null;
   refresh: () => Promise<void>;
 } {
   const [projects, setProjects] = useState<ProjectMeta[] | null>(null);
-  const refresh = useCallback(async () => { setProjects(await listProjects()); }, []);
+  const refresh = useCallback(async () => {
+    const next = await listProjects();
+    setProjects((prev) => (prev && sameProjectMetaList(prev, next) ? prev : next));
+  }, []);
   useEffect(() => {
     void loadInitialProjects().then(setProjects);
   }, []);

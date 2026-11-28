@@ -30,12 +30,18 @@ import {
 import {
   cleanOverrides,
   envelopeFrom,
-  findAdjacentOutgoing,
   findItem,
   shapeFrom,
   zoomFromOverrides,
   type OpResult,
 } from './edit-item-shared';
+import {
+  buildTransitionAddPlan,
+  resolveTransitionTargets,
+  validateLocalMgAdd,
+  validateTransitionDeleteShared,
+  validateTransitionUpdateShared,
+} from './edit-item-pure-specials';
 
 type Entry = Record<string, unknown>;
 type CustomTransition = { frag: string; uniforms: Record<string, number>; label: string };
@@ -197,68 +203,20 @@ function resolveTransition(assetId: string): ResolvedTransition | TransitionErro
     : { error: `unknown custom transition ${assetId}`, hint: 'submit_shader type=transition returns a fresh custom:tr-* id; generate it first, then add it this session' };
 }
 
-function resolveIncoming(ctx: AgentContext, entry: Entry): TimelineItem | null {
-  const state = ctx.getState();
-  const direct = findItem(state.items, entry.incomingItemId);
-  if (direct || entry.trackId == null || entry.fromFrame == null) return direct;
-  const track = String(entry.trackId);
-  const frame = Number(entry.fromFrame);
-  return state.items
-    .filter((item) => item.track === track && item.kind !== 'audio' && Math.abs(item.startFrame - frame) <= 2)
-    .sort((a, b) => a.startFrame - b.startFrame)[0] ?? null;
-}
-
 function validateTransitionAdd(ctx: AgentContext, entry: Entry): OpResult {
   const assetId = String(entry.assetId ?? '');
   const resolved = resolveTransition(assetId);
   if ('error' in resolved) return resolved;
-  const state = ctx.getState();
-  const incoming = resolveIncoming(ctx, entry);
-  if (!incoming || incoming.kind === 'audio') {
-    return { error: 'transition needs incomingItemId (the later clip at the cut)' };
-  }
-  if (entry.outgoingItemId && !findItem(state.items, entry.outgoingItemId)) {
-    return { error: `outgoingItemId not found: ${entry.outgoingItemId}` };
-  }
-  const outgoing = findAdjacentOutgoing(state.items, incoming);
-  if (!outgoing) {
-    return {
-      error: `no adjacent prior clip before ${incoming.id} on track ${incoming.track}`,
-      hint: 'Transition straddles a cut between two same-track visual clips',
-    };
-  }
-  const requestedOutgoing = entry.outgoingItemId
-    ? findItem(state.items, entry.outgoingItemId)
-    : null;
-  if (requestedOutgoing && requestedOutgoing.id !== outgoing.id) {
-    return { error: `outgoingItemId ${entry.outgoingItemId} is not the adjacent prior clip (found ${outgoing.id})` };
-  }
-  return transitionPlan(entry, assetId, incoming, outgoing, resolved);
-}
-
-function transitionPlan(
-  entry: Entry,
-  assetId: string,
-  incoming: TimelineItem,
-  outgoing: TimelineItem,
-  resolved: ResolvedTransition,
-): OpResult {
-  const maxDuration = Math.max(2, Math.min(outgoing.durationInFrames, incoming.durationInFrames));
-  const defaultDuration = resolved.type === 'audio-cross-fade' ? Math.min(15, maxDuration) : Math.min(30, maxDuration);
-  const requested = typeof entry.durationInFrames === 'number' && Number.isFinite(entry.durationInFrames)
-    ? entry.durationInFrames
-    : defaultDuration;
-  return {
-    ok: true,
-    kind: 'transition',
-    plan: 'addTransition',
-    incomingItemId: incoming.id,
-    outgoingItemId: outgoing.id,
-    type: resolved.type,
+  const targets = resolveTransitionTargets(ctx.getState(), entry);
+  if ('error' in targets) return targets;
+  return buildTransitionAddPlan(
+    entry,
     assetId,
-    durationInFrames: Math.max(2, Math.min(requested, maxDuration)),
-    ...(resolved.custom ? { custom: resolved.custom } : {}),
-  };
+    targets.incoming,
+    targets.outgoing,
+    resolved.type,
+    resolved.custom,
+  );
 }
 
 function validateAudioAdd(ctx: AgentContext, entry: Entry): OpResult {
@@ -288,23 +246,7 @@ function validateAudioAdd(ctx: AgentContext, entry: Entry): OpResult {
 }
 
 function validateMgAdd(ctx: AgentContext, entry: Entry): OpResult {
-  const assetId = String(entry.assetId ?? '');
-  const match = /^library:motion-graphic:(.+)$/.exec(assetId);
-  if (!match) return { error: 'motion-graphic add expects library:motion-graphic:<id>', got: assetId };
-  const id = match[1];
-  const template = ctx.templates.find((item) => item.id === id || item.id.startsWith(id) || item.name === id)
-    ?? ctx.templates.find((item) => item.name.toLowerCase() === id.toLowerCase());
-  if (!template) return { error: `unknown motion-graphic ${id}`, hint: 'browse_library category=motion-graphics' };
-  const state = ctx.getState();
-  const track = resolveTrackId(state, entry.track ?? entry.trackId ?? 'V1', 'video') ?? defaultTrackId(state, 'video');
-  if (!track) return { error: 'no video track; create one with edit_track first' };
-  const startFrame = typeof entry.fromFrame === 'number'
-    ? entry.fromFrame
-    : typeof entry.startFrame === 'number' ? entry.startFrame : undefined;
-  return {
-    ok: true, kind: 'motion-graphic', plan: 'addMg', templateId: template.id,
-    name: template.name, track, startFrame,
-  };
+  return validateLocalMgAdd(ctx.getState(), ctx.templates, entry);
 }
 
 function planZoomUpdate(target: TimelineItem | null, entry: Entry): OpResult | null {
@@ -370,28 +312,11 @@ function effectNotFound(item: TimelineItem | null): OpResult {
 }
 
 function validateTransitionUpdate(ctx: AgentContext, entry: Entry): OpResult {
-  const id = String(entry.id ?? '');
-  const transition = ctx.getState().transitions?.find((item) => item.id === id || item.id.startsWith(id));
-  if (!transition) return { error: `transition not found: ${id}` };
-  const patch: Record<string, unknown> = {};
-  if (typeof entry.durationInFrames === 'number') patch.durationInFrames = entry.durationInFrames;
-  if (typeof entry.assetId === 'string') {
-    const type = parseTransitionAssetId(entry.assetId);
-    if (!type) return { error: `unknown transition assetId ${entry.assetId}` };
-    patch.type = type;
-  }
-  if (typeof entry.transitionType === 'string') {
-    const type = parseTransitionAssetId(entry.transitionType) ?? entry.transitionType as TransitionType;
-    if (type) patch.type = type;
-  }
-  return { ok: true, kind: 'transition', plan: 'setTransition', id: transition.id, patch };
+  return validateTransitionUpdateShared(ctx.getState(), entry);
 }
 
 function validateTransitionDelete(ctx: AgentContext, entry: Entry): OpResult {
-  const id = String(entry.id ?? '');
-  const transition = ctx.getState().transitions?.find((item) => item.id === id || item.id.startsWith(id));
-  if (!transition) return { error: `transition not found: ${id}` };
-  return { ok: true, kind: 'transition', plan: 'removeTransition', id: transition.id };
+  return validateTransitionDeleteShared(ctx.getState(), entry);
 }
 
 function findEffectOwner(ctx: AgentContext, targetId: unknown, effectId: string): TimelineItem | null {

@@ -29,6 +29,8 @@ interface PreviewMonitorBarProps {
   zoneOut?: number | null;
   hidden?: boolean;
   onSeek?: (frame: number) => void;
+  audioMeterOpen?: boolean;
+  onToggleAudioMeter?: () => void;
 }
 
 export function PreviewMonitorBar({
@@ -44,6 +46,8 @@ export function PreviewMonitorBar({
   zoneOut = null,
   hidden = false,
   onSeek,
+  audioMeterOpen = false,
+  onToggleAudioMeter,
 }: PreviewMonitorBarProps) {
   const t = useT();
   const shortcut = useShortcutHint();
@@ -461,6 +465,19 @@ export function PreviewMonitorBar({
             <Icon name="camera" size={15} />
           </button>
           {hasItems && <PreviewSourceToggle />}
+          {onToggleAudioMeter && (
+            <button
+              type="button"
+              className={`cc-preview-transport-icon cc-preview-audio-meter-toggle cc-tip${audioMeterOpen ? ' is-active' : ''}`}
+              data-tip={audioMeterOpen ? t('收起音量电平') : t('音量电平')}
+              aria-label={t('音量电平')}
+              aria-pressed={audioMeterOpen}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={onToggleAudioMeter}
+            >
+              <Icon name="audioMeter" size={15} />
+            </button>
+          )}
           <button
             type="button"
             className="cc-preview-transport-icon cc-tip cc-tip-r"

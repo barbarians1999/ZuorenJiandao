@@ -12,6 +12,12 @@ export interface TransitionShaderDefinition {
     time: number;
     aspect: number;
     direction: TransitionDirection;
+    width?: number;
+    height?: number;
+    originX?: number;
+    originY?: number;
+    lineColor?: string;
+    lineWidthPx?: number;
   }) => Record<string, UniformValue>;
 }
 
@@ -46,6 +52,10 @@ export function buildTransitionShaderFrame(
     width: number;
     height: number;
     direction: TransitionDirection;
+    originX?: number;
+    originY?: number;
+    lineColor?: string;
+    lineWidthPx?: number;
   },
 ): TransitionShaderFrame {
   const fps = Math.max(Number.EPSILON, input.fps);
@@ -57,7 +67,17 @@ export function buildTransitionShaderFrame(
     progress,
     time,
     aspect,
-    uniforms: definition.uniforms({ time, aspect, direction: input.direction }),
+    uniforms: definition.uniforms({
+      time,
+      aspect,
+      direction: input.direction,
+      width: input.width,
+      height: input.height,
+      originX: input.originX,
+      originY: input.originY,
+      lineColor: input.lineColor,
+      lineWidthPx: input.lineWidthPx,
+    }),
     colorPipeline: GL_COLOR_PIPELINE,
   };
 }

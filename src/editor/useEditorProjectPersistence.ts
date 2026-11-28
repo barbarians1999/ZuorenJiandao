@@ -4,6 +4,10 @@ import { revisionOf } from '../agent/external-edit-session';
 import { useT } from '../i18n/locale';
 import { acknowledgeSavedCaptionDrafts } from '../captions/captionDraftRecovery';
 import {
+  isExternalBridgeReadOnly,
+  subscribeExternalBridgeReadOnly,
+} from '../agent/external-bridge-registration';
+import {
   flushProjectSaves,
   hasPendingProjectSaves,
   hasProjectSaveFailure,
@@ -53,7 +57,16 @@ export function useEditorAutosave(
   const saveFailureShownRef = useRef(false);
   const firstPendingEditAtRef = useRef<number | null>(null);
   const retryInFlightRef = useMemo(() => ({ current: null as Promise<boolean> | null }), [queue]);
+  const readOnly = useSyncExternalStore(
+    subscribeExternalBridgeReadOnly,
+    () => isExternalBridgeReadOnly(projectId),
+    () => false,
+  );
   useEffect(() => {
+    if (readOnly) {
+      queue.discardPending();
+      return undefined;
+    }
     if (!queue.observe(doc)) return undefined;
     if (firstPendingEditAtRef.current === null) firstPendingEditAtRef.current = Date.now();
     let pauseTimer: ReturnType<typeof setTimeout> | undefined;
@@ -86,7 +99,7 @@ export function useEditorAutosave(
       clearTimeout(capTimer);
       if (pausedPlayer) pausedPlayer.removeEventListener('pause', onPause);
     };
-  }, [doc, queue, playerRef]);
+  }, [doc, queue, playerRef, readOnly]);
   useEffect(() => {
     if (feedback.status === 'error' && !saveFailureShownRef.current) {
       showAppToast(t('工程保存失败，请点击顶部“重试保存”。内容仍保留在当前窗口，保存成功前请勿关闭。'), { error: true });
@@ -94,6 +107,7 @@ export function useEditorAutosave(
     } else if (feedback.status === 'saved') saveFailureShownRef.current = false;
   }, [feedback.status, t]);
   const retrySave = useCallback((): Promise<boolean> => {
+    if (isExternalBridgeReadOnly(projectId)) return Promise.resolve(true);
     if (retryInFlightRef.current) return retryInFlightRef.current;
     const saving = (async () => {
       const pending = queue.enqueue();
@@ -121,10 +135,12 @@ export function useEditorAutosave(
 function useBrowserSaveGuards(projectId: string, queue: ProjectAutosaveQueue, store: ProjectSaveStore): void {
   useEffect(() => {
     const flushWithoutWaiting = (): void => {
+      if (isExternalBridgeReadOnly(projectId)) return;
       void queue.enqueue();
       void store.flushProjectSaves(projectId);
     };
     const blockUnfinishedSave = (event: BeforeUnloadEvent): void => {
+      if (isExternalBridgeReadOnly(projectId)) return;
       void queue.enqueue();
       if (queue.getSnapshot().status === 'saved' && !store.hasPendingProjectSaves(projectId) && !store.hasProjectSaveFailure(projectId)) return;
       event.preventDefault();
@@ -158,8 +174,13 @@ export function useEditorProjectPersistence({
   // overwrite the restored position with zero after every subdraft switch.
 
   const handleHome = useCallback(async (): Promise<void> => {
+    if (isExternalBridgeReadOnly(projectId)) {
+      discardPending();
+      onHome();
+      return;
+    }
     if (await flushBeforeLeave()) onHome();
-  }, [flushBeforeLeave, onHome]);
+  }, [discardPending, flushBeforeLeave, onHome, projectId]);
 
   const syncProject = useCallback(async (): Promise<void> => {
     if (syncInFlightRef.current) return;

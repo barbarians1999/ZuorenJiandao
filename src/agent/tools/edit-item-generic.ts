@@ -4,13 +4,24 @@
 import type {
   ItemKeyframes, Keyframe, KeyframeProp, MediaAsset, TimelineItem, TimelineState,
 } from '../../editor/types';
-import { defaultTrackId, resolveTrackId, selectedIdsOf } from '../../editor/types';
+import {
+  defaultTrackId,
+  resolveTrackId,
+  selectedIdsOf,
+  timelineTrackIds,
+  trackAlias,
+  trackKind,
+} from '../../editor/types';
 import { isValidEasing } from '../../editor/keyframes';
 import { validateBackgroundFillUpdate } from './edit-item-background-fill';
 import { getKeyframePropertyDefinition, KEYFRAME_PROPS, supportsKeyframeProperty } from '../../editor/keyframeRegistry';
 import { planSlip } from '../../editor/slip';
 import { rejectUnknownFields } from './edit-item-fields';
 import { flexCropMergePatch } from '../../editor/flexCrop';
+import { validateImageStylingProps } from '../../editor/imageStyling';
+import { PAPER_BACKGROUND_PRESETS } from '../../editor/paperBackgrounds';
+import { ALLOWED_TEXT_PROP_KEYS, prepareTextPropPatch, TEXT_STYLE_PRESETS, validateTextClipProps } from '../../editor/textStyles';
+import { resolveVectorShape, validateVectorShapeProps, VECTOR_SHAPE_DEFAULTS, type VectorShapeKind } from '../../editor/vectorShapes';
 import { clampNum, parseFiltersArg, parseTransformArg } from './edit-item-visual';
 import { validateMediaSourceUpdate } from './edit-item-media-ops';
 import { validateSourceFrameUpdate, validateSourceWindow } from './edit-item-source-window';
@@ -21,7 +32,7 @@ export { validateMediaSourceUpdate } from './edit-item-media-ops';
 export { applyGeneric, type GenericCommands } from './edit-item-generic-actions';
 
 export const GENERIC_ITEM_KINDS: ReadonlySet<string> = new Set([
-  'video', 'image', 'audio', 'gif', 'svg', 'motion-graphic', 'text', 'solid',
+  'video', 'image', 'audio', 'gif', 'svg', 'motion-graphic', 'text', 'solid', 'sequence',
 ]);
 
 /** Pool-asset kinds that edit_item.adds can place as a clip.
@@ -31,7 +42,7 @@ export const GENERIC_ITEM_KINDS: ReadonlySet<string> = new Set([
 export const GENERIC_ADD_KINDS: ReadonlySet<string> = new Set(['video', 'image', 'gif', 'svg', 'audio', 'motion-graphic']);
 
 /** Authored non-pool clips agents can create without an assetId. */
-export const AUTHORED_ADD_KINDS: ReadonlySet<string> = new Set(['text', 'solid']);
+export const AUTHORED_ADD_KINDS: ReadonlySet<string> = new Set(['text', 'solid', 'shape']);
 
 const finiteNum = (v: unknown): number | undefined =>
   typeof v === 'number' && Number.isFinite(v) ? v : undefined;
@@ -40,6 +51,13 @@ const CSS_EASING_ALIASES: Record<string, Keyframe['easing']> = {
   'ease-in': 'easeIn',
   'ease-out': 'easeOut',
   'ease-in-out': 'easeInOut',
+  'cubic-out': 'cubicOut',
+  'fast-out-slow-in': 'cubicOut',
+  decelerate: 'cubicOut',
+  'spring-out': 'springOut',
+  'back-out': 'springOut',
+  backOut: 'springOut',
+  overshoot: 'springOut',
 };
 
 function normalizeEasing(easing: unknown): unknown {
@@ -78,6 +96,8 @@ const GENERIC_UPDATE_KEYS: Record<string, true> = {
   speed: true,
   playbackRate: true,
   clearKeyframes: true,
+  disabled: true,
+  pictureDisabled: true,
 };
 
 const GENERIC_ADD_KEYS: Record<string, true> = {
@@ -88,6 +108,7 @@ const GENERIC_ADD_KEYS: Record<string, true> = {
   startFrame: true,
   fromFrame: true,
   durationInFrames: true,
+  props: true,
   sourceStartFrame: true,
   sourceDurationInFrames: true,
   sourceStartSeconds: true,
@@ -104,13 +125,73 @@ const AUTHORED_ADD_KEYS: Record<string, true> = {
   fromFrame: true,
   durationInFrames: true,
   name: true,
+  props: true,
   // text
   text: true,
+  fontFamily: true,
+  fontAssetId: true,
   fontSize: true,
+  fontStyle: true,
   color: true,
   fontWeight: true,
   align: true,
-  // solid also uses color + name
+  anchor: true,
+  textDecoration: true,
+  letterSpacing: true,
+  lineHeight: true,
+  textStylePreset: true,
+  strokeColor: true,
+  strokeWidth: true,
+  shadowEnabled: true,
+  shadowColor: true,
+  shadowOpacity: true,
+  shadowBlur: true,
+  shadowOffsetX: true,
+  shadowOffsetY: true,
+  backgroundColor: true,
+  backgroundOpacity: true,
+  backgroundPadding: true,
+  backgroundPaddingX: true,
+  backgroundPaddingY: true,
+  backgroundRadius: true,
+  accentBarPosition: true,
+  accentBarColor: true,
+  accentBarWidth: true,
+  entrance: true,
+  entranceFrames: true,
+  exit: true,
+  exitFrames: true,
+  strikeAnimated: true,
+  strikeColor: true,
+  strikeThickness: true,
+  strikeStartSec: true,
+  strikeDurationSec: true,
+  // solid paper presets
+  paperPreset: true,
+  paperCenterColor: true,
+  paperMidColor: true,
+  paperEdgeColor: true,
+  paperLineColor: true,
+  paperGrain: true,
+  paperVignette: true,
+  paperAccentLine: true,
+  // vector shapes
+  shapeKind: true,
+  x1: true,
+  y1: true,
+  x2: true,
+  y2: true,
+  x: true,
+  y: true,
+  width: true,
+  height: true,
+  dashPattern: true,
+  opacity: true,
+  cornerRadius: true,
+  fillColor: true,
+  fillOpacity: true,
+  arrowHeadSize: true,
+  bidirectional: true,
 };
 const SLIP_UPDATE_KEYS: Record<string, true> = {
   type: true,
@@ -146,7 +227,7 @@ function parseKeyframesArg(raw: unknown): { keyframes?: ItemKeyframes; error?: s
       }
       const easing = normalizeEasing(k.easing);
       if (easing !== undefined && !isValidEasing(easing)) {
-        return { error: `keyframes.${prop}: easing must be linear/easeIn/easeOut/easeInOut or [x1,y1,x2,y2]` };
+        return { error: `keyframes.${prop}: easing must be linear/easeIn/easeOut/easeInOut/cubicOut/springOut or [x1,y1,x2,y2]` };
       }
       kfs.push({ frame: Math.round(frame), value, ...(easing !== undefined ? { easing } : {}) });
     }
@@ -203,7 +284,30 @@ export function validateGenericUpdate(
   const sourceTiming = validateSourceFrameUpdate(it, entry);
   if (sourceTiming.error) return sourceTiming;
   Object.assign(plan, sourceTiming);
-  if (entry.props && typeof entry.props === 'object') plan.props = entry.props;
+  if (entry.props !== undefined) {
+    if (entry.props === null || typeof entry.props !== 'object' || Array.isArray(entry.props)) {
+      return { error: 'props must be a plain object' };
+    }
+    const propPatch = entry.props as Record<string, unknown>;
+    if (it.kind === 'text') {
+      const textErr = validateTextClipProps(propPatch);
+      if (textErr) return { error: textErr };
+      plan.props = prepareTextPropPatch(it.props, propPatch);
+    } else if (it.kind === 'solid') {
+      const mergedSolid = { ...(it.props ?? {}), ...propPatch };
+      if (resolveVectorShape(mergedSolid)) {
+        const shapeErr = validateVectorShapeProps(mergedSolid);
+        if (shapeErr) return { error: shapeErr };
+      }
+      plan.props = propPatch;
+    } else if (it.kind === 'image' || it.kind === 'video' || it.kind === 'svg' || it.kind === 'gif') {
+      const styleErr = validateImageStylingProps(propPatch);
+      if (styleErr) return { error: styleErr };
+      plan.props = propPatch;
+    } else {
+      plan.props = propPatch;
+    }
+  }
   if (finiteNum(entry.volume) !== undefined) plan.volume = Math.max(0, Math.min(2, finiteNum(entry.volume)!));
   const fps = state.fps || 30;
   const toFrames = (v: unknown): number | undefined =>
@@ -274,14 +378,26 @@ export function validateGenericUpdate(
     }
   }
 
+  if (entry.disabled !== undefined || entry.pictureDisabled !== undefined) {
+    if (entry.disabled !== undefined && entry.pictureDisabled !== undefined
+      && entry.disabled !== entry.pictureDisabled) {
+      return { error: 'disabled and pictureDisabled cannot conflict' };
+    }
+    const disabledRaw = entry.disabled ?? entry.pictureDisabled;
+    if (typeof disabledRaw !== 'boolean') {
+      return { error: 'disabled/pictureDisabled must be a boolean' };
+    }
+    plan.pictureDisabled = disabledRaw;
+  }
+
   const FIELDS = [
     'track', 'startFrame', 'durationInFrames', 'srcInFrame', 'props', 'volume',
     'fadeInFrames', 'fadeOutFrames', 'keyframes', 'filters', 'transform',
-    'backgroundFill', 'backgroundFillStrength', 'speed', 'clearKeyframes',
+    'backgroundFill', 'backgroundFillStrength', 'speed', 'clearKeyframes', 'pictureDisabled',
   ];
   if (!FIELDS.some((k) => k in plan)) {
     return {
-      error: 'update needs at least one of: track/trackId, startFrame/fromFrame, durationInFrames/sourceDurationInFrames, srcInFrame/sourceStartFrame, assetId, props, volume, fadeInSeconds, fadeOutSeconds, keyframes, clearKeyframes, filters, transform, backgroundFill, backgroundFillStrength, speed',
+      error: 'update needs at least one of: track/trackId, startFrame/fromFrame, durationInFrames/sourceDurationInFrames, srcInFrame/sourceStartFrame, assetId, props, volume, fadeInSeconds, fadeOutSeconds, keyframes, clearKeyframes, filters, transform, backgroundFill, backgroundFillStrength, speed, disabled/pictureDisabled',
     };
   }
   return plan;
@@ -336,9 +452,40 @@ const isHexColor = (value: unknown): value is string => (
   typeof value === 'string' && /^#([\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/i.test(value.trim())
 );
 
+function resolveRequestedOrDefaultTrack(
+  state: TimelineState,
+  rawTrack: unknown,
+  family: 'video' | 'audio',
+  useDefaultWhenOmitted: boolean,
+): { track?: string; strictTrack: boolean; error?: string } {
+  const hasExplicit = rawTrack !== undefined && rawTrack !== null && String(rawTrack).trim() !== '';
+  if (hasExplicit) {
+    const resolved = resolveTrackId(state, rawTrack, family);
+    if (!resolved) {
+      const available = timelineTrackIds(state)
+        .filter((id) => trackKind(state, id) === family)
+        .map((id) => `${trackAlias(state, id)}(${id})`)
+        .join(', ');
+      return {
+        strictTrack: true,
+        error: available
+          ? `unknown or incompatible ${family} track "${String(rawTrack)}". Available ${family} tracks: ${available}`
+          : `no ${family} track for placement — create one with edit_track first`,
+      };
+    }
+    if (state.tracks?.[resolved]?.locked) {
+      return { strictTrack: true, error: `track "${trackAlias(state, resolved)}" (${resolved}) is locked` };
+    }
+    return { track: resolved, strictTrack: true };
+  }
+  const def = defaultTrackId(state, family);
+  if (!def) return { strictTrack: false, error: `no ${family} track for placement — create one with edit_track first` };
+  return { track: useDefaultWhenOmitted ? def : undefined, strictTrack: false };
+}
+
 /**
- * Authored text / solid adds — no pool assetId. Props land at creation so one
- * edit_item.adds entry can place a titled lower-third or solid fill.
+ * Authored text / solid / shape adds — no pool assetId. Props land at creation so one
+ * edit_item.adds entry can place a titled lower-third, paper solid, or vector shape.
  */
 export function validateAuthoredAdd(
   state: TimelineState,
@@ -353,42 +500,131 @@ export function validateAuthoredAdd(
   if (entry.assetId !== undefined) {
     return { error: `${type} is authored — do not pass assetId; set text/color/name props directly` };
   }
-  const track = resolveTrackId(state, entry.track ?? entry.trackId ?? 'V1', 'video')
-    ?? defaultTrackId(state, 'video');
-  if (!track) return { error: 'no video track for placement — create one with edit_track first' };
+  const trackResolution = resolveRequestedOrDefaultTrack(state, entry.track ?? entry.trackId, 'video', false);
+  if (trackResolution.error) return { error: trackResolution.error };
+  const track = trackResolution.track;
   const startFrame = finiteNum(entry.startFrame) ?? finiteNum(entry.fromFrame);
   const durationInFrames = finiteNum(entry.durationInFrames);
   const name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : undefined;
-  if (type === 'solid') {
-    const color = isHexColor(entry.color) ? entry.color.trim() : '#1a1a1a';
+  const rawProps = entry.props !== undefined && entry.props !== null && typeof entry.props === 'object' && !Array.isArray(entry.props)
+    ? { ...(entry.props as Record<string, unknown>) }
+    : {};
+  if (entry.props !== undefined && (entry.props === null || typeof entry.props !== 'object' || Array.isArray(entry.props))) {
+    return { error: `${type} props must be a plain object` };
+  }
+  if (type === 'shape') {
+    const rawKind = entry.shapeKind ?? rawProps.shapeKind ?? 'line';
+    if (rawKind !== 'line' && rawKind !== 'rect' && rawKind !== 'arrow') {
+      return { error: `shapeKind must be "line", "rect", or "arrow" (got ${String(rawKind)})` };
+    }
+    const shapeKind = rawKind as VectorShapeKind;
+    const flatShape: Record<string, unknown> = { shapeKind };
+    for (const k of ['x1', 'y1', 'x2', 'y2', 'x', 'y', 'width', 'height', 'color', 'strokeWidth', 'dashPattern', 'opacity', 'cornerRadius', 'fillColor', 'fillOpacity', 'arrowHeadSize', 'bidirectional'] as const) {
+      if (entry[k] !== undefined) flatShape[k] = entry[k];
+    }
+    const props: Record<string, unknown> = {
+      ...VECTOR_SHAPE_DEFAULTS[shapeKind],
+      ...rawProps,
+      ...flatShape,
+      shapeKind,
+    };
+    const shapeErr = validateVectorShapeProps(props);
+    if (shapeErr) return { error: shapeErr };
+    const defaultLabel = shapeKind === 'line' ? '精细直线' : shapeKind === 'rect' ? '矩形边框' : '指向箭头';
     return {
       ok: true,
       kind: 'solid',
       plan: 'addSolid',
       track,
-      color,
-      ...(name ? { name } : {}),
+      ...(trackResolution.strictTrack ? { strictTrack: true } : {}),
+      color: String(props.color ?? '#d4af37'),
+      props,
+      name: name ?? defaultLabel,
       ...(startFrame !== undefined ? { startFrame: Math.max(0, Math.round(startFrame)) } : {}),
       ...(durationInFrames !== undefined && durationInFrames > 0
         ? { durationInFrames: Math.round(durationInFrames) }
         : {}),
     };
   }
-  const text = typeof entry.text === 'string' && entry.text.trim() ? entry.text.trim() : '文字';
-  const color = isHexColor(entry.color) ? entry.color.trim() : '#ffffff';
-  const fontSize = finiteNum(entry.fontSize);
-  const fontWeight = finiteNum(entry.fontWeight);
+  if (type === 'solid') {
+    const presetRaw = typeof entry.paperPreset === 'string'
+      ? entry.paperPreset
+      : typeof rawProps.paperPreset === 'string' ? rawProps.paperPreset : undefined;
+    const preset = presetRaw ? PAPER_BACKGROUND_PRESETS.find((p) => p.id === presetRaw) : undefined;
+    if (presetRaw && presetRaw !== 'none' && presetRaw !== 'custom' && !preset) {
+      return { error: `unknown paperPreset "${presetRaw}"` };
+    }
+    const flatPaper: Record<string, unknown> = {};
+    for (const k of ['paperPreset', 'paperCenterColor', 'paperMidColor', 'paperEdgeColor', 'paperLineColor', 'paperGrain', 'paperVignette', 'paperAccentLine'] as const) {
+      if (entry[k] !== undefined) flatPaper[k] = entry[k];
+    }
+    const color = isHexColor(entry.color) ? entry.color.trim() : preset?.colors[1] ?? (typeof rawProps.paperMidColor === 'string' ? rawProps.paperMidColor : '#1a1a1a');
+    const props: Record<string, unknown> = {
+      ...(preset ? {
+        paperPreset: preset.id,
+        color: preset.colors[1],
+        paperGrain: preset.defaultGrain,
+        paperVignette: preset.defaultVignette,
+        paperAccentLine: preset.defaultAccentLine,
+      } : {}),
+      ...rawProps,
+      ...flatPaper,
+      color,
+    };
+    if (props.shapeKind !== undefined) {
+      const shapeErr = validateVectorShapeProps(props);
+      if (shapeErr) return { error: shapeErr };
+    }
+    return {
+      ok: true,
+      kind: 'solid',
+      plan: 'addSolid',
+      track,
+      ...(trackResolution.strictTrack ? { strictTrack: true } : {}),
+      color,
+      props,
+      ...(name ? { name } : preset ? { name: preset.label } : {}),
+      ...(startFrame !== undefined ? { startFrame: Math.max(0, Math.round(startFrame)) } : {}),
+      ...(durationInFrames !== undefined && durationInFrames > 0
+        ? { durationInFrames: Math.round(durationInFrames) }
+        : {}),
+    };
+  }
+  const text = typeof entry.text === 'string' && entry.text.trim()
+    ? entry.text.trim()
+    : (typeof rawProps.text === 'string' && rawProps.text.trim() ? rawProps.text.trim() : '文字');
+  const presetId = typeof entry.textStylePreset === 'string'
+    ? entry.textStylePreset
+    : (typeof rawProps.textStylePreset === 'string' ? rawProps.textStylePreset : undefined);
+  const presetColor = presetId ? TEXT_STYLE_PRESETS.find((p) => p.id === presetId)?.patch.color : undefined;
+  const color = isHexColor(entry.color) ? entry.color.trim()
+    : (isHexColor(rawProps.color) ? rawProps.color.trim() : (presetColor ?? '#ffffff'));
+  const fontSize = finiteNum(entry.fontSize) ?? finiteNum(rawProps.fontSize);
+  const fontWeight = finiteNum(entry.fontWeight) ?? finiteNum(rawProps.fontWeight);
+  for (const key of ALLOWED_TEXT_PROP_KEYS) {
+    if (key === 'text' || key === 'color' || key === 'fontSize' || key === 'fontWeight' || key === 'align') continue;
+    if (entry[key] !== undefined) rawProps[key] = entry[key];
+  }
+  const textErr = validateTextClipProps(rawProps);
+  if (textErr) return { error: textErr };
+  const normalizedProps = prepareTextPropPatch(undefined, rawProps);
+  const anchorVal = normalizedProps.anchor;
+  const defaultAlign = anchorVal === 'top-left' || anchorVal === 'middle-left' ? 'left' : 'center';
   const align = entry.align === 'left' || entry.align === 'right' || entry.align === 'center'
     ? entry.align
-    : 'center';
+    : (normalizedProps.align === 'left' || normalizedProps.align === 'right' || normalizedProps.align === 'center'
+      ? normalizedProps.align
+      : defaultAlign);
   return {
     ok: true,
     kind: 'text',
     plan: 'addText',
     track,
+    ...(trackResolution.strictTrack ? { strictTrack: true } : {}),
     text,
     color,
     align,
+    ...(Object.keys(normalizedProps).length ? { props: normalizedProps } : {}),
     ...(name ? { name } : {}),
     ...(fontSize !== undefined && fontSize > 0 ? { fontSize } : {}),
     ...(fontWeight !== undefined && fontWeight > 0 ? { fontWeight } : {}),
@@ -432,13 +668,23 @@ export function validateGenericAdd(
     return { error: `asset ${asset.id} is kind=${asset.kind}, not ${type} — pass type:"${asset.kind}"` };
   }
   const family = type === 'audio' ? 'audio' : 'video';
-  const track = resolveTrackId(state, entry.track ?? entry.trackId ?? (family === 'audio' ? 'A1' : 'V1'), family)
-    ?? defaultTrackId(state, family);
-  if (!track) return { error: `no ${family} track for placement — create one with edit_track first` };
+  const trackResolution = resolveRequestedOrDefaultTrack(state, entry.track ?? entry.trackId, family, true);
+  if (trackResolution.error || !trackResolution.track) {
+    return { error: trackResolution.error ?? `no ${family} track for placement — create one with edit_track first` };
+  }
+  const track = trackResolution.track;
   const startFrame = finiteNum(entry.startFrame) ?? finiteNum(entry.fromFrame);
   const durationInFrames = finiteNum(entry.durationInFrames);
   const sourceWindow = validateSourceWindow(type, asset, state.fps || 30, entry, durationInFrames);
   if (sourceWindow?.error) return sourceWindow;
+  if (entry.props !== undefined && (entry.props === null || typeof entry.props !== 'object' || Array.isArray(entry.props))) {
+    return { error: `${type} props must be a plain object` };
+  }
+  const props = entry.props ? (entry.props as Record<string, unknown>) : undefined;
+  if (props && (type === 'image' || type === 'video' || type === 'svg' || type === 'gif')) {
+    const styleErr = validateImageStylingProps(props);
+    if (styleErr) return { error: styleErr };
+  }
   if (sourceWindow) {
     return {
       ok: true,
@@ -447,6 +693,7 @@ export function validateGenericAdd(
       assetId: asset.id,
       track,
       ...sourceWindow,
+      ...(props ? { props } : {}),
       ...(startFrame !== undefined ? { startFrame: Math.max(0, Math.round(startFrame)) } : {}),
     };
   }
@@ -456,6 +703,7 @@ export function validateGenericAdd(
     plan: 'addMedia',
     assetId: asset.id,
     track,
+    ...(props ? { props } : {}),
     ...(startFrame !== undefined ? { startFrame: Math.max(0, Math.round(startFrame)) } : {}),
     ...(durationInFrames !== undefined && durationInFrames > 0 ? { durationInFrames: Math.round(durationInFrames) } : {}),
   };

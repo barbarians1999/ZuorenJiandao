@@ -14,6 +14,11 @@ const TRANSITION_ADD_KEYS: AllowedFields = {
   incomingItemId: true,
   outgoingItemId: true,
   durationInFrames: true,
+  direction: true,
+  originX: true,
+  originY: true,
+  lineColor: true,
+  lineWidthPx: true,
   trackId: true,
   fromFrame: true,
 };
@@ -25,7 +30,12 @@ const AUDIO_ADD_KEYS: AllowedFields = {
   startFrame: true,
   fromFrame: true,
 };
-const MOTION_GRAPHIC_ADD_KEYS: AllowedFields = AUDIO_ADD_KEYS;
+const MOTION_GRAPHIC_ADD_KEYS: AllowedFields = {
+  ...AUDIO_ADD_KEYS,
+  durationInFrames: true,
+  props: true,
+  name: true,
+};
 const EFFECT_UPDATE_KEYS: AllowedFields = {
   type: true,
   targetItemId: true,
@@ -40,6 +50,11 @@ const TRANSITION_UPDATE_KEYS: AllowedFields = {
   assetId: true,
   transitionType: true,
   durationInFrames: true,
+  direction: true,
+  originX: true,
+  originY: true,
+  lineColor: true,
+  lineWidthPx: true,
 };
 const EFFECT_DELETE_KEYS: AllowedFields = {
   type: true,
@@ -83,6 +98,7 @@ export const CLIP_LEVEL_UPDATE_KEYS = [
   'srcInFrame', 'sourceStartFrame', 'sourceDurationInFrames', 'assetId',
   'fromFrame', 'startFrame', 'durationInFrames', 'props', 'track', 'trackId',
   'filters', 'transform', 'backgroundFill', 'backgroundFillStrength', 'speed', 'playbackRate',
+  'disabled', 'pictureDisabled',
 ] as const;
 
 const CLIP_UPDATE_HINT_FIELDS = [
@@ -110,6 +126,8 @@ export function hasEffectOnlyUpdateSignals(entry: Record<string, unknown>): bool
       && entry.speed === undefined
       && entry.playbackRate === undefined
       && entry.clearKeyframes === undefined
+      && entry.disabled === undefined
+      && entry.pictureDisabled === undefined
     );
 }
 

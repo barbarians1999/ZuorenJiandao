@@ -23,14 +23,66 @@ import dipToColor from './shaders/dip-to-color.frag?raw';
 import mosaicReveal from './shaders/mosaic-reveal.frag?raw';
 import blindsReveal from './shaders/blinds-reveal.frag?raw';
 import splitSlide from './shaders/split-slide.frag?raw';
+import inkBleed from './shaders/ink-bleed.frag?raw';
+import archivalLineWipe from './shaders/archival-line-wipe.frag?raw';
+
+function hexToRgbUnit(hex: string | undefined, fallback: [number, number, number]): [number, number, number] {
+  const clean = typeof hex === 'string' ? hex.trim().replace(/^#/, '') : '';
+  if (clean.length === 6) {
+    const r = Number.parseInt(clean.slice(0, 2), 16);
+    const g = Number.parseInt(clean.slice(2, 4), 16);
+    const b = Number.parseInt(clean.slice(4, 6), 16);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
+      return [r / 255, g / 255, b / 255];
+    }
+  }
+  return fallback;
+}
 
 export interface GlslTransitionDef {
   frag: string;
   /** per-frame uniforms beyond u_progress/u_resolution/u_aspect */
-  uniforms: (ctx: { time: number; aspect: number; direction: TransitionDirection }) => Record<string, UniformValue>;
+  uniforms: (ctx: {
+    time: number;
+    aspect: number;
+    direction: TransitionDirection;
+    width?: number;
+    height?: number;
+    originX?: number;
+    originY?: number;
+    lineColor?: string;
+    lineWidthPx?: number;
+  }) => Record<string, UniformValue>;
 }
 
 export const GLSL_TRANSITIONS: Record<GlslTransitionType, GlslTransitionDef> = {
+  'ink-bleed': {
+    frag: inkBleed,
+    uniforms: ({ aspect, originX, originY }) => ({
+      u_ratio: aspect,
+      u_origin: [
+        typeof originX === 'number' && Number.isFinite(originX) ? Math.max(0, Math.min(1, originX)) : 0.5,
+        typeof originY === 'number' && Number.isFinite(originY) ? Math.max(0, Math.min(1, originY)) : 0.5,
+      ],
+      u_roughness: 0.55,
+    }),
+  },
+  'archival-line-wipe': {
+    frag: archivalLineWipe,
+    uniforms: ({ direction, width, height, lineColor, lineWidthPx }) => {
+      const axisLen = direction === 'up' || direction === 'down'
+        ? Math.max(1, height ?? 1080)
+        : Math.max(1, width ?? 1920);
+      const px = typeof lineWidthPx === 'number' && Number.isFinite(lineWidthPx)
+        ? Math.max(1, Math.min(12, lineWidthPx))
+        : 2.5;
+      return {
+        u_dir: direction === 'right' ? [-1, 0] : direction === 'up' ? [0, 1] : direction === 'down' ? [0, -1] : [1, 0],
+        u_lineColor: hexToRgbUnit(lineColor, [0.651, 0.129, 0.129]),
+        u_lineWidthUv: px / axisLen,
+      };
+    },
+  },
   'mosaic-reveal': { frag: mosaicReveal, uniforms: () => ({}) },
   'blinds-reveal': { frag: blindsReveal, uniforms: ({ direction }) => ({ u_axis: direction === 'up' || direction === 'down' ? [0, 1] : [1, 0] }) },
   'split-slide': { frag: splitSlide, uniforms: ({ direction }) => ({ u_axis: direction === 'up' || direction === 'down' ? [0, 1] : [1, 0] }) },
@@ -106,10 +158,19 @@ export const GLSL_TRANSITIONS: Record<GlslTransitionType, GlslTransitionDef> = {
   },
   'clean-line-wipe': {
     frag: cleanLineWipe,
-    uniforms: () => ({
-      u_lineWidth: 0.006, // Thin bright line width (customized)
-      u_lineColor: [1, 1, 1], // Custom
-    }),
+    uniforms: ({ direction, width, height, lineColor, lineWidthPx }) => {
+      const axisLen = direction === 'up' || direction === 'down'
+        ? Math.max(1, height ?? 1080)
+        : Math.max(1, width ?? 1920);
+      const px = typeof lineWidthPx === 'number' && Number.isFinite(lineWidthPx)
+        ? Math.max(1, Math.min(20, lineWidthPx))
+        : 3.5;
+      return {
+        u_dir: direction === 'right' ? [-1, 0] : direction === 'up' ? [0, 1] : direction === 'down' ? [0, -1] : [1, 0],
+        u_lineWidth: Math.max(0.0006, px / axisLen),
+        u_lineColor: hexToRgbUnit(lineColor, [1, 1, 1]),
+      };
+    },
   },
   // ── Extended generated library ──────────────────────────────────────────
   'circle-wipe': {

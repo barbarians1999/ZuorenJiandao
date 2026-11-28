@@ -78,6 +78,7 @@ export function buildCommands(
     kind: TrackKind,
     visualRole?: TrackVisualRole,
     itemKind?: TimelineItem['kind'],
+    strictTrack = false,
   ): TrackId => {
     const state = activeTimeline(getDoc());
     const main = mainTrackId(state);
@@ -91,6 +92,9 @@ export function buildCommands(
         && (!isEffectTrack(state, track, main) || (itemKind != null && isEffectItemKind(itemKind)));
     };
     const resolved = resolveTrackId(state, ref, kind);
+    if (strictTrack && resolved && !state.tracks?.[resolved]?.locked) {
+      return resolved;
+    }
     const existing = resolved && matchesRole(resolved)
       ? resolved
       : effectiveRole === 'text' || effectiveRole === 'effect'
@@ -121,10 +125,16 @@ export function buildCommands(
     startFrame: number,
     durationInFrames: number,
     explicitTrack?: TrackId,
+    strictTrack = false,
   ): TrackId => {
     const main = mainTrackId(state);
-    if (explicitTrack && isEffectTrack(state, explicitTrack, main) && !state.tracks?.[explicitTrack]?.locked) {
-      return explicitTrack;
+    const resolvedExplicit = explicitTrack !== undefined && String(explicitTrack).trim() !== ''
+      ? resolveTrackId(state, explicitTrack, 'video')
+      : undefined;
+    if (resolvedExplicit && !state.tracks?.[resolvedExplicit]?.locked) {
+      if (strictTrack || isEffectTrack(state, resolvedExplicit, main)) {
+        return resolvedExplicit;
+      }
     }
     const endFrame = startFrame + durationInFrames;
     const free = timelineTrackIds(state).find((candidate) => candidate !== main
@@ -173,8 +183,8 @@ export function buildCommands(
         return t.id;
       },
       switchTimeline: (id) => dispatch({ type: 'tl.switch', id }),
-      createSubdraft: (ids) => {
-        const result = planSubdraft(getDoc(), ids, uid);
+      createSubdraft: (ids, name) => {
+        const result = planSubdraft(getDoc(), ids, uid, name);
         if (!result.ok) return result;
         dispatch({ type: 'tl.setDoc', doc: result.doc });
         selectionDispatch({ type: 'select', id: result.itemId });
@@ -200,7 +210,7 @@ export function buildCommands(
         const state = activeTimeline(getDoc());
         const startFrame = Math.max(0, Math.round(at?.startFrame ?? 0));
         const durationInFrames = Math.max(1, Math.round(at?.durationInFrames ?? Math.round(5 * state.fps)));
-        const track = pickEffectOverlayTrack(state, undefined, startFrame, durationInFrames, at?.track);
+        const track = pickEffectOverlayTrack(state, undefined, startFrame, durationInFrames, at?.track, at?.strictTrack === true);
         const id = uid('item');
         dispatchWithTracks({
           type: 'add',
@@ -214,7 +224,7 @@ export function buildCommands(
             name: at?.name ?? '纯色',
             width: state.width,
             height: state.height,
-            props: { color: at?.color ?? '#1a1a1a' },
+            props: { color: at?.color ?? '#1a1a1a', ...(at?.props ?? {}) },
             ...(at?.mask ? { mask: at.mask } : {}),
           },
         }, 'Add solid');
@@ -254,20 +264,25 @@ export function buildCommands(
       addMotionGraphic: (tpl, at) => {
         const state = activeTimeline(getDoc());
         const startFrame = Math.max(0, Math.round(at?.startFrame ?? 0));
-        const track = pickEffectOverlayTrack(state, undefined, startFrame, tpl.durationInFrames, at?.track);
+        const durationInFrames = typeof at?.durationInFrames === 'number' && Number.isFinite(at.durationInFrames) && at.durationInFrames >= 1
+          ? Math.round(at.durationInFrames)
+          : tpl.durationInFrames;
+        const track = pickEffectOverlayTrack(state, undefined, startFrame, durationInFrames, at?.track, at?.strictTrack === true);
+        const id = uid('item');
         const item = {
-          id: uid('item'),
+          id,
           track,
-          durationInFrames: tpl.durationInFrames,
+          durationInFrames,
           kind: 'motion-graphic' as const,
           templateId: tpl.id,
-          name: tpl.name,
+          name: typeof at?.name === 'string' && at.name.trim() ? at.name.trim() : tpl.name,
           code: tpl.code,
-          props: { ...tpl.props },
+          props: { ...tpl.props, ...(at?.props ?? {}) },
           width: tpl.width,
           height: tpl.height,
         };
         placeItem(item, at);
+        return id;
       },
       addAudio: (asset, at) => {
         const assets = getDoc().assets;
@@ -306,7 +321,7 @@ export function buildCommands(
         const duration = at?.durationInFrames ?? 90;
         const start = at?.startFrame ?? 0;
         // A missing V2 must not fall back to the magnetic main lane.
-        let titleTrack = at?.track ? pickTrack(at.track, 'video', 'text')
+        let titleTrack = at?.track ? pickTrack(at.track, 'video', 'text', 'text', at.strictTrack === true)
           : timelineTrackIds(current).find((track) => track !== mainTrackId(current)
             && isTextTrack(current, track, mainTrackId(current)) && !current.tracks?.[track]?.locked
             && !current.items.some((item) => item.track === track && item.startFrame < start + duration
@@ -432,7 +447,7 @@ export function buildCommands(
       moveItem: (id, to) => {
         const item = activeTimeline(getDoc()).items.find((candidate) => candidate.id === id);
         const track = to.track && item
-          ? pickTrack(to.track, item.kind === 'audio' ? 'audio' : 'video', item.kind === 'text' ? 'text' : undefined, item.kind)
+          ? pickTrack(to.track, item.kind === 'audio' ? 'audio' : 'video', item.kind === 'text' ? 'text' : undefined, item.kind, true)
           : to.track;
         dispatchWithTracks({ type: 'move', id, ...to, track }, 'Move clip');
       },
@@ -446,6 +461,7 @@ export function buildCommands(
       },
       setItemVolume: (id, volume) => dispatch({ type: 'setVolume', id, volume }),
       toggleSelectedPicture: (ids) => dispatch({ type: 'togglePicture', ids }),
+      setItemDisabled: (id, disabled) => dispatch({ type: 'setItemDisabled', id, disabled }),
       setItemFade: (id, fade) => dispatch({ type: 'setFade', id, ...fade }),
       setItemTransform: (id, patch) => dispatch({ type: 'setTransform', id, patch }),
       setItemFilters: (id, patch) => dispatch({ type: 'setFilters', id, patch }),

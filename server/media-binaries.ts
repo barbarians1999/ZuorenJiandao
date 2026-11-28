@@ -60,10 +60,11 @@ export function whisperCliBin(): string {
   const platformKey = `${process.platform}-${process.arch}`;
   const suffix = process.platform === 'win32' ? '.exe' : '';
   const relative = join('whisper-cli', platformKey, `whisper-cli${suffix}`);
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath ?? '';
   const candidates = [
     join(import.meta.dirname, '..', 'public', relative),
-    join(process.resourcesPath ?? '', 'dist', relative),
-    join(process.resourcesPath ?? '', relative),
+    join(resourcesPath, 'dist', relative),
+    join(resourcesPath, relative),
   ];
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;

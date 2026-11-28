@@ -332,18 +332,18 @@ export function ClipContextMenu({ item, transitions, x, y, playhead, commands, t
         onClick={run(() => commands.applyState({ ...timeline, items: timeline.items.map((clip) => clip.id === item.id
           ? { ...clip, mainClipId: item.mainClipId ? undefined : attachable.mainClipId } : clip) }))}
       />}
-      <Item label={t('创建子草稿（合并所选片段）')} icon="film" onClick={run(() => {
+      <Item label={t('打包为复合片段（收纳所选图层）')} icon="film" onClick={run(() => {
         const result = commands.createSubdraft(batchIds);
         if (!result.ok) window.alert(t(result.error));
       })} />
-      {item.kind === 'sequence' && item.timelineId && <Item label={t('打开子草稿编辑')} icon="film" onClick={run(() => commands.switchTimeline(item.timelineId!))} />}
+      {item.kind === 'sequence' && item.timelineId && <Item label={t('进入复合片段编辑（或双击）')} icon="film" onClick={run(() => commands.switchTimeline(item.timelineId!))} />}
       {item.kind === 'sequence' && <>
         <Item label={t('制作独立副本（只修改这一处）')} icon="copy"
-          title={t('复制内部所有嵌套子草稿；原始媒体共用，不影响其他位置的同一子草稿')}
+          title={t('复制内部所有嵌套子草稿；原始媒体共用，不影响其他位置的同一复合片段')}
           disabled={!projectDoc || !!timeline.tracks?.[item.track]?.locked}
           onClick={run(() => applySubdraftOperation(planIndependentSubdraft))} />
-        <Item label={t('展开为原片段')} icon="film"
-          title={t('将当前显示的源范围展开到时间线，保留原子草稿，可一次撤销')}
+        <Item label={t('拆开复合片段（还原内部图层）')} icon="film"
+          title={t('将当前显示的源范围展开到时间线，保留原复合片段，可一次撤销')}
           disabled={!projectDoc || !!timeline.tracks?.[item.track]?.locked}
           onClick={run(() => applySubdraftOperation(planExpandSubdraft))} />
       </>}

@@ -29,6 +29,7 @@ import { usesVideoAudioRenderer } from './videoAudioRouting';
 import { audioPlaybackWindows, selectActivePlayerAudioWindows } from './audioPlaybackWindow';
 import { usePreviewPlaybackRate } from './PreviewPlaybackContext';
 import { attachNativeMediaElementGuard, nativeAcceptableTimeShiftSeconds } from '../media/nativePlaybackGuard';
+import { resolveImageStyling, buildImageMaskStyle, buildImageInnerStyle } from './imageStyling';
 
 export function shouldMountPlayerSeparateAudio(
   item: Pick<TimelineItem, 'src' | 'denoisedSrc' | 'audioDetached' | 'volume' | 'keyframes'> & { kind?: TimelineItem['kind'] },
@@ -367,6 +368,20 @@ interface MediaFillProps {
 
 type MediaVolume = (frame: number) => number;
 
+function StyledMediaContent({ item, children }: { item: TimelineItem; children: React.ReactNode }) {
+  if (item.kind !== 'image' && item.kind !== 'video' && item.kind !== 'svg' && item.kind !== 'gif') return <>{children}</>;
+  const styling = resolveImageStyling(item.props);
+  const maskStyle = buildImageMaskStyle(styling);
+  const innerStyle = buildImageInnerStyle(styling);
+  if (!maskStyle && !innerStyle) return <>{children}</>;
+  const inner = innerStyle
+    ? <div style={{ width: '100%', height: '100%', ...innerStyle }}>{children}</div>
+    : children;
+  return maskStyle
+    ? <div style={{ width: '100%', height: '100%', ...maskStyle }}>{inner}</div>
+    : <>{inner}</>;
+}
+
 function EffectMediaFill({ props, trimBefore, volume }: {
   props: MediaFillProps;
   trimBefore: number;
@@ -383,8 +398,10 @@ function EffectMediaFill({ props, trimBefore, volume }: {
   return (
     <>
       <VisualClipSurface item={item} fit={fit} canvasW={canvasW} canvasH={canvasH} borderRadius={borderRadius}>
-        <ClipFx item={item} fit={fit === 'contain' ? 'cover' : fit} width={Math.max(1, Math.round(frame.width))}
-          height={Math.max(1, Math.round(frame.height))} frameOffset={frameOffset} onPreviewStatus={onPreviewStatus} />
+        <StyledMediaContent item={item}>
+          <ClipFx item={item} fit={fit === 'contain' ? 'cover' : fit} width={Math.max(1, Math.round(frame.width))}
+            height={Math.max(1, Math.round(frame.height))} frameOffset={frameOffset} onPreviewStatus={onPreviewStatus} />
+        </StyledMediaContent>
       </VisualClipSurface>
       {mountSeparateAudio && <MixedRuntimeAudio item={item} browserRenderer={browserRenderer}
         trimBefore={trimBefore} playbackRate={item.playbackRate ?? 1} volume={volume} />}
@@ -408,18 +425,20 @@ function PlainMediaFill({ props, trimBefore, volume }: {
   const mountSeparateAudio = shouldMountPlayerSeparateAudio(item, groupedAudio, muted, isPlayer) && props.audioWindowActive !== false;
   return (
     <VisualClipSurface item={item} fit={fit} canvasW={canvasW} canvasH={canvasH} borderRadius={borderRadius}>
-      {still
-        ? <Img src={item.src!} style={style} />
-        : item.kind === 'gif'
-          ? <SyncedGif src={item.src!} item={item} frameOffset={props.frameOffset} style={style} />
-          : separateAudio
-          ? <><RuntimeVideo browserRenderer={browserRenderer} src={item.src!} trimBefore={trimBefore}
-              playbackRate={item.playbackRate ?? 1} volume={0} muted style={style} />
-            {mountSeparateAudio && <MixedRuntimeAudio item={item} browserRenderer={browserRenderer} trimBefore={trimBefore}
-              playbackRate={item.playbackRate ?? 1} volume={volume} />}</>
-          : <RuntimeVideo browserRenderer={browserRenderer} src={item.src!} trimBefore={trimBefore}
-              playbackRate={item.playbackRate ?? 1} volume={groupedAudio ? 0 : volume}
-              muted={groupedAudio || muted} style={style} />}
+      <StyledMediaContent item={item}>
+        {still
+          ? <Img src={item.src!} style={style} />
+          : item.kind === 'gif'
+            ? <SyncedGif src={item.src!} item={item} frameOffset={props.frameOffset} style={style} />
+            : separateAudio
+            ? <><RuntimeVideo browserRenderer={browserRenderer} src={item.src!} trimBefore={trimBefore}
+                playbackRate={item.playbackRate ?? 1} volume={0} muted style={style} />
+              {mountSeparateAudio && <MixedRuntimeAudio item={item} browserRenderer={browserRenderer} trimBefore={trimBefore}
+                playbackRate={item.playbackRate ?? 1} volume={volume} />}</>
+            : <RuntimeVideo browserRenderer={browserRenderer} src={item.src!} trimBefore={trimBefore}
+                playbackRate={item.playbackRate ?? 1} volume={groupedAudio ? 0 : volume}
+                muted={groupedAudio || muted} style={style} />}
+      </StyledMediaContent>
     </VisualClipSurface>
   );
 }

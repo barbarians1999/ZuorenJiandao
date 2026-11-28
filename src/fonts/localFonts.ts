@@ -41,7 +41,7 @@ export const LOCAL_FONTS: readonly LocalFont[] = [
   // Noto Sans SC v40 — SIL Open Font License 1.1. The Fontsource package
   // preserves Google Fonts' unicode-range variable WOFF2 shards, so existing
   // project weights from 100 through 900 stay offline without synthetic aliases.
-  { family: 'Noto Sans SC', importName: 'NotoSansSC', aliasZh: ['Noto Sans CJK SC', '思源黑体'],
+  { family: 'Noto Sans SC', importName: 'NotoSansSC', aliasZh: ['Noto Sans CJK SC', 'Source Han Sans SC', 'Source Han Sans CN', '思源黑体', '黑体', '无衬线体'],
     stylesheet: '/fonts/noto-sans-sc/noto-sans-sc.css', weightRange: [100, 900] },
   // Deyihei — SIL Open Font License 1.1(github.com/atelier-anchor/smiley-sans, v2.0.1)
   { family: 'Smiley Sans', importName: 'SmileySans', aliasZh: ['得意黑'],

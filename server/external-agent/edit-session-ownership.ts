@@ -90,6 +90,18 @@ export class EditSessionOwnershipRegistry {
     });
   }
 
+  advanceOwnedRevision(call: EditSessionOwnershipCall, nextBaseRevision: string): void {
+    const sessionId = requestedSessionId(call);
+    if (!sessionId || !nextBaseRevision) return;
+    const owner = this.owners.get(sessionId);
+    if (owner
+      && owner.ownerId === call.ownerId
+      && sameEditorIdentity(owner.binding, call.binding)
+      && owner.binding.ownershipEpoch === call.binding.ownershipEpoch) {
+      owner.binding = { ...owner.binding, baseRevision: nextBaseRevision };
+    }
+  }
+
   finishApplied(call: EditSessionOwnershipCall, value: unknown): unknown {
     if (call.name === 'list_edit_sessions') {
       return this.projectSessionList(call.ownerId, call.binding, value);

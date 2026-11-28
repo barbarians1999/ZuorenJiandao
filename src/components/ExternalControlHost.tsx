@@ -3,7 +3,9 @@ import type { AgentContext } from '../agent/context';
 import { useExternalAgentBridge } from '../agent/useExternalAgentBridge';
 import type { TimelineState } from '../editor/types';
 import { useT } from '../i18n/locale';
+import { reloadProjectForEditing } from '../persist/projectStore';
 import { ExternalProposalCard } from './chat/ExternalProposalCard';
+import { MultiWindowConflictBanner } from './MultiWindowConflictBanner';
 
 export function ExternalControlDock({ visible, headerAction, children }: { visible: boolean; headerAction?: ReactNode; children: ReactNode }) {
   const t = useT();
@@ -19,35 +21,53 @@ export function ExternalControlDock({ visible, headerAction, children }: { visib
 }
 
 /** External MCP control belongs to the editor, not to an embedded AI chat. */
-export function ExternalControlHost({ ctx, projectId, onPreviewState }: {
+export function ExternalControlHost({ ctx, projectId, onPreviewState, onHome }: {
   ctx: AgentContext;
   projectId: string;
   onPreviewState: (state: TimelineState | null) => void;
+  onHome?: () => void;
 }) {
   const t = useT();
   const external = useExternalAgentBridge(ctx, projectId);
   useEffect(() => {
     if (!external.proposal) onPreviewState(null);
   }, [external.proposal, onPreviewState]);
+  const handleTakeover = () => {
+    void reloadProjectForEditing(projectId).then((reloaded) => {
+      if (reloaded.status === 'ok') {
+        ctx.commands.applyDoc(reloaded.doc);
+      }
+      external.takeover();
+    }).catch(() => {
+      external.takeover();
+    });
+  };
   const visible = Boolean(external.error || external.proposal || external.pendingGuard);
   return (
-    <ExternalControlDock
-      visible={visible}
-      headerAction={
-        <label className="cc-external-auto-toggle" title={t('开启后，外部客户端发起的操作与修改将直接生效，不再逐步确认')}>
-          <span>{t('后续全部自动允许')}</span>
-          <input
-            type="checkbox"
-            role="switch"
-            className="cc-switch"
-            checked={external.autoApprove}
-            onChange={(event) => external.setAutoApprove(event.target.checked)}
-            aria-label={t('后续全部自动允许')}
-          />
-        </label>
-      }
-    >
-      <ExternalProposalCard external={external} onPreviewState={onPreviewState} />
-    </ExternalControlDock>
+    <>
+      <MultiWindowConflictBanner
+        conflict={external.conflict}
+        onTakeover={handleTakeover}
+        onHome={() => onHome?.()}
+      />
+      <ExternalControlDock
+        visible={visible}
+        headerAction={
+          <label className="cc-external-auto-toggle" title={t('开启后，外部客户端发起的操作与修改将直接生效，不再逐步确认')}>
+            <span>{t('后续全部自动允许')}</span>
+            <input
+              type="checkbox"
+              role="switch"
+              className="cc-switch"
+              checked={external.autoApprove}
+              onChange={(event) => external.setAutoApprove(event.target.checked)}
+              aria-label={t('后续全部自动允许')}
+            />
+          </label>
+        }
+      >
+        <ExternalProposalCard external={external} onPreviewState={onPreviewState} />
+      </ExternalControlDock>
+    </>
   );
 }

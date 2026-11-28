@@ -313,7 +313,7 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
             <GlTransitionVisibility itemId={item.id} sequenceFrom={item.startFrame - eb}
               windows={glVisibilityWindows} readyWindows={readyGlWindows}>
               {entrance
-                ? <PreviewTransitionIn type={entrance.type} frames={entrance.frames} dir={entrance.dir} line={entrance.line} isolated={entrance.isolated}>{content}</PreviewTransitionIn>
+                ? <PreviewTransitionIn type={entrance.type} frames={entrance.frames} dir={entrance.dir} line={entrance.line} originX={entrance.originX} originY={entrance.originY} lineColor={entrance.lineColor} lineWidthPx={entrance.lineWidthPx} isolated={entrance.isolated}>{content}</PreviewTransitionIn>
                 : content}
             </GlTransitionVisibility>
           </Sequence>
@@ -337,6 +337,7 @@ function TimelineContent({ state, project, transparent, browserRenderer = false,
             outgoingBackgroundFill={isBackgroundFillActive(state, w.outgoing)}
             incomingBackgroundFill={isBackgroundFillActive(state, w.incoming)}
             customFrag={w.customFrag} customUniforms={w.customUniforms}
+            originX={w.originX} originY={w.originY} lineColor={w.lineColor} lineWidthPx={w.lineWidthPx}
             previewTargetId={w.previewTargetId} onPreviewStatus={w.previewTargetId ? onSelectedPreviewStatus : undefined}
             onReadyChange={(ready) => setGlWindowReady(w.key, ready)}
           />

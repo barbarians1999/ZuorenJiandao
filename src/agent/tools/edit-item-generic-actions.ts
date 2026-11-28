@@ -23,6 +23,7 @@ export interface GenericCommands {
   setItemTransform: (id: string, patch: ClipTransform) => void;
   setItemBackgroundFill: (id: string, enabled: boolean, strength?: number) => void;
   setItemSpeed: (id: string, rate: number) => void;
+  setItemDisabled: (id: string, disabled: boolean) => void;
   clearItemKeyframes: (id: string, prop?: KeyframeProp) => void;
   replaceItemMedia: (id: string, src: string) => void;
   relinkTimelineItem: (id: string, next: MediaAssetRelinkPatch) => MediaRelinkResult;
@@ -63,6 +64,7 @@ export function applyGeneric(plan: OpResult, commands: GenericCommands): OpResul
       );
     }
     if (plan.speed !== undefined) commands.setItemSpeed(id, plan.speed as number);
+    if (plan.pictureDisabled !== undefined) commands.setItemDisabled(id, plan.pictureDisabled as boolean);
     if (plan.clearKeyframes === true) commands.clearItemKeyframes(id);
     else if (typeof plan.clearKeyframes === 'string') {
       commands.clearItemKeyframes(id, plan.clearKeyframes as KeyframeProp);

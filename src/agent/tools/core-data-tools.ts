@@ -1,4 +1,5 @@
 import type { AgentContext } from '../context';
+import { prepareTextPropPatch, validateTextClipProps } from '../../editor/textStyles';
 import {
   ASPECT_PRESETS,
   resolveTrackId,
@@ -56,6 +57,11 @@ function readTimeline(ctx: AgentContext): unknown {
       outgoingItemId: transition.outgoingItemId,
       incomingItemId: transition.incomingItemId,
       trackId: transition.trackId,
+      ...(transition.direction ? { direction: transition.direction } : {}),
+      ...(transition.originX !== undefined ? { originX: transition.originX } : {}),
+      ...(transition.originY !== undefined ? { originY: transition.originY } : {}),
+      ...(transition.lineColor ? { lineColor: transition.lineColor } : {}),
+      ...(transition.lineWidthPx !== undefined ? { lineWidthPx: transition.lineWidthPx } : {}),
     })),
   };
 }
@@ -93,8 +99,15 @@ function mutateItem(name: string, args: Args, ctx: AgentContext): unknown {
   const item = findItem(ctx, args.itemId);
   if (!item) return { error: `no item ${args.itemId}` };
   if (name === 'update_item_props') {
-    ctx.commands.updateItemProps(item.id, (args.props ?? {}) as Args);
-    return { ok: true, itemId: item.id, updated: Object.keys((args.props ?? {}) as Args) };
+    const rawProps = (args.props ?? {}) as Args;
+    let nextProps = rawProps;
+    if (item.kind === 'text') {
+      const err = validateTextClipProps(rawProps);
+      if (err) return { error: err };
+      nextProps = prepareTextPropPatch(item.props, rawProps);
+    }
+    ctx.commands.updateItemProps(item.id, nextProps);
+    return { ok: true, itemId: item.id, updated: Object.keys(nextProps) };
   }
   if (name === 'move_item') {
     const kind = item.kind === 'audio' ? 'audio' : 'video';

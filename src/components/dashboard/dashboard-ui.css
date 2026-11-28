@@ -1,7 +1,14 @@
 .cc-dashboard-titlebar {
   height: 64px !important;
-  padding-left: 30px !important;
   box-shadow: none;
+}
+
+.cc-dashboard-titlebar:not(.cc-window-titlebar--mac) {
+  padding-left: 30px !important;
+}
+
+.cc-dashboard-titlebar.cc-window-titlebar--mac {
+  padding-left: 84px !important;
 }
 
 .cc-dashboard-brand { display: inline-flex; flex: 0 0 auto; }
@@ -221,7 +228,8 @@
 .cc-dashboard-empty strong { color: var(--cc-text-strong); font-size: 14px; }
 
 @media (max-width: 760px) {
-  .cc-dashboard-titlebar { padding-left: 12px !important; }
+  .cc-dashboard-titlebar:not(.cc-window-titlebar--mac) { padding-left: 12px !important; }
+  .cc-dashboard-titlebar.cc-window-titlebar--mac { padding-left: 84px !important; }
   .cc-dashboard-content { padding: 20px 14px 36px; }
   .cc-project-list-heading { display: none; }
   .cc-project-card { align-items: flex-start; gap: 10px; padding: 9px; }

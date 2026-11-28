@@ -8,6 +8,7 @@ import {
   type EditorBinding,
 } from './broker.ts';
 import { sameEditorIdentity } from './broker-registry.ts';
+import { hasConnectedDashboard, requestDashboardOpenProject } from './broker-dashboard.ts';
 import { OfflineExternalEditRuntime, type OfflineEditorBinding } from './offline-runtime.ts';
 
 const VALID_STORED_PROJECT_ID = /^[a-zA-Z0-9_-]{1,160}$/;
@@ -129,6 +130,7 @@ export async function targetMcpProject(
   session: McpBindingSession,
   projectId: string,
   editorUrl: string,
+  options?: { openInEditor?: boolean },
 ): Promise<McpTargetBinding> {
   if (!VALID_STORED_PROJECT_ID.test(projectId)) {
     throw new ExternalEditorCallError('rejected', 'projectId is invalid');
@@ -145,10 +147,21 @@ export async function targetMcpProject(
     await validateOfflineBinding(session);
     return session.offline.binding();
   }
-  const browser = editorBinding(projectId);
+  let browser = editorBinding(projectId);
   if (browser && editorBindingMatches(browser)) {
     session.binding = browser;
     return browser;
+  }
+  if (options?.openInEditor !== false && hasConnectedDashboard() && requestDashboardOpenProject(projectId)) {
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      browser = editorBinding(projectId);
+      if (browser && editorBindingMatches(browser)) {
+        session.binding = browser;
+        return browser;
+      }
+    }
   }
   session.offline = await OfflineExternalEditRuntime.create(projectId, editorUrl);
   return session.offline.binding();

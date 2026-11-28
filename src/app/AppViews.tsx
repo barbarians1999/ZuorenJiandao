@@ -1,13 +1,14 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Dashboard } from '../components/Dashboard';
 import type { ProjectDoc } from '../editor/types';
 import { useT } from '../i18n/locale';
 import { loadProjectForEditing, renameProject } from '../persist/projectStore';
 import type { ProjectMeta } from '../persist/projectStoreCoordinators';
 import { theme } from '../theme';
+import { editorTabIdentity } from '../agent/external-bridge-registration';
 import { emptyProjectDoc, navigateTo, type AppRoute } from './appShell';
 import { useDashboardActions } from './useDashboardActions';
-import type { ProjectQuickStart } from './projectQuickStart';
+import { projectEditorHash, type ProjectQuickStart } from './projectQuickStart';
 
 let editorModule: Promise<typeof import('../Editor')> | undefined;
 
@@ -123,8 +124,18 @@ interface EditorRouteProps {
 
 export function EditorRoute({ route, projects, refresh }: EditorRouteProps) {
   const t = useT();
+  const [checkedId, setCheckedId] = useState<string | null>(null);
   const meta = projects.find((project) => project.id === route.id);
+  useEffect(() => {
+    if (meta || checkedId === route.id) return;
+    let alive = true;
+    void refresh().finally(() => {
+      if (alive) setCheckedId(route.id);
+    });
+    return () => { alive = false; };
+  }, [checkedId, meta, refresh, route.id]);
   if (!meta) {
+    if (checkedId !== route.id) return <AppSplash text={t('加载工程…')} />;
     navigateTo('#/');
     return <AppSplash text={t('工程不存在，返回…')} />;
   }
@@ -148,11 +159,69 @@ export function DashboardRoute({
   refresh: () => Promise<void>;
 }) {
   const actions = useDashboardActions(refresh);
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
   const hasProjects = projects.length > 0;
   useEffect(() => {
-    if (!hasProjects || !window.openChatCutDesktop || !window.requestIdleCallback || editorModule) return;
-    const idle = window.requestIdleCallback(warmEditor);
-    return () => window.cancelIdleCallback(idle);
+    if (editorModule) return;
+    if (window.requestIdleCallback) {
+      const idle = window.requestIdleCallback(warmEditor);
+      return () => window.cancelIdleCallback(idle);
+    }
+    const timer = window.setTimeout(warmEditor, 200);
+    return () => window.clearTimeout(timer);
   }, [hasProjects]);
+  useEffect(() => {
+    const syncIfVisible = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    const onFocus = () => { void refresh(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', syncIfVisible);
+    const timer = window.setInterval(syncIfVisible, 5_000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', syncIfVisible);
+      window.clearInterval(timer);
+    };
+  }, [refresh]);
+  useEffect(() => {
+    let alive = true;
+    const identity = editorTabIdentity();
+    const controller = new AbortController();
+    const poll = async () => {
+      while (alive && !controller.signal.aborted) {
+        try {
+          const query = new URLSearchParams({
+            clientId: identity.tabId,
+            clientKind: identity.clientKind,
+          });
+          const res = await fetch(`/api/external-agent/dashboard-poll?${query}`, {
+            signal: controller.signal,
+          });
+          if (res.status === 200) {
+            const payload = await res.json() as { openProjectId?: string };
+            if (alive && payload.openProjectId) {
+              await refreshRef.current();
+              if (!alive) return;
+              navigateTo(projectEditorHash(payload.openProjectId));
+              return;
+            }
+          }
+          if (res.status !== 204 && res.status !== 200) {
+            await new Promise((r) => setTimeout(r, 2_000));
+          }
+        } catch {
+          if (!alive || controller.signal.aborted) break;
+          await new Promise((r) => setTimeout(r, 2_000));
+        }
+      }
+    };
+    void poll();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, []);
   return <Dashboard projects={projects} {...actions} />;
 }

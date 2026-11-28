@@ -4,17 +4,21 @@ import {
   EXTERNAL_AGENT_RESULT_BODY_LIMIT_BYTES,
 } from '../../shared/external-agent-limits.ts';
 import type {
+  checkMultiWindowConflict,
+  editorEvictionInfo,
   nextEditorCall,
   nextEditorCancellation,
   editorCallBinding,
   editorRegistrationMatches,
   registerEditor,
   settleEditorCall,
+  settleEditorCallWithRevision,
   touchEditor,
   unregisterEditor,
   ExternalCallTerminalOutcome,
   ExternalToolSchema,
 } from '../external-agent/broker.ts';
+import { waitForDashboardOpenRequest } from '../external-agent/broker-dashboard.ts';
 import type { mcpTools } from '../external-agent/mcp.ts';
 import {
   abortUploadReceipt,
@@ -47,9 +51,12 @@ export interface BridgeOperations {
   nextEditorCall: typeof nextEditorCall;
   nextEditorCancellation: typeof nextEditorCancellation;
   settleEditorCall: typeof settleEditorCall;
+  settleEditorCallWithRevision?: typeof settleEditorCallWithRevision;
   editorCallBinding: typeof editorCallBinding;
   touchEditor: typeof touchEditor;
   mcpTools: typeof mcpTools;
+  checkMultiWindowConflict?: typeof checkMultiWindowConflict;
+  editorEvictionInfo?: typeof editorEvictionInfo;
 }
 
 export async function readBridgeJson(
@@ -106,6 +113,9 @@ function registrationInput(body: Record<string, unknown>): {
   editorId: string;
   baseRevision: string;
   tools: ExternalToolSchema[];
+  tabId?: string;
+  clientKind?: 'desktop' | 'browser';
+  forceTakeover: boolean;
 } {
   if (
     typeof body.projectId !== 'string'
@@ -116,11 +126,16 @@ function registrationInput(body: Record<string, unknown>): {
     || !body.baseRevision.trim()
     || !validTools(body.tools)
   ) throw new Error('invalid editor registration');
+  const tabId = typeof body.tabId === 'string' && body.tabId.trim() ? body.tabId.trim() : undefined;
+  const clientKind = body.clientKind === 'desktop' || body.clientKind === 'browser' ? body.clientKind : undefined;
   return {
     projectId: body.projectId.trim(),
     editorId: body.editorId.trim(),
     baseRevision: body.baseRevision.trim(),
     tools: body.tools,
+    tabId,
+    clientKind,
+    forceTakeover: body.forceTakeover === true,
   };
 }
 
@@ -130,6 +145,19 @@ async function registerBridgeEditor(
   operations: BridgeOperations,
 ): Promise<void> {
   const input = registrationInput(await readBridgeJson(req));
+  const conflict = operations.checkMultiWindowConflict?.(
+    input.projectId,
+    input.tabId,
+    input.forceTakeover,
+  );
+  if (conflict?.conflict) {
+    sendBridgeJson(res, 409, {
+      error: '该工程已在另一窗口打开，当前窗口已切换为只读保护模式',
+      code: 'MULTI_WINDOW_CONFLICT',
+      holderClientKind: conflict.holderClientKind ?? null,
+    });
+    return;
+  }
   const capability = registrationCapability(req, false);
   // A matching registration capability marks a legitimate renewal from the
   // currently connected runtime. A reload or different window with a
@@ -166,6 +194,7 @@ async function registerBridgeEditor(
     input.tools,
     claimed.claim,
     capability,
+    { tabId: input.tabId, clientKind: input.clientKind, forceTakeover: input.forceTakeover },
   );
   sendBridgeJson(res, 200, {
     ok: true,
@@ -210,6 +239,15 @@ async function pollEditorCall(
   }
   const capability = registrationCapability(req, true);
   if (!operations.editorRegistrationMatches(projectId, editorId, capability)) {
+    const evicted = operations.editorEvictionInfo?.(projectId, editorId);
+    if (evicted) {
+      sendBridgeJson(res, 409, {
+        error: '编辑控制权已被另一窗口接管',
+        code: 'OWNERSHIP_TAKEN_OVER',
+        holderClientKind: evicted.holderClientKind ?? null,
+      });
+      return;
+    }
     sendBridgeJson(res, 409, { error: 'editor registration is stale or owned by another session' });
     return;
   }
@@ -237,6 +275,15 @@ async function pollEditorCancellation(
   if (!projectId || !editorId) throw new Error('projectId and editorId are required');
   const capability = registrationCapability(req, true);
   if (!operations.editorRegistrationMatches(projectId, editorId, capability)) {
+    const evicted = operations.editorEvictionInfo?.(projectId, editorId);
+    if (evicted) {
+      sendBridgeJson(res, 409, {
+        error: '编辑控制权已被另一窗口接管',
+        code: 'OWNERSHIP_TAKEN_OVER',
+        holderClientKind: evicted.holderClientKind ?? null,
+      });
+      return;
+    }
     sendBridgeJson(res, 409, { error: 'editor registration is stale or owned by another session' });
     return;
   }
@@ -269,20 +316,18 @@ async function settleBridgeCall(
   if (!outcome) throw new Error('invalid tool result outcome');
   const capability = registrationCapability(req, true);
   const binding = operations.editorCallBinding(body.id);
-  const settled = operations.settleEditorCall(
-    body.id,
-    outcome,
-    body.value,
-    capability,
-  );
-  if (settled && binding && typeof body.baseRevision === 'string' && body.baseRevision) {
+  const baseRevision = typeof body.baseRevision === 'string' && body.baseRevision ? body.baseRevision : undefined;
+  const settled = operations.settleEditorCallWithRevision
+    ? await operations.settleEditorCallWithRevision(body.id, outcome, body.value, capability, baseRevision)
+    : operations.settleEditorCall(body.id, outcome, body.value, capability);
+  if (settled && binding && baseRevision && (!operations.settleEditorCallWithRevision || outcome !== 'applied')) {
     // The editor just committed the tool's mutation; sync the registry to the
     // post-tool revision so a follow-up MCP session binds to the current
     // snapshot instead of being rejected as stale by the previous one.
     await operations.touchEditor(
       binding.projectId,
       binding.editorInstanceId,
-      body.baseRevision,
+      baseRevision,
       capability,
     ).catch(() => undefined);
   }
@@ -343,6 +388,32 @@ export async function routeExternalAgentBridge(
     await unregisterBridgeEditor(req, res, operations);
   } else if (req.method === 'GET' && url.pathname === '/poll') {
     await pollEditorCall(req, url, res, operations);
+  } else if (req.method === 'GET' && url.pathname === '/dashboard-poll') {
+    const clientId = url.searchParams.get('clientId') ?? 'dashboard';
+    const clientKind = url.searchParams.get('clientKind') ?? 'browser';
+    const closeAbort = new AbortController();
+    const onClose = () => {
+      if (!res.writableEnded) closeAbort.abort();
+    };
+    req.once('aborted', onClose);
+    res.once('close', onClose);
+    try {
+      const openProjectId = await waitForDashboardOpenRequest(
+        clientId,
+        clientKind,
+        AbortSignal.any([AbortSignal.timeout(12_000), closeAbort.signal]),
+      );
+      if (res.writableEnded || res.destroyed || closeAbort.signal.aborted) return;
+      if (!openProjectId) {
+        res.statusCode = 204;
+        res.end();
+      } else {
+        sendBridgeJson(res, 200, { openProjectId });
+      }
+    } finally {
+      req.off('aborted', onClose);
+      res.off('close', onClose);
+    }
   } else if (req.method === 'GET' && url.pathname === '/cancellation') {
     await pollEditorCancellation(req, url, res, operations);
   } else if (req.method === 'POST' && url.pathname === '/result') {

@@ -22,6 +22,13 @@ interface EditorRegistration extends EditorBinding {
   tools: ExternalToolSchema[];
   ownership?: ProjectEditOwnershipClaim;
   capability: string;
+  tabId?: string;
+  clientKind?: 'desktop' | 'browser';
+}
+
+interface EvictedRegistration {
+  holderClientKind?: 'desktop' | 'browser' | null;
+  at: number;
 }
 
 export interface EditorConnectionRegistryHooks {
@@ -79,11 +86,37 @@ function bindingChanged(
 
 export class EditorConnectionRegistry {
   private readonly editors = new Map<string, EditorRegistration>();
+  private readonly evicted = new Map<string, EvictedRegistration>();
   private readonly listeners = new Set<() => void>();
   private readonly hooks: EditorConnectionRegistryHooks;
 
   constructor(hooks: EditorConnectionRegistryHooks) {
     this.hooks = hooks;
+  }
+
+  checkMultiWindowConflict(
+    projectId: string,
+    tabId?: string,
+    forceTakeover = false,
+  ): { conflict: boolean; holderClientKind?: 'desktop' | 'browser' | null } {
+    if (forceTakeover || !tabId) return { conflict: false };
+    const current = this.editors.get(projectId);
+    if (!current || !this.isConnected(projectId)) return { conflict: false };
+    if (current.tabId && current.tabId !== tabId) {
+      return { conflict: true, holderClientKind: current.clientKind ?? null };
+    }
+    return { conflict: false };
+  }
+
+  evictionInfo(projectId: string, editorInstanceId: string): { holderClientKind?: 'desktop' | 'browser' | null } | null {
+    const key = `${projectId}:${editorInstanceId}`;
+    const info = this.evicted.get(key);
+    if (!info) return null;
+    if (Date.now() - info.at > 60_000) {
+      this.evicted.delete(key);
+      return null;
+    }
+    return { holderClientKind: info.holderClientKind ?? null };
   }
 
   register(
@@ -93,6 +126,7 @@ export class EditorConnectionRegistry {
     tools: ExternalToolSchema[],
     ownership?: ProjectEditOwnershipClaim,
     registrationCapability?: string | null,
+    meta?: { tabId?: string; clientKind?: 'desktop' | 'browser'; forceTakeover?: boolean },
   ): string {
     const before = JSON.stringify(this.tools());
     const previous = this.editors.get(projectId);
@@ -105,14 +139,12 @@ export class EditorConnectionRegistry {
     if (!trustedInternalCall && registrationCapability && !validRenewal) {
       throw new ExternalEditorCallError('stale', 'Editor registration capability is stale.');
     }
-    // A different browser window may take over the active connection for the
-    // same project. Single-window desktop users never open one project in two
-    // windows, but a reloaded/fresh window (a new random editor id) must be able
-    // to (re)connect without a persistent "already has an active editor"
-    // rejection. The old entry is replaced below by this.editors.set, and the
-    // persisted ownership claim (validated at validateOwnershipClaim) still
-    // fences stale takeovers. Offline/multi-writer safety comes from the
-    // serialized project-store mutations and the ownership epoch checks.
+    if (meta?.forceTakeover && previous && previous.editorInstanceId !== editorInstanceId) {
+      this.evicted.set(`${projectId}:${previous.editorInstanceId}`, {
+        holderClientKind: meta.clientKind ?? null,
+        at: Date.now(),
+      });
+    }
     validateOwnershipClaim(ownership, { projectId, editorInstanceId, baseRevision });
     const ownershipEpoch = ownership?.epoch;
     if (previous && bindingChanged(previous, editorInstanceId, baseRevision, ownershipEpoch)) {
@@ -130,7 +162,10 @@ export class EditorConnectionRegistry {
       ownership,
       capability,
       tools,
+      ...(meta?.tabId ? { tabId: meta.tabId } : {}),
+      ...(meta?.clientKind ? { clientKind: meta.clientKind } : {}),
     });
+    this.evicted.delete(`${projectId}:${editorInstanceId}`);
     this.announceIfChanged(before);
     this.hooks.wakeProject(projectId);
     return capability;

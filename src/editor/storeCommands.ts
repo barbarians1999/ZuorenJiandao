@@ -44,7 +44,16 @@ export interface AddAudioResult {
 export interface EditorCommands {
   /** Read the live active timeline before committing asynchronous editor work. */
   getState?: () => TimelineState;
-  addMotionGraphic: (tpl: Tpl, at?: { track?: TrackId; startFrame?: number; ripple?: boolean; overwrite?: boolean }) => void;
+  addMotionGraphic: (tpl: Tpl, at?: {
+    track?: TrackId;
+    strictTrack?: boolean;
+    startFrame?: number;
+    durationInFrames?: number;
+    name?: string;
+    props?: Record<string, unknown>;
+    ripple?: boolean;
+    overwrite?: boolean;
+  }) => string;
   addAudio: (asset: AudioAsset, at?: { track?: TrackId; startFrame?: number; ripple?: boolean; overwrite?: boolean }) => AddAudioResult;
   addAsset: (asset: MediaAsset) => void;
   addMediaItem: (asset: MediaAsset, at?: { track?: TrackId; startFrame?: number; srcInFrame?: number; durationInFrames?: number; ripple?: boolean; overwrite?: boolean; volume?: number }) => string;
@@ -82,10 +91,12 @@ export interface EditorCommands {
   /** Solid-color item on a video track. Returns the new item id. */
   addSolidItem: (at?: {
     track?: TrackId;
+    strictTrack?: boolean;
     startFrame?: number;
     durationInFrames?: number;
     color?: string;
     name?: string;
+    props?: Record<string, unknown>;
     mask?: import('./types.js').ClipMask;
     ripple?: boolean;
   }) => string;
@@ -95,6 +106,7 @@ export interface EditorCommands {
   /** Authored text clip. Returns the new item id. */
   addTextClip: (at?: {
     track?: TrackId;
+    strictTrack?: boolean;
     startFrame?: number;
     durationInFrames?: number;
     ripple?: boolean;
@@ -111,6 +123,7 @@ export interface EditorCommands {
   slipItem: (id: string, deltaInFrames: number) => SlipResult;
   setItemVolume: (id: string, volume: number) => void;
   toggleSelectedPicture: (ids: string[]) => void;
+  setItemDisabled: (id: string, disabled: boolean) => void;
   setItemFade: (id: string, fade: { fadeInFrames?: number; fadeOutFrames?: number }) => void;
   setItemTransform: (id: string, patch: ClipTransform) => void;
   setItemFilters: (id: string, patch: ClipFilters) => void;
@@ -204,7 +217,7 @@ export interface EditorCommands {
   createTimeline: (opts?: { name?: string; width?: number; height?: number; fit?: AspectFit; activate?: boolean }) => string;
   /** make a timeline active (no history step) */
   switchTimeline: (id: string) => void;
-  createSubdraft: (ids: readonly string[]) => { ok: true; timelineId: string; itemId: string } | { ok: false; error: string };
+  createSubdraft: (ids: readonly string[], name?: string) => { ok: true; timelineId: string; itemId: string } | { ok: false; error: string };
   /** copy a timeline (optionally retargeting the canvas for long→short); returns the copy's id */
   duplicateTimeline: (id: string, opts?: { name?: string; retarget?: { width: number; height: number; fit?: AspectFit }; activate?: boolean }) => string;
   deleteTimeline: (id: string) => void;

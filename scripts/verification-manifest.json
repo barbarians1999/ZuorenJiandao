@@ -818,6 +818,8 @@
       "src/components/timeline/trackHeaderReorder.verify.ts",
       "src/editor/clipAnimation.verify.ts",
       "src/library/chapterTemplates.verify.ts",
+      "src/library/explainerTemplates.verify.ts",
+      "src/editor/archivalSuite.verify.ts",
       "src/editor/textStyles.verify.ts",
       "src/editor/compositionPlan.verify.ts",
       "src/editor/detachAudio.verify.ts",
@@ -958,6 +960,7 @@
       "src/components/preview/preview-transform-overlay.verify.tsx",
       "src/components/preview/motionPath.verify.ts",
       "src/components/preview/previewTextEdit.verify.ts",
+      "src/components/preview/previewAudioLevelMeter.verify.tsx",
       "src/components/preview/previewMonitorBar.verify.ts",
       "src/components/preview/previewRenderProject.verify.ts",
       "src/components/preview/sourceAssetPreview.verify.ts",
@@ -4057,6 +4060,13 @@
       "timeoutMs": 120000
     },
     {
+      "id": "src/components/preview/previewAudioLevelMeter.verify.tsx",
+      "file": "src/components/preview/previewAudioLevelMeter.verify.tsx",
+      "command": "tsx --tsconfig tsconfig.app.json src/components/preview/previewAudioLevelMeter.verify.tsx",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
       "id": "src/components/preview/previewMonitorBar.verify.ts",
       "file": "src/components/preview/previewMonitorBar.verify.ts",
       "command": "tsx --tsconfig tsconfig.app.json src/components/preview/previewMonitorBar.verify.ts",
@@ -4354,6 +4364,13 @@
       "id": "src/editor/animationAudition.verify.ts",
       "file": "src/editor/animationAudition.verify.ts",
       "command": "tsx --tsconfig tsconfig.app.json src/editor/animationAudition.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "src/editor/archivalSuite.verify.ts",
+      "file": "src/editor/archivalSuite.verify.ts",
+      "command": "tsx src/editor/archivalSuite.verify.ts",
       "group": "logic",
       "timeoutMs": 120000
     },
@@ -5145,6 +5162,13 @@
       "id": "src/library/chapterTemplates.verify.ts",
       "file": "src/library/chapterTemplates.verify.ts",
       "command": "tsx src/library/chapterTemplates.verify.ts",
+      "group": "logic",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "src/library/explainerTemplates.verify.ts",
+      "file": "src/library/explainerTemplates.verify.ts",
+      "command": "tsx src/library/explainerTemplates.verify.ts",
       "group": "logic",
       "timeoutMs": 120000
     },

@@ -6,6 +6,52 @@ All notable changes to ZuorenJiandao are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use [Semantic Versioning](https://semver.org/).  
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.7] - 2026-11-27
+
+### 界面自然度与排版适配优化
+- **修复右侧属性栏双列行错位并统一控件规格（`src/index.css`、`src/editor/editor-ui-polish.css`）**：让“标签 + 下拉框/分段胶囊”自动铺满右侧两列空间不再挤在窄中列内折行，统一字体选择器、下拉框、数字框、切换开关与取色芯片的高度（30px）和圆角质感。
+- **消除「抠图融合与画报卡片」跨页重复并按需展开次级项（`src/components/inspector/InspectorContent.tsx`）**：移除「调整」「蒙版」页签中的重复区块，将其归位至「画面」页签的「变换」下方；「渐隐方向」在「单侧渐隐」大于 `0%` 时按需展开。
+- **优化文字、转场与科普组件检查器层次（`src/components/inspector/InspectorMediaControls.tsx`、`src/components/inspector/PropSchemaField.tsx`、`src/editor/useEditorWorkspaceUi.ts`、`src/editor/useEditorController.tsx`）**：
+  - 将文字样式与定位基准分为两行清晰排布，用通俗描述替代生硬坐标公式（公式保留在悬停提示中），背景卡片滑杆随「启用背景底色」和「强调色条」按需展开；
+  - 将「细线拉幕」「墨迹晕染」转场参数统一为与全局一致的进度滑杆、分段胶囊和圆角取色器；
+  - 点击左侧「科普组件」上轨时自动定位到当前播放头并立即选中以在属性栏顶部直接填字，将底层帧级踩点参数收纳至「高级：帧级踩点与微调参数」折叠抽屉，并将连续取色器排布为双列色块网格。
+- **整理左侧特效分类与多窗口冲突提示皮肤适配（`src/library/EffectsBrowser.tsx`、`src/components/MultiWindowConflictBanner.tsx`）**：将「特效与画面包装」顶部 6 个子标签规整为 3×2 网格，去掉「形状与马赛克」页底部重复的科普组件并在「科普组件」专页改用双列 16:9 宽图卡片；多窗口只读保护条与弹窗全面接入当前皮肤令牌变量。
+- **新增预览区右侧可开关双声道「音量电平表」（`src/components/preview/PreviewAudioLevelMeter.tsx`、`src/components/preview/previewAudioLevelMeterState.ts`、`src/components/preview/PreviewMonitorBar.tsx`、`src/components/PreviewPanel.tsx`）**：在预览监视条右下角新增「音量电平」开关按钮（每次启动固定默认收起，展开后贴在预览区右侧并自动微缩画布不遮挡视频内容），支持左/右（L/R）双声道绿-黄-红渐变跳动柱、`0` 至 `-48 dB` 刻度、实时分贝读数，以及达到 `0 dB` 即亮、回落即灭的无滞留爆音红灯提醒。
+- **修复 Windows / macOS 顶栏窗口控制区配色与主页图标避让（`src/components/DesktopWindowControls.tsx`、`src/components/dashboard/dashboard-ui.css`、`src/skin-themes.css`、`src/index.css`）**：将 Windows 原生右上角窗口控制区底色与顶栏面板色完全对齐、保留底部细分割线并将按钮线条调为柔和灰阶；修复 macOS 工程列表主页左上角品牌图标与标题覆盖红黄绿窗口按钮的问题，并统一首页右上角工具胶囊外观与 macOS 标准三色圆点。
+
+## [0.5.6] - 2026-11-27
+
+### 优化与新增能力
+- **「重点扫描锁定框」空标签自动隐藏底框与引线终点自动拐弯（`src/library/explainerTemplates.ts`、`src/components/preview/previewTransform.ts`、`src/components/inspector/PropSchemaField.tsx`、`src/agent/tools/schemas/edit-item-tools.ts`）**：
+  - 当清空 `labelText`（且无补充小字）时自动隐藏空底框与阴影，仅保留「扫描框 + 折线 + 带光晕终点圆点」以配合外置大标题排版，并同步收紧预览选框避免遮挡周边大字；
+  - 新增可选「引线终点横/纵坐标」（`endX` / `endY`，`-1` 表示按方向自动），填入目标百分比坐标后自动选择最近边引出并折线拐弯指向目标位置。
+
+## [0.5.5] - 2026-11-27
+
+### 修复与体验优化
+- **修复普通文字卡片背景底色与强调条搭配时偶发不显色（`src/editor/textStyles.ts`、`src/components/inspector/InspectorMediaControls.tsx`、`src/agent/tools/edit-item-generic.ts`、`src/agent/tools/core-data-tools.ts`）**：设置背景色但未显式指定不透明度时自动开启显色，支持 `0..1` 小数不透明度自动换算为百分比，切换预设或更换背景色时自动展开卡片默认值并清除残留 `0%` 透明状态；兼容 `#rgb`/`#rrggbbaa`/`rgb`/`rgba` 色彩格式，并在右侧文字面板补充「启用背景底色」开关与自动显色联动。
+- **统一“左上角对齐”与“居中对齐”坐标计算说明（`src/editor/textStyles.ts`、`src/components/inspector/InspectorMediaControls.tsx`、`src/agent/tools/schemas/edit-item-tools.ts`、`src/agent/tools/schemas/core-tools.ts`）**：统一 `center`（原点 `50%, 50%` → `X = tx - 50, Y = ty - 50`）、`top-left`（原点 `5%, 8.9%` → `X = tx - 5, Y = ty - 8.9`）与 `middle-left`（原点 `5%, 50%` → `X = tx - 5, Y = ty - 50`）坐标公式说明、辅助计算函数与检查器动态提示。
+
+## [0.5.4] - 2026-11-27
+
+### 新增能力：档案拼贴与科普解说原生创作套件
+- **原生「文字卡」样式、左对齐锚点与中文检索对齐（`src/editor/textStyles.ts`、`src/editor/TimelineGraphicLayers.tsx`、`src/components/preview/previewTextGeometry.ts`、`src/fonts/googleFontCatalog.ts`、`src/agent/tools/edit-item-generic.ts`）**：
+  - 支持词条卡片底色、透明度、水平/垂直内边距、圆角及左侧/顶部强调色条（内置 `archival-tag`、`archival-top-tag` 预设并保留预设对比文字配色），补全文字柔和投影与描边渲染；
+  - 新增 `anchor`（`center` / `top-left` / `middle-left`）固定左边距排版与预览选框同步；
+  - 补全「思源宋体 / 宋体 / 衬线体」「思源黑体 / 黑体」「霞鹜文楷 / 楷体」等中文别名检索，并落实 MCP 文字属性白名单与失效字段提示校验。
+- **基础矢量图形、人物/视频单侧渐隐与质感纸纹底板（`src/editor/vectorShapes.ts`、`src/editor/imageStyling.ts`、`src/editor/paperBackgrounds.ts`、`src/editor/TimelineMediaLayer.tsx`、`src/components/inspector/InspectorContent.tsx`）**：
+  - 新增 `line` / `rect` / `arrow` 轻量矢量图形，支持 1～20px 精细线条与箭头绘制（不受纯色 5% 裁剪限制）；
+  - 将单侧线性渐隐（重点支持底部渐隐 `fadeSide` / `singleSideFade` / `bottomFade`）、柔和立体阴影与一键「档案照片卡片（`archivalCard`）」统一覆盖图片与视频层；
+  - 内置「深红档案底」「暖黄宣纸底」「暗灰卷宗底」「靛青图纸底」及自定义径向渐变纸纹颗粒背景板。
+- **参数化科普动效组件、书卷感转场与复合片段升级（`src/library/explainerTemplates.ts`、`src/components/preview/previewTextEdit.ts`、`src/gl/shaders/clean-line-wipe.frag`、`src/editor/compositionPlan.ts`、`src/editor/transitionPreview.tsx`）**：
+  - 为 5 款透明科普动效模板（「重点扫描锁定框」「多步箭头流程图」「数据滚动对比卡」「金句逐句点亮」「动态划线批驳」）开放语音踩点帧参数，优化预览命中框与双击优先编辑主文字体验；
+  - 为 `clean-line-wipe` 开放线条颜色、1～20px 线宽与四向擦除参数，并打通复合片段（`sequence`）WebGL 与导出渲染的细线转场与 `ink-bleed` 墨迹晕染转场。
+
+### 自动化排轨（MCP）与多窗口协同稳定性提升
+- **严格轨道落位与连续会话版本同步（`src/editor/storeCommandBuilder.ts`、`src/agent/external-edit-session.ts`、`src/agent/external-bridge-runtime.ts`、`server/external-agent/broker.ts`、`server/external-agent/mcp.ts`）**：统一各类型元素 `strictTrack` 轨道定位规则（无效显式轨道拒绝而不静默回落 `V1`）；实现实时会话内连续导入素材与工具变更的自动版本号同步与重算，提交后无需刷新即可开启下一轮抽帧复核与微调。
+- **首页自动进编辑器与后台离线挂载（`src/app/AppViews.tsx`、`server/external-agent/broker-dashboard.ts`、`server/external-agent/mcp-binding.ts`、`server/external-agent/offline-frames-tools.ts`）**：支持在工程列表首页由外部接口直接打开目标工程进入编辑器，或通过后台离线模式执行看帧、字库检索与连续修改。
+- **单工程多窗口防冲突保护（`server/external-agent/broker-registry.ts`、`src/components/MultiWindowConflictBanner.tsx`、`src/editor/useEditorProjectPersistence.ts`）**：同一工程在桌面端或浏览器重复打开时返回 HTTP 409 冲突保护并弹出提示弹窗，自动暂停非主控窗口自动保存，支持只读查看或一键接管编辑权。
+
 ## [0.5.3] - 2026-11-26
 
 ### 修复与体验优化

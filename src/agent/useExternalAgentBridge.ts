@@ -27,7 +27,9 @@ import {
   editorBridgeHeaders,
   registerEditorBridge,
   sendEditorBridgeResult,
+  setExternalBridgeReadOnly,
   unregisterEditorBridge,
+  type MultiWindowConflictInfo,
 } from './external-bridge-registration';
 import { handleExternalBridgeAttemptError } from './external-bridge-attempt-error';
 import { useT } from '../i18n/locale';
@@ -73,6 +75,8 @@ export interface ExternalProposalController {
   /** Persisted master switch: auto-approve all external edits and real-tool calls. */
   autoApprove: boolean;
   setAutoApprove: (enabled: boolean) => void;
+  conflict: MultiWindowConflictInfo | null;
+  takeover: () => void;
 }
 
 function retryDelay(): Promise<void> {
@@ -135,7 +139,13 @@ export async function executeExternalCall(
       outcome = failed.outcome;
       value = projectExternalReply(failed.message);
     }
-    await deliverResult(call.id, outcome, value, bridgeSignal, runtime.binding?.().baseRevision);
+    const runtimeBinding = runtime.binding?.();
+    const settledRevision = (
+      runtimeBinding
+        ? browserProjectOwnership(call.binding.projectId, runtimeBinding.editorInstanceId)?.baseRevision
+        : undefined
+    ) ?? runtimeBinding?.baseRevision;
+    await deliverResult(call.id, outcome, value, bridgeSignal, settledRevision);
   } finally {
     cancellations.release(call.id);
     bridgeSignal.removeEventListener('abort', cancel);
@@ -162,7 +172,14 @@ async function pollEditor(
       signal,
     });
     if (response.status === 204) continue;
-    if (!response.ok) throw new EditorBridgeRequestError('poll', response.status);
+    if (!response.ok) {
+      if (response.status === 409) {
+        let body: { code?: string; holderClientKind?: 'desktop' | 'browser' | null; error?: string } | undefined;
+        try { body = await response.json() as typeof body; } catch { body = undefined; }
+        throw new EditorBridgeRequestError('poll', response.status, body?.code, body?.holderClientKind, body?.error);
+      }
+      throw new EditorBridgeRequestError('poll', response.status);
+    }
     await executeExternalCall(
       parseExternalCall(await response.json()),
       runtime,
@@ -177,6 +194,11 @@ async function pollEditor(
         baseRevision,
       ),
     );
+    const updatedRevision = runtime.binding().baseRevision;
+    if (updatedRevision && updatedRevision !== ownership.baseRevision) {
+      ownership = { ...ownership, baseRevision: updatedRevision };
+      installBrowserProjectOwnership(ownership);
+    }
   }
 }
 
@@ -231,19 +253,25 @@ async function runBridgeAttempt(
   projectId: string, editorInstanceId: string,
   runtime: ExternalBridgeRuntime, signal: AbortSignal,
   onError: (message: string | null) => void,
-): Promise<void> {
+  forceTakeoverRef: { current: boolean },
+  onConflict: (conflict: MultiWindowConflictInfo) => void,
+): Promise<'retry' | 'conflict'> {
   const cancellations = new ExternalCallCancellationRegistry();
   const controller = new AbortController();
   const cancel = () => controller.abort(signal.reason);
   let ownership: BrowserProjectOwnership | undefined;
+  let result: 'retry' | 'conflict' = 'retry';
   if (signal.aborted) controller.abort(signal.reason);
   else signal.addEventListener('abort', cancel, { once: true });
   try {
+    const forceTakeover = forceTakeoverRef.current;
     ownership = await registerEditorBridge(
       projectId, editorInstanceId, runtime.binding().baseRevision,
       controller.signal,
       browserProjectOwnership(projectId, editorInstanceId)?.registrationCapability,
+      forceTakeover ? { forceTakeover: true } : undefined,
     );
+    forceTakeoverRef.current = false;
     installBrowserProjectOwnership(ownership);
     onError(null);
     await pollRegisteredBridge(
@@ -255,7 +283,21 @@ async function runBridgeAttempt(
       controller.signal,
     );
   } catch (error) {
-    handleExternalBridgeAttemptError(error, signal, onError);
+    if (
+      error instanceof EditorBridgeRequestError
+      && error.status === 409
+      && (error.code === 'MULTI_WINDOW_CONFLICT' || error.code === 'OWNERSHIP_TAKEN_OVER')
+    ) {
+      forceTakeoverRef.current = false;
+      onConflict({
+        code: error.code,
+        holderClientKind: error.holderClientKind ?? null,
+        message: error.message,
+      });
+      result = 'conflict';
+    } else {
+      handleExternalBridgeAttemptError(error, signal, onError);
+    }
   } finally {
     controller.abort();
     signal.removeEventListener('abort', cancel);
@@ -266,6 +308,7 @@ async function runBridgeAttempt(
       ownership?.registrationCapability,
     );
   }
+  return result;
 }
 
 async function runBridge(
@@ -273,11 +316,22 @@ async function runBridge(
   runtime: ExternalBridgeRuntime,
   signal: AbortSignal,
   onError: (message: string | null) => void,
+  forceTakeoverRef: { current: boolean },
+  onConflict: (conflict: MultiWindowConflictInfo) => void,
 ): Promise<void> {
   const { editorInstanceId } = runtime.binding();
   while (!signal.aborted) {
-    await runBridgeAttempt(projectId, editorInstanceId, runtime, signal, onError);
-    if (!signal.aborted) await retryDelay();
+    const outcome = await runBridgeAttempt(
+      projectId,
+      editorInstanceId,
+      runtime,
+      signal,
+      onError,
+      forceTakeoverRef,
+      onConflict,
+    );
+    if (outcome === 'conflict' || signal.aborted) break;
+    await retryDelay();
   }
 }
 
@@ -370,6 +424,9 @@ function useExternalPolling(
   projectId: string,
   controller: ExternalRuntimeController,
   setError: StateSetter<string | null>,
+  forceTakeoverRef: { current: boolean },
+  takeoverNonce: number,
+  onConflict: (conflict: MultiWindowConflictInfo) => void,
 ): void {
   useEffect(() => {
     const slot = controller.runtimeRef.current;
@@ -389,13 +446,13 @@ function useExternalPolling(
       );
     };
     window.addEventListener('pagehide', close);
-    void runBridge(projectId, slot.runtime, abortController.signal, setError);
+    void runBridge(projectId, slot.runtime, abortController.signal, setError, forceTakeoverRef, onConflict);
     return () => {
       window.removeEventListener('pagehide', close);
       abortController.abort();
       close();
     };
-  }, [controller.readiness, controller.runtimeRef, projectId, setError]);
+  }, [controller.readiness, controller.runtimeRef, forceTakeoverRef, onConflict, projectId, setError, takeoverNonce]);
 }
 
 function useExternalActions(
@@ -461,10 +518,27 @@ function useExternalGuard(
 export function useExternalAgentBridge(ctx: AgentContext, projectId: string): ExternalProposalController {
   const [snapshot, setSnapshot] = useState<ExternalProposalSnapshot>({ proposal: null, stale: false });
   const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<MultiWindowConflictInfo | null>(null);
+  const [takeoverNonce, setTakeoverNonce] = useState(0);
+  const forceTakeoverRef = useRef(false);
   const t = useT();
   const [autoApprove, setAutoApprove] = useExternalAutoApprove();
+  const handleConflict = useCallback((info: MultiWindowConflictInfo) => {
+    setExternalBridgeReadOnly(projectId, true);
+    setConflict(info);
+  }, [projectId]);
+  useEffect(() => () => {
+    setExternalBridgeReadOnly(projectId, false);
+  }, [projectId]);
+  const takeover = useCallback(() => {
+    setExternalBridgeReadOnly(projectId, false);
+    forceTakeoverRef.current = true;
+    setConflict(null);
+    setError(null);
+    setTakeoverNonce((n) => n + 1);
+  }, [projectId]);
   const runtime = useExternalRuntime(ctx, projectId, setSnapshot, setError);
-  useExternalPolling(projectId, runtime, setError);
+  useExternalPolling(projectId, runtime, setError, forceTakeoverRef, takeoverNonce, handleConflict);
   const actions = useExternalActions(runtime.runtimeRef, setError);
   const guard = useExternalGuard(runtime, projectId, setError, t);
   const { refreshPendingGuard } = guard;
@@ -493,5 +567,7 @@ export function useExternalAgentBridge(ctx: AgentContext, projectId: string): Ex
     confirmGuard: guard.confirmGuard,
     autoApprove,
     setAutoApprove,
+    conflict,
+    takeover,
   };
 }

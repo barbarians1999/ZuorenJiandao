@@ -439,6 +439,15 @@ export function resolveBaseClipMask(mask, width, height) {
   };
 }
 
+const hasActiveVideoStyling = (props) => {
+  if (!props || typeof props !== 'object') return false;
+  return Number(props.bottomFade) > 0
+    || Number(props.singleSideFade) > 0
+    || Number(props.edgeFade) > 0
+    || props.dropShadow === true
+    || props.archivalCard === true;
+};
+
 export function resolveBaseVisualFade(item) {
   const clipFadeIn = Number(item.fadeInFrames ?? 0);
   const clipFadeOut = Number(item.fadeOutFrames ?? 0);
@@ -788,7 +797,7 @@ export function planOverlayHybridExport({
         const hasBgFill = item.backgroundFill === true && Boolean(item.src) && item.track === mainVideoTrackId;
         if (!item.src || !finiteNonNegative(item.srcInFrame ?? 0)) videoCompatReason = 'video-source';
         else if (hasNonVolumeKeyframes(item.keyframes) || hasOwnKeys(item.zoom)
-          || (hasBgFill && (item.effects?.length ?? 0) > 0) || item.mosaic) {
+          || (hasBgFill && (item.effects?.length ?? 0) > 0) || item.mosaic || hasActiveVideoStyling(item.props)) {
           videoCompatReason = 'video-clip-effects';
         }
         const clipMask = videoCompatReason ? null : resolveBaseClipMask(item.mask, state.width, state.height);

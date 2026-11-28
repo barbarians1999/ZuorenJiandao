@@ -115,9 +115,13 @@ export interface KfApi {
   seekLocal: (frame: number) => void;
 }
 
-const EASING_OPTIONS: { value: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut'; label: string }[] = [
-  { value: 'linear', label: '线性' }, { value: 'easeIn', label: '缓入' },
-  { value: 'easeOut', label: '缓出' }, { value: 'easeInOut', label: '缓入出' },
+const EASING_OPTIONS: { value: 'linear' | 'cubicOut' | 'springOut' | 'easeIn' | 'easeOut' | 'easeInOut'; label: string }[] = [
+  { value: 'linear', label: '匀速（线性）' },
+  { value: 'cubicOut', label: '快出慢停' },
+  { value: 'springOut', label: '微回弹' },
+  { value: 'easeOut', label: '缓出' },
+  { value: 'easeIn', label: '缓入' },
+  { value: 'easeInOut', label: '缓入缓出' },
 ];
 
 // end-of-row keyframe rail (PRD §4.5; UI imitates reframe keyframe mode, custom layout):

@@ -1,6 +1,6 @@
 import type { AgentContext } from './context';
 import { buildOperation, buildProposal, type Operation, type Proposal } from './proposal';
-import { makeDraft, type DraftEngine } from '../editor/store';
+import { makeDraft, replayActions, type DraftEngine } from '../editor/store';
 import type { ProjectDoc } from '../editor/types';
 import { stripTransientSelection } from '../editor/selectionState';
 
@@ -152,6 +152,24 @@ export function restoreDraftingExternalEditSession(
     proposal: null,
     createdAt: checkpoint.createdAt,
     updatedAt: checkpoint.updatedAt,
+  };
+}
+
+/** Rebase a drafting edit session onto a newer live doc after a mid-session real-project commit. */
+export function rebaseExternalEditSession(
+  session: ExternalEditSession,
+  nextBaseDoc: ProjectDoc,
+): ExternalEditSession {
+  if (session.status !== 'drafting' || !session.draft) return session;
+  const nextDraftDoc = session.operations.length
+    ? replayActions(nextBaseDoc, session.operations.flatMap((operation) => operation.actions))
+    : nextBaseDoc;
+  return {
+    ...session,
+    baseDoc: nextBaseDoc,
+    baseRevision: revisionOf(nextBaseDoc),
+    draft: makeDraft(nextDraftDoc),
+    updatedAt: Date.now(),
   };
 }
 

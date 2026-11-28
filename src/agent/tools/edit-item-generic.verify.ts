@@ -50,6 +50,7 @@ function recorder(relinkResult: MediaRelinkResult = { ok: true, changed: true })
       return relinkResult;
     },
     setItemBackgroundFill: rec('setItemBackgroundFill'),
+    setItemDisabled: rec('setItemDisabled'),
     removeItem: rec('removeItem'), rippleDeleteItem: rec('rippleDeleteItem'),
   };
   return { calls, commands };
@@ -278,5 +279,37 @@ assert.equal(validateGenericDelete(state, { type: 'video', id: 'v1_abc' }).itemI
   const err = String(validateGenericUpdate(state, { type: 'video', transform: { crop: { left: 10 } } }).error ?? '');
   assert.ok(err.includes('no clip selected'), err);
 }
+
+// ── disabled / pictureDisabled ──
+{
+  const plan = validateGenericUpdate(state, { type: 'video', itemId: 'v1_abc', disabled: true });
+  assert.equal(plan.error, undefined, 'disabled:true validates on video clip');
+  assert.equal(plan.pictureDisabled, true);
+  const { calls, commands } = recorder();
+  applyGeneric(plan, commands);
+  assert.deepEqual(calls, [['setItemDisabled', 'v1_abc', true]]);
+}
+{
+  const audioState = {
+    ...state,
+    items: [{ id: 'a1_abc', kind: 'audio', track: 'A1', startFrame: 0, durationInFrames: 60, name: 'vo', src: '/media/a.mp3' }],
+  } as unknown as TimelineState;
+  const disablePlan = validateGenericUpdate(audioState, { type: 'audio', itemId: 'a1_abc', disabled: true });
+  assert.equal(disablePlan.error, undefined, 'disabled:true validates on audio clip');
+  const enablePlan = validateGenericUpdate(audioState, { type: 'audio', itemId: 'a1_abc', pictureDisabled: false });
+  assert.equal(enablePlan.error, undefined, 'pictureDisabled:false validates');
+  const { calls, commands } = recorder();
+  applyGeneric(disablePlan, commands);
+  applyGeneric(enablePlan, commands);
+  assert.deepEqual(calls, [['setItemDisabled', 'a1_abc', true], ['setItemDisabled', 'a1_abc', false]]);
+}
+assert.ok(
+  validateGenericUpdate(state, { type: 'video', itemId: 'v1_abc', disabled: 'yes' }).error,
+  'non-boolean disabled errors',
+);
+assert.ok(
+  validateGenericUpdate(state, { type: 'video', itemId: 'v1_abc', disabled: true, pictureDisabled: false }).error,
+  'conflicting disabled and pictureDisabled error',
+);
 
 console.log('edit-item-generic.check.ts OK');

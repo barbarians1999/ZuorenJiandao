@@ -2,7 +2,7 @@ import type { AgentContext } from './context';
 import type { ProjectDoc } from '../editor/types';
 import {
   createExternalEditSession, ExternalEditSessionOutcomeError, finishExternalEditSession,
-  revisionOf, reviewExternalEditSession, type ExternalEditSession,
+  rebaseExternalEditSession, revisionOf, reviewExternalEditSession, type ExternalEditSession,
   type ExternalEditSessionTerminalStatus,
 } from './external-edit-session';
 import { hydrateStoredExternalBridge } from './external-bridge-hydration';
@@ -12,6 +12,7 @@ import {
   validateExternalBridgeBinding,
 } from './external-bridge-session';
 import { commitExternalProposal, type ExternalBridgePersistence } from './external-proposal-apply';
+import { migrateProjectDoc } from '../persist/projectStore';
 import { DEFAULT_EXTERNAL_BRIDGE_PERSISTENCE, EXTERNAL_PROJECT_INDEX_WARNING } from './external-bridge-persistence-defaults';
 import { ExternalApprovalGate } from './external-approval-gate';
 import { ExternalSessionRunLedger, invocationFromApproval } from './external-run-ledger';
@@ -188,16 +189,51 @@ export class ExternalBridgeRuntime {
       // the confirmation card entirely and execute real-project tools directly.
       if (session.approvalMode === 'auto' || this.isAutoApprove()) {
         const invocation = await run.requested(name, args);
-        return run.executeApprovedTool(invocation, args, this.getContext(), signal);
+        return this.executeAndSyncRealTool(session, run, invocation, args, signal);
       }
       return this.requestRealToolApproval(session, run, name, args);
     }
-    return run.executeApprovedTool(
+    return this.executeAndSyncRealTool(
+      session,
+      run,
       invocationFromApproval(approved),
       args,
-      this.getContext(),
       signal,
     );
+  }
+
+  private async executeAndSyncRealTool(
+    session: ExternalEditSession,
+    run: ExternalSessionRunLedger,
+    invocation: ReturnType<typeof invocationFromApproval>,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const beforeRev = revisionOf(this.getContext().getDoc());
+    const result = await run.executeApprovedTool(invocation, args, this.getContext(), signal);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const rawDoc = this.getContext().getDoc();
+    if (beforeRev === session.baseRevision && revisionOf(rawDoc) !== beforeRev) {
+      const syncedDoc = migrateProjectDoc(rawDoc) ?? rawDoc;
+      if (revisionOf(syncedDoc) !== revisionOf(rawDoc)) {
+        this.getContext().commands.applyDoc(syncedDoc);
+      }
+      try {
+        await this.persistence.saveProject(this.projectId, syncedDoc);
+      } catch {
+        // Best-effort persistence: in-memory unit harnesses may not back remote projectStore.
+      }
+      const currentSession = this.sessions.get(session.id) ?? session;
+      if (currentSession.status === 'drafting') {
+        const rebased = rebaseExternalEditSession(currentSession, syncedDoc);
+        await this.persistence.saveExternalProposal(
+          this.projectId,
+          storedExternalSession(rebased, 'drafting', undefined, run.runId),
+        );
+        this.sessions.set(session.id, rebased);
+      }
+    }
+    return result;
   }
 
   private async requestRealToolApproval(

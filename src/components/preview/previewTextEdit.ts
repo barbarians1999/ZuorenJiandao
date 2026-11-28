@@ -21,8 +21,9 @@ export interface PreviewTextEditFields {
 const COLOR_KEYS = ['color', 'textColor', 'fillColor', 'titleColor', 'inkColor'] as const;
 const FONT_SIZE_KEYS = ['fontSize', 'textSize', 'titleSize'] as const;
 const TEXT_KEYS = [
-  'text', 'title', 'caption', 'quoteText', 'nameText', 'titleText',
-  'line1Text', 'keyword', 'subText', 'subtitle', 'content', 'label',
+  'text', 'title', 'headline', 'heading', 'labelText', 'claimText', 'quoteLines',
+  'stepsText', 'metricName', 'caption', 'quoteText', 'nameText', 'titleText',
+  'line1Text', 'keyword', 'subtitle', 'content', 'label', 'subText',
 ] as const;
 const WEIGHT_KEYS = ['fontWeight', 'weight'] as const;
 const ALIGN_KEYS = ['align', 'textAlign'] as const;

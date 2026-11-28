@@ -53,6 +53,13 @@ assert.equal(reduce(cloneState, { type: 'split', id: 'source', atFrame: 30, newI
   true, 'split inherits disabled state');
 const noOp = { ...timeline, selectedId: 'locked', selectedIds: ['locked'] };
 assert.equal(reduce(noOp, { type: 'togglePicture', ids: ['locked'] }), noOp, 'locked selection creates no mutation');
+const disabledSingle = reduce(timeline, { type: 'setItemDisabled', id: 'v1', disabled: true });
+assert.equal(disabledSingle.items.find((item) => item.id === 'v1')?.pictureDisabled, true, 'setItemDisabled disables video clip');
+assert.equal(reduce(disabledSingle, { type: 'setItemDisabled', id: 'v1', disabled: false }).items.find((item) => item.id === 'v1')?.pictureDisabled,
+  false, 'setItemDisabled re-enables video clip');
+assert.equal(reduce(timeline, { type: 'setItemDisabled', id: 'audio', disabled: true }).items.find((item) => item.id === 'audio')?.pictureDisabled,
+  true, 'setItemDisabled disables audio clip');
+assert.equal(reduce(timeline, { type: 'setItemDisabled', id: 'locked', disabled: true }), timeline, 'setItemDisabled skips locked track');
 
 const detachedState: TimelineState = {
   ...timeline, selectedId: null, selectedIds: [], trackOrder: ['V1', 'A1'],

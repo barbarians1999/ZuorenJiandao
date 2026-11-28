@@ -40,7 +40,11 @@ export const MCP_CONTROL_TOOLS: Tool[] = [
     description: 'Permanently bind this MCP transport to a live browser editor, or to an existing stored project through the offline fallback.',
     inputSchema: {
       type: 'object',
-      properties: { projectId: { type: 'string' }, editorBaseUrl: { type: 'string' } },
+      properties: {
+        projectId: { type: 'string' },
+        editorBaseUrl: { type: 'string' },
+        openInEditor: { type: 'boolean', description: 'When a Dashboard window is connected and this project is not yet open in an editor, automatically open it in the editor window (default true when Dashboard is open; set false to force background offline mount).' },
+      },
       required: ['projectId'],
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },

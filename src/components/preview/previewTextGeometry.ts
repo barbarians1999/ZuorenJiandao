@@ -1,6 +1,6 @@
 import type { TimelineItem, TimelineState } from '../../editor/types';
-import { resolveTextStyle } from '../../editor/textStyles';
-import type { PreviewRect } from './previewTransform';
+import { resolveTextAnchorDesignOrigin, resolveTextStyle, TEXT_ANCHOR_MARGIN_X, TEXT_ANCHOR_MARGIN_Y } from '../../editor/textStyles';
+import type { PreviewPoint, PreviewRect } from './previewTransform';
 
 const CJK_OR_FULLWIDTH_RE = /[\u1100-\u11FF\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFE30-\uFE6F\uFF01-\uFF60\uFFE0-\uFFE6]/;
 const NARROW_CHAR_RE = /^[\s.,:;!|'"`()[\]{}ilIjtfr1-]$/;
@@ -82,6 +82,25 @@ function wrapParagraphWidth(paragraph: string, maxWidth: number, measure: Measur
   return widths;
 }
 
+export function resolveTextAnchorPoint(
+  state: Pick<TimelineState, 'width' | 'height' | 'fit'>,
+  item: Pick<TimelineItem, 'width' | 'height' | 'props'>,
+): PreviewPoint {
+  const canvasW = state.width;
+  const canvasH = state.height;
+  if (canvasW <= 0 || canvasH <= 0) return { x: 0, y: 0 };
+  const dw = item.width && item.width > 0 ? item.width : 1920;
+  const dh = item.height && item.height > 0 ? item.height : 1080;
+  const fit = state.fit ?? 'contain';
+  const scale = fit === 'cover' ? Math.max(canvasW / dw, canvasH / dh) : Math.min(canvasW / dw, canvasH / dh);
+  const style = resolveTextStyle(item.props ?? {});
+  const designOrigin = resolveTextAnchorDesignOrigin(dw, dh, style.anchor);
+  return {
+    x: canvasW / 2 + (designOrigin.x - dw / 2) * scale,
+    y: canvasH / 2 + (designOrigin.y - dh / 2) * scale,
+  };
+}
+
 /**
  * Compute the un-transformed design-space bounding box of a `kind === 'text'` item,
  * matching the `inline-block` text box rendered inside `TextLayer`.
@@ -100,10 +119,13 @@ export function measureTextClipRect(
   const scale = fit === 'cover' ? Math.max(canvasW / dw, canvasH / dh) : Math.min(canvasW / dw, canvasH / dh);
 
   const style = resolveTextStyle(item.props ?? {});
-  const horizontalMargin = 96;
+  const horizontalMargin = TEXT_ANCHOR_MARGIN_X;
   const innerWidth = Math.max(1, dw - horizontalMargin * 2);
-  const boxPadding = style.backgroundPadding;
-  const maxTextWidth = Math.max(1, innerWidth - boxPadding * 2);
+  const padX = style.backgroundPaddingX;
+  const padY = style.backgroundPaddingY;
+  const accentLeft = style.accentBarPosition === 'left' ? style.accentBarWidth : 0;
+  const accentTop = style.accentBarPosition === 'top' ? style.accentBarWidth : 0;
+  const maxTextWidth = Math.max(1, innerWidth - padX * 2 - accentLeft);
   const measure = createLineMeasurer(style);
 
   const rawLines = (style.text ?? '').split(/\r?\n/);
@@ -115,15 +137,16 @@ export function measureTextClipRect(
   const lineCount = Math.max(1, wrappedWidths.length);
   const maxLineWidth = wrappedWidths.reduce((max, width) => Math.max(max, width), 0);
   const minTextWidth = Math.max(24, style.fontSize * 0.5);
-  const boxWidth = Math.min(innerWidth, Math.max(minTextWidth, maxLineWidth) + boxPadding * 2);
-  const boxHeight = Math.max(style.fontSize * style.lineHeight, lineCount * style.fontSize * style.lineHeight) + boxPadding * 2;
+  const boxWidth = Math.min(innerWidth, Math.max(minTextWidth, maxLineWidth) + padX * 2 + accentLeft);
+  const boxHeight = Math.max(style.fontSize * style.lineHeight, lineCount * style.fontSize * style.lineHeight) + padY * 2 + accentTop;
 
-  const boxX = style.align === 'left'
+  const isLeftAnchored = style.anchor === 'top-left' || style.anchor === 'middle-left';
+  const boxX = isLeftAnchored || style.align === 'left'
     ? horizontalMargin
     : style.align === 'right'
       ? Math.max(horizontalMargin, dw - horizontalMargin - boxWidth)
       : horizontalMargin + Math.max(0, innerWidth - boxWidth) / 2;
-  const boxY = (dh - boxHeight) / 2;
+  const boxY = style.anchor === 'top-left' ? TEXT_ANCHOR_MARGIN_Y : (dh - boxHeight) / 2;
 
   return {
     x: canvasW / 2 + (boxX - dw / 2) * scale,

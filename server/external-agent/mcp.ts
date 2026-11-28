@@ -7,6 +7,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from '@model
 import {
   cancelEditorCallsForOwner,
   connectedProjectIds,
+  editorBinding,
   editSessionOwnerMatches,
   editorStatuses,
   ExternalEditorCallError,
@@ -153,7 +154,9 @@ async function callControlTool(
     const projectId = requestedProjectId(args.projectId);
     if (!projectId) throw new ExternalEditorCallError('rejected', 'projectId is required');
     const url = editorUrl(args, projectId, baseUrl);
-    const binding = await targetMcpProject(session, projectId, url);
+    const binding = await targetMcpProject(session, projectId, url, {
+      openInEditor: typeof args.openInEditor === 'boolean' ? args.openInEditor : undefined,
+    });
     await sendMcpToolListChangedIfChanged(session, mcpTools(session));
     return { ok: true, bindingMode: bindingMode(session), binding, editorUrl: url };
   }
@@ -195,11 +198,18 @@ async function callTool(
     return session.offline.execute(name, args);
   }
   const carriesSession = 'editSessionId' in args;
+  const currentEditor = session.binding ? editorBinding(session.binding.projectId) : null;
+  const sessionRevisionSynced = Boolean(
+    carriesSession
+    && session.id
+    && currentEditor
+    && editSessionOwnerMatches(session.id, currentEditor, args.editSessionId),
+  );
   validateBrowserBinding(
     session,
     allowRevisionDrift,
     MCP_CONTROL_TOOL_NAMES[name] !== true,
-    carriesSession,
+    carriesSession && !sessionRevisionSynced,
   );
   const control = await callControlTool(session, name, args, baseUrl);
   if (control !== undefined) return control;

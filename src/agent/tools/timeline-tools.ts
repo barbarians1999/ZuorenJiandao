@@ -2,6 +2,7 @@ export { TIMELINE_TOOL_SCHEMAS, TIMELINE_TOOL_NAMES } from './schemas/timeline-t
 import type { AgentContext } from '../context';
 import { ASPECT_PRESETS, ratioLabel, type AspectFit, type ProjectDoc, type Timeline } from '../../editor/types';
 import { resolveTimelineRenderPlan, sequenceReferenceError, sequenceReferencesTo, type SequenceReference } from '../../editor/sequenceGraph';
+import { planExpandSubdraft } from '../../editor/subdraftOperations';
 
 // manage_timelines — ONE action-based tool, not separate create/switch tools.
 // Mutating actions flow through propose→apply via the project-level draft;
@@ -154,7 +155,45 @@ export async function execTimelineTool(name: string, args: Args, ctx: AgentConte
       return { ok: deleted.length > 0, deleted, ...(kept.length ? { kept, note: '至少保留一条序列、被嵌套实例引用或未找到的已跳过' } : {}), ...(blocked.length ? { blocked } : {}) };
     }
 
+    case 'pack_compound': {
+      const rawIds = args.itemIds;
+      if (!Array.isArray(rawIds) || rawIds.length === 0) {
+        return { error: 'pack_compound requires non-empty itemIds array' };
+      }
+      const ids = rawIds.map((entry) => String(entry).trim()).filter(Boolean);
+      if (!ids.length) return { error: 'pack_compound requires non-empty itemIds array' };
+      const customName = typeof args.name === 'string' && args.name.trim() ? args.name.trim() : undefined;
+      const res = ctx.commands.createSubdraft(ids, customName);
+      if (!res.ok) return { error: res.error };
+      const item = ctx.getState().items.find((entry) => entry.id === res.itemId) ?? null;
+      return {
+        ok: true,
+        action: 'pack_compound',
+        timelineId: res.timelineId,
+        itemId: res.itemId,
+        item,
+      };
+    }
+
+    case 'unpack_compound': {
+      const rawId = typeof args.itemId === 'string' ? args.itemId.trim() : '';
+      const targetId = !rawId || rawId === 'selected' ? (ctx.getState().selectedId ?? '') : rawId;
+      if (!targetId) return { error: 'unpack_compound requires itemId (the compound sequence item id)' };
+      const res = planExpandSubdraft(
+        ctx.getDoc(),
+        targetId,
+        (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`,
+      );
+      if (!res.ok) return { error: res.error };
+      ctx.commands.applyDoc(res.doc);
+      return {
+        ok: true,
+        action: 'unpack_compound',
+        itemIds: res.itemIds,
+      };
+    }
+
     default:
-      return { error: `unknown action ${args.action}（可选 list/create/duplicate/switch/update/delete/insert）` };
+      return { error: `unknown action ${args.action}（可选 list/create/duplicate/switch/update/delete/insert/pack_compound/unpack_compound）` };
   }
 }

@@ -477,6 +477,7 @@ export const TrackLane = memo(function TrackLane({
         else if (audioMuted) clipTitle += ` · ${t('轨道已静音')}`;
         if (locked) clipTitle += ` · ${t('轨道已锁定，请先解锁')}`;
         if (pictureDisabled) clipTitle += ` · ${t('片段已停用（按 V 恢复）')}`;
+        if (it.kind === 'sequence') clipTitle += ` · ${t('双击进入编辑内部图层')}`;
         return (
           <div
             key={it.id}

@@ -2,6 +2,7 @@ import { effectivePreset } from '../captions/renderStyles';
 import type { CaptionsData } from '../captions/types';
 import { captionTrackEntries, type TimelineItem, type TimelineState } from '../editor/types';
 import { ensureFont, loadProjectFonts } from './googleFonts';
+import { resolveCanonicalFamily } from './googleFontCatalog';
 import { ensureReferencedAssetFont } from './assetFonts';
 import { findLocalFont } from './localFonts';
 
@@ -13,7 +14,7 @@ function pushFamily(into: Set<string>, raw: unknown): void {
   if (typeof raw !== 'string') return;
   for (const part of raw.split(',')) {
     const face = part.trim().replace(/^["']|["']$/g, '');
-    if (face) into.add(face);
+    if (face) into.add(resolveCanonicalFamily(face) ?? face);
   }
 }
 

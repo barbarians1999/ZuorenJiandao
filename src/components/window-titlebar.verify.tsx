@@ -40,9 +40,15 @@ assert.match(cssSource, /\.cc-window-titlebar--windows\s*\{[^}]*env\(titlebar-ar
 const polishCssSource = readFileSync(new URL('../editor/editor-ui-polish.css', import.meta.url), 'utf8');
 assert.doesNotMatch(polishCssSource, /\.cc-editor-shell\s+\.cc-topbar\s*\{[^}]*padding-inline\s*:/s, 'editor polish CSS must not clobber Windows/macOS titlebar safe-area padding with padding-inline');
 assert.match(polishCssSource, /\.cc-editor-shell\s+\.cc-topbar\.cc-window-titlebar--windows\s*\{[^}]*env\(titlebar-area-width/s, 'editor topbar preserves the Windows safe area for the export button');
+const dashboardCssSource = readFileSync(new URL('./dashboard/dashboard-ui.css', import.meta.url), 'utf8');
+assert.doesNotMatch(dashboardCssSource, /^\.cc-dashboard-titlebar\s*\{[^}]*padding-left\s*:/m, 'dashboard titlebar base rule must not overwrite macOS traffic-light safe padding');
+assert.match(dashboardCssSource, /\.cc-dashboard-titlebar\.cc-window-titlebar--mac\s*\{[^}]*padding-left:\s*84px\s*!important/s, 'dashboard titlebar reserves 84px left inset for macOS window controls');
 assert.doesNotMatch(topBarSource, /left: '50%'/, 'project name must not overlap actions through absolute centering');
-assert.match(readFileSync(controlsUrl, 'utf8'), /setTitlebarAppearance/, 'native buttons follow the renderer theme and height');
+const controlsSource = readFileSync(controlsUrl, 'utf8');
+assert.match(controlsSource, /setTitlebarAppearance/, 'native buttons follow the renderer theme and height');
+assert.match(controlsSource, /const color = tokens\.panel;/, 'Windows titlebar overlay matches the panel surface across dashboard and editor');
+assert.match(controlsSource, /const symbolColor = tokens\.textMuted;/, 'Windows caption glyphs harmonize with topbar icon contrast');
 assert.match(cssSource, /app-region:\s*no-drag/, 'interactive titlebar controls remain clickable');
-assert.match(readFileSync(controlsUrl, 'utf8'), /platform\s*!==\s*'darwin'/, 'renderer controls stay macOS-only while Windows uses native caption buttons');
+assert.match(controlsSource, /platform\s*!==\s*'darwin'/, 'renderer controls stay macOS-only while Windows uses native caption buttons');
 
 console.log('renderer window-titlebar verification passed');

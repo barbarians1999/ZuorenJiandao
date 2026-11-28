@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -75,6 +76,8 @@ const {
   mcpSessionsForTest,
   resetMcpSessionsForTest,
 } = await import('./mcp.ts');
+const { authorizeImportUpload, mintUploadReceipt } = await import('./import-token.ts');
+const { uploadDir } = await import('../media-dir.ts');
 
 const projectId = 'offline-mcp-project';
 const createdProject = await createExternalProject({ name: 'Created defaults', compositionWidth: 1280, compositionHeight: 720 });
@@ -199,6 +202,106 @@ try {
   assert.notEqual((await freshOfflineClient.callTool({
     name: 'target_project', arguments: { projectId },
   })).isError, true, 'a stale offline binding releases ownership without closing its MCP transport');
+
+  // Offline media import (local disk + HTTP upload handoff) + media pool + timeline placement
+  const sampleBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+1N8AAAAASUVORK5CYII=',
+    'base64',
+  );
+  const localDir = join(root, 'local-media');
+  await mkdir(localDir, { recursive: true });
+  const localImagePath = join(localDir, 'cover.png');
+  await writeFile(localImagePath, sampleBytes);
+
+  const mediaProjectId = 'offline-media-project';
+  await setStoredEntry(`project:${mediaProjectId}`, projectDoc());
+  await setStoredEntry('projects', [
+    { id: projectId, name: 'Offline MCP', updatedAt: 1 },
+    { id: mediaProjectId, name: 'Offline Media MCP', updatedAt: 2 },
+  ]);
+
+  const mediaClient = await connect('offline-media-client');
+  const targetedMedia = await mediaClient.callTool({ name: 'target_project', arguments: { projectId: mediaProjectId } });
+  assert.notEqual(targetedMedia.isError, true);
+  const mediaSessionId = sessionId(await mediaClient.callTool({
+    name: 'begin_edit_session',
+    arguments: { approvalMode: 'auto' },
+  }));
+  const browsed = await mediaClient.callTool({
+    name: 'browse_local_media',
+    arguments: { editSessionId: mediaSessionId, path: localDir },
+  });
+  assert.notEqual(browsed.isError, true);
+  assert.equal((resultField(browsed, 'entries') as Array<{ name: string }>).some((e) => e.name === 'cover.png'), true);
+
+  const importedLocal = await mediaClient.callTool({
+    name: 'import_asset',
+    arguments: { editSessionId: mediaSessionId, path: localImagePath },
+  });
+  assert.notEqual(importedLocal.isError, true);
+  const localAssetId = (resultField(importedLocal, 'imported') as Array<{ id: string }>)[0]!.id;
+
+  const slotSession = await mediaClient.callTool({
+    name: 'import_media',
+    arguments: {
+      editSessionId: mediaSessionId,
+      action: 'create_session',
+      assetType: 'image',
+      filename: 'overlay.png',
+      contentType: 'image/png',
+      size: sampleBytes.length,
+    },
+  });
+  assert.notEqual(slotSession.isError, true);
+  const slot = (resultField(slotSession, 'slots') as Array<{ fileKey: string; uploadUrl: string }>)[0]!;
+  const authResult = authorizeImportUpload(new URL(slot.uploadUrl), 'POST', 'image/png');
+  assert.equal(authResult.status, 'accepted');
+  await mkdir(uploadDir(), { recursive: true });
+  const uploadedFileName = slot.fileKey.slice('uploads/'.length);
+  await writeFile(join(uploadDir(), uploadedFileName), sampleBytes);
+  const receipt = mintUploadReceipt(authResult.scope, {
+    path: `/media/${slot.fileKey}`,
+    fileKey: slot.fileKey,
+    bytes: sampleBytes.length,
+    contentHash: createHash('sha256').update(sampleBytes).digest('hex'),
+  });
+  const finalized = await mediaClient.callTool({
+    name: 'finalize_uploaded_asset',
+    arguments: { editSessionId: mediaSessionId, receipt, assetType: 'image' },
+  });
+  assert.notEqual(finalized.isError, true);
+  const uploadedAssetId = String(resultField(finalized, 'assetId'));
+
+  await mediaClient.callTool({
+    name: 'manage_media_pool',
+    arguments: { editSessionId: mediaSessionId, action: 'create_folder', name: 'OfflineAssets' },
+  });
+  await mediaClient.callTool({
+    name: 'manage_media_pool',
+    arguments: {
+      editSessionId: mediaSessionId,
+      action: 'move_assets',
+      assetIds: `${localAssetId},${uploadedAssetId}`,
+      targetPath: 'Master/OfflineAssets',
+    },
+  });
+  const placed = await mediaClient.callTool({
+    name: 'edit_item',
+    arguments: {
+      editSessionId: mediaSessionId,
+      adds: [{ type: 'image', assetId: localAssetId, track: 'V1', fromFrame: 0, durationInFrames: 90 }],
+    },
+  });
+  assert.notEqual(placed.isError, true);
+  const committedMedia = await mediaClient.callTool({
+    name: 'review_edit_session',
+    arguments: { editSessionId: mediaSessionId, summary: 'Offline media import and clip placement' },
+  });
+  assert.equal(resultField(committedMedia, 'status'), 'applied');
+  const savedAfterMedia = (await getStoredEntry(`project:${mediaProjectId}`)).value as ProjectDoc;
+  assert.equal(savedAfterMedia.assets.length, 2);
+  assert.equal(savedAfterMedia.timelines[0]!.items.length, 1);
+  assert.equal(savedAfterMedia.timelines[0]!.items[0]!.sourceAssetId, localAssetId);
 } finally {
   await resetMcpSessionsForTest();
   await Promise.all(clients.map((client) => client.close().catch(() => undefined)));

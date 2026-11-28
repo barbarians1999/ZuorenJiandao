@@ -7,7 +7,9 @@ export type CssTransitionType =
   | 'soft-wipe'
   | 'whip-pan'
   | 'flash'
-  | 'luma-blend';
+  | 'luma-blend'
+  | 'ink-bleed'
+  | 'archival-line-wipe';
 
 /** these video transitions run their real GLSL for video/image clips. */
 export type GlslTransitionType =
@@ -36,6 +38,7 @@ export type TransitionType = GlslTransitionType | AudioTransitionType | 'custom-
 
 export const GLSL_TRANSITION_TYPES: ReadonlySet<string> = new Set<string>([
   'cross-dissolve', 'dip-to-black', 'soft-wipe', 'whip-pan', 'flash', 'luma-blend',
+  'ink-bleed', 'archival-line-wipe',
   'page-curl', 'rack-focus', 'organic-dissolve', 'impact-shake', 'anticipation-zoom', 'clean-line-wipe',
   'circle-wipe', 'radial-blur', 'glitch-cut', 'dip-to-color',
   'mosaic-reveal', 'blinds-reveal', 'split-slide',
@@ -44,6 +47,7 @@ export const GLSL_TRANSITION_TYPES: ReadonlySet<string> = new Set<string>([
 
 export const CSS_TRANSITION_TYPES: ReadonlySet<string> = new Set<string>([
   'cross-dissolve', 'dip-to-black', 'soft-wipe', 'whip-pan', 'flash', 'luma-blend',
+  'ink-bleed', 'archival-line-wipe',
 ]);
 
 export const AUDIO_TRANSITION_TYPES: ReadonlySet<AudioTransitionType> = new Set<AudioTransitionType>([
@@ -61,8 +65,10 @@ export function isVisualTransition(type: TransitionType): type is GlslTransition
 // en labels for the transition library cards (Resource Library·Transition·Screen Transition).
 // Shared by the inspector select + the resource-library grid.
 export const TRANSITION_LABELS: Record<TransitionType, string> = {
+  'ink-bleed': '宣纸墨迹晕染',
+  'archival-line-wipe': '细线平滑拉幕',
   'anticipation-zoom': '推进转场',
-  'clean-line-wipe': '白色划线转场',
+  'clean-line-wipe': '划线擦除转场',
   'cross-dissolve': '叠化转场',
   'dip-to-black': '闪黑转场',
   flash: '闪白转场',
@@ -88,6 +94,8 @@ export const TRANSITION_LABELS: Record<TransitionType, string> = {
 
 /** catalog display order + extended visual transitions. */
 export const TRANSITION_ORDER: readonly GlslTransitionType[] = [
+  'ink-bleed',
+  'archival-line-wipe',
   'anticipation-zoom',
   'clean-line-wipe',
   'cross-dissolve',
@@ -114,6 +122,13 @@ export const AUDIO_TRANSITION_ORDER: readonly AudioTransitionType[] = [
   'audio-cross-fade',
 ];
 
+export function parseBuiltinTransitionId(assetId: string): TransitionType | null {
+  const raw = assetId.replace(/^builtin:tr-/, '');
+  if ((TRANSITION_ORDER as readonly string[]).includes(raw)) return raw as TransitionType;
+  if ((AUDIO_TRANSITION_ORDER as readonly string[]).includes(raw)) return raw as TransitionType;
+  return null;
+}
+
 export type TransitionDirection = 'left' | 'right' | 'up' | 'down';
 
 /** an independent transition item straddling the cut between two adjacent
@@ -129,6 +144,12 @@ export interface TransitionItem {
   enabled?: boolean;
   /** direction for wipe/whip transitions (default 'left') */
   direction?: TransitionDirection;
+  /** ink-bleed origin in normalized canvas coordinates (0..1, default 0.5) */
+  originX?: number;
+  originY?: number;
+  /** archival-line-wipe seam color hex (default '#a62121') and width in px (default 2.5) */
+  lineColor?: string;
+  lineWidthPx?: number;
   /** type='custom-shader' only: the submit_shader-generated two-input transition GLSL,
    *  stored here (not in a registry) so it persists with the project and renders after
    *  reload. customUniforms = {u_<key>: value}; customLabel = display name. */

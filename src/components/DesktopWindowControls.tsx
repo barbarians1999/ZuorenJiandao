@@ -93,7 +93,6 @@ export function DesktopWindowControls() {
     let lastHeight = -1;
     const sync = () => {
       const { tokens } = SKINS.find((skin) => skin.id === getSkin()) ?? SKINS[0]!;
-      const inEditor = Boolean(header.closest('.cc-editor-shell'));
       const overlayRect = wco?.visible ? wco.getTitlebarAreaRect?.() : undefined;
       const clientWidth = document.documentElement.clientWidth || window.innerWidth;
       const overlayRightInsetCss = overlayRect && overlayRect.width > 0 && clientWidth > 0
@@ -104,13 +103,15 @@ export function DesktopWindowControls() {
         innerWidth: window.innerWidth,
         overlayRightInsetCss,
       });
-      const headerHeight = Math.max(32, Math.floor(header.getBoundingClientRect().height || header.offsetHeight));
+      const rawHeight = header.getBoundingClientRect().height || header.offsetHeight;
+      const borderBottom = parseFloat(window.getComputedStyle(header).borderBottomWidth || '0') || 0;
+      const headerHeight = Math.max(32, Math.floor(rawHeight - Math.ceil(borderBottom) - 1));
       if (safeRight !== lastSafeRight) {
         lastSafeRight = safeRight;
         document.documentElement.style.setProperty('--cc-win-titlebar-safe-right', `${safeRight}px`);
       }
-      const color = inEditor ? tokens.bg : tokens.panel;
-      const symbolColor = tokens.text;
+      const color = tokens.panel;
+      const symbolColor = tokens.textMuted;
       if (color !== lastColor || symbolColor !== lastSymbolColor || headerHeight !== lastHeight) {
         lastColor = color;
         lastSymbolColor = symbolColor;

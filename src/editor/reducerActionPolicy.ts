@@ -18,6 +18,7 @@ const ACTION_POLICIES = {
   slip: { recordsHistory: true, reconcileTransitions: true, guardOverlaps: false },
   setVolume: { recordsHistory: true, reconcileTransitions: false, guardOverlaps: false },
   togglePicture: { recordsHistory: true, reconcileTransitions: false, guardOverlaps: false },
+  setItemDisabled: { recordsHistory: true, reconcileTransitions: false, guardOverlaps: false },
   setFade: { recordsHistory: true, reconcileTransitions: false, guardOverlaps: false },
   setTransform: { recordsHistory: true, reconcileTransitions: false, guardOverlaps: false },
   setFilters: { recordsHistory: true, reconcileTransitions: false, guardOverlaps: false },

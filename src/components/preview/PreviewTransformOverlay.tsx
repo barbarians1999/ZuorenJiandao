@@ -24,6 +24,7 @@ import {
   previewClientDelta,
   previewEdgeMidpoints,
   previewPointerFromClient,
+  previewTransformOrigin,
   resizeCompositionMosaic,
   rotatePreviewTransform,
   shouldSelectedItemPreemptCaptions,
@@ -505,6 +506,7 @@ export function PreviewTransformOverlay({
     playerRef.current?.pause();
     setFrame(Math.round(playerRef.current?.getCurrentFrame() ?? frame));
     event.currentTarget.setPointerCapture(event.pointerId);
+    const origin = previewTransformOrigin(state, candidate.item);
     gestureRef.current = {
       pointerId: event.pointerId,
       item: candidate.item,
@@ -520,8 +522,8 @@ export function PreviewTransformOverlay({
         : undefined,
       startClient: pointClient,
       center: {
-        x: state.width / 2 + candidate.transform.x / 100 * state.width,
-        y: state.height / 2 + candidate.transform.y / 100 * state.height,
+        x: origin.x + candidate.transform.x / 100 * state.width,
+        y: origin.y + candidate.transform.y / 100 * state.height,
       },
       transform: candidate.transform,
       localFrame: candidate.localFrame,

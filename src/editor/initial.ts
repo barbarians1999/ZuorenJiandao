@@ -4,6 +4,7 @@ import kouboScenesJson from '../../assets/templates/koubo-scenes-templates.json'
 import type { Tpl } from '../types';
 import type { TimelineState } from './types';
 import { CHAPTER_TEMPLATES } from '../library/chapterTemplates';
+import { EXPLAINER_TEMPLATES } from '../library/explainerTemplates';
 
 // The template library + the first-run seed project. Shared by the loader shell
 // (fallback when nothing is persisted) and the editor (agent context / library).
@@ -15,6 +16,7 @@ export const TEMPLATES = [
   ...(socialShortsJson as Tpl[]),
   ...(kouboScenesJson as Tpl[]),
   ...CHAPTER_TEMPLATES,
+  ...EXPLAINER_TEMPLATES,
 ];
 
 const pick = (name: string): Tpl => TEMPLATES.find((t) => t.name.includes(name)) ?? TEMPLATES[0];

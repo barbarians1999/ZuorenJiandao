@@ -36,6 +36,7 @@ import { usePreviewProjectDoc } from '../media/previewMedia';
 import { loadTimelineView } from '../persist/sessionPrefs';
 import { PreviewProxyStatus } from './preview/PreviewSourceControls';
 import { PreviewMonitorBar } from './preview/PreviewMonitorBar';
+import { PreviewAudioLevelMeter } from './preview/PreviewAudioLevelMeter';
 import type { SlipPreview } from '../editor/slip';
 import { SlipTwoUpPreview } from './SlipTwoUpPreview';
 import { PREVIEW_SHARED_AUDIO_TAGS } from './previewAudioPool';
@@ -170,6 +171,7 @@ export const PreviewPanel = memo(function PreviewPanel({
     };
   }, []);
   const [showSafe, setShowSafe] = useState(false);
+  const [audioMeterOpen, setAudioMeterOpen] = useState(false);
   const [autoEditCaption, setAutoEditCaption] = useState<{ trackId: TrackId; laneId: string } | null>(null);
   // Expose Player during full screen preview (` shortcut key/timeline toolbar button to make Player full screen)
   // Comes with a control bar; the editing state still uses the timeline transport, and does not display dual sets of controls.
@@ -448,6 +450,7 @@ export const PreviewPanel = memo(function PreviewPanel({
         />
       )}
       {!previewAsset && <PreviewProxyStatus proxies={preview.proxies} />}
+      <div className="cc-preview-stage-row" style={previewAsset ? { display: 'none' } : undefined}>
       <div ref={stageRef} className="cc-preview-stage"
         style={previewAsset ? { display: 'none' } : undefined}
         // Suppress the browser's native <video> context menu (download / picture-in-picture
@@ -581,6 +584,16 @@ export const PreviewPanel = memo(function PreviewPanel({
           </div>
         )}
       </div>
+      {audioMeterOpen && !fullscreen && !previewAsset && (
+        <PreviewAudioLevelMeter
+          state={preview.state}
+          project={preview.project}
+          timelineId={timelineId}
+          playerRef={playerRef}
+          hoverPreviewFrame={hoverPreviewFrame}
+        />
+      )}
+      </div>
       <PreviewMonitorBar
         state={state}
         project={project}
@@ -594,6 +607,8 @@ export const PreviewPanel = memo(function PreviewPanel({
         zoneOut={zoneOut}
         hidden={Boolean(previewAsset)}
         onSeek={onSeek}
+        audioMeterOpen={audioMeterOpen}
+        onToggleAudioMeter={() => setAudioMeterOpen((v) => !v)}
       />
     </section>
   );

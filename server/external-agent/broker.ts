@@ -167,11 +167,27 @@ const registry = new EditorConnectionRegistry({
   },
 });
 
+export function checkMultiWindowConflict(
+  projectId: string,
+  tabId?: string,
+  forceTakeover = false,
+): { conflict: boolean; holderClientKind?: 'desktop' | 'browser' | null } {
+  return registry.checkMultiWindowConflict(projectId, tabId, forceTakeover);
+}
+
+export function editorEvictionInfo(
+  projectId: string,
+  editorInstanceId: string,
+): { holderClientKind?: 'desktop' | 'browser' | null } | null {
+  return registry.evictionInfo(projectId, editorInstanceId);
+}
+
 export function registerEditor(
   projectId: string, editorInstanceId: string,
   baseRevision: string, tools: ExternalToolSchema[],
   ownership?: ProjectEditOwnershipClaim,
   registrationCapability?: string | null,
+  meta?: { tabId?: string; clientKind?: 'desktop' | 'browser'; forceTakeover?: boolean },
 ): string {
   return registry.register(
     projectId,
@@ -180,6 +196,7 @@ export function registerEditor(
     tools,
     ownership,
     registrationCapability,
+    meta,
   );
 }
 
@@ -297,8 +314,10 @@ export function invokeEditorTool(
   const allowRevisionDrift = name === 'get_edit_session';
   const recoveryTool = name === 'list_edit_sessions' || name === 'recover_edit_session';
   const ownsSession = name !== 'begin_edit_session' && !recoveryTool && 'editSessionId' in args;
-  if (ownsSession) requireOwnedEditSession(ownerId, binding, args);
-  const currentBinding = requireCurrentBinding(binding, allowRevisionDrift, !ownsSession);
+  const latest = editorBinding(binding.projectId);
+  const ownerSynced = ownsSession && Boolean(latest && editSessionOwnerMatches(ownerId, latest, args.editSessionId));
+  if (ownsSession) requireOwnedEditSession(ownerId, ownerSynced && latest ? latest : binding, args);
+  const currentBinding = requireCurrentBinding(binding, allowRevisionDrift, !ownsSession || ownerSynced);
   const callId = randomUUID();
   sessionOwnership.reserveRecovery({
     id: callId,
@@ -459,6 +478,46 @@ export function settleEditorCall(
       registrationCapability,
     )) return false;
   return finishCall(call, outcome, value, false);
+}
+
+export async function settleEditorCallWithRevision(
+  id: string,
+  outcome: ExternalCallTerminalOutcome,
+  value: unknown,
+  registrationCapability?: string | null,
+  baseRevision?: string,
+): Promise<boolean> {
+  const call = pending.get(id);
+  if (!call) return false;
+  if (registrationCapability !== undefined
+    && !editorRegistrationMatches(
+      call.binding.projectId,
+      call.binding.editorInstanceId,
+      registrationCapability,
+    )) return false;
+  if (!pending.delete(id)) return false;
+  clearTimeout(call.timer);
+  removeQueuedCall(call);
+  wakeBrokerWaiters(waiters, call.binding.projectId);
+  if (outcome === 'applied' && typeof baseRevision === 'string' && baseRevision) {
+    await touchEditor(
+      call.binding.projectId,
+      call.binding.editorInstanceId,
+      baseRevision,
+      registrationCapability,
+    ).catch(() => undefined);
+    const current = editorBinding(call.binding.projectId);
+    if (current && sameEditorIdentity(current, call.binding)) {
+      sessionOwnership.advanceOwnedRevision(call, current.baseRevision);
+    }
+  }
+  if (outcome === 'applied') {
+    call.resolve(sessionOwnership.finishApplied(call, value));
+    return true;
+  }
+  sessionOwnership.releaseRecovery(call);
+  call.reject(new ExternalEditorCallError(outcome, terminalMessage(value)));
+  return true;
 }
 
 export function cancelEditorCallsForOwner(

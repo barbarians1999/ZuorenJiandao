@@ -114,7 +114,7 @@ export const TRANSCRIPT_TOOL_SCHEMAS: AgentToolSchema[] = [
   },
   {
     name: 'delete_text',
-    description: 'Delete a spoken phrase from a track — "delete text = delete video": the matching words\' audio and their time are cut and the clip re-times. If unsure of the exact wording, find_transcript first. ⚠ AUDIO clips only re-time this way; a VIDEO clip always plays continuously from srcInFrame — deleting its words cuts NOTHING (captions keep mirroring the audible speech, so the deletion has no visible effect). To cut a video clip use split_item / edit_item (srcInFrame + durationInFrames); to hide individual words from captions use edit_captions action=display_text.',
+    description: 'Delete a spoken phrase from a transcribed audio or video track — "delete text = delete video": compiles the deletion into real track cuts/ripples (including linked partners) and re-times the clip. If unsure of the exact wording, call find_transcript first. To hide individual words only from captions without cutting media, use edit_captions action=display_text.',
     input_schema: { type: 'object', properties: { track: { type: 'string' }, query: { type: 'string', description: 'The phrase to delete (matched against the transcript).' } }, required: ['query'] },
   },
   {

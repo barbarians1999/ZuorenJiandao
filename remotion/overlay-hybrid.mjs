@@ -301,6 +301,16 @@ export function buildSparseOverlayPlan(state, rangeStart, rangeEnd, captionSumma
       const { entrance, exit } = resolveTextAnimationTiming(item.props ?? {}, item.durationInFrames);
       if (entrance > 0) animated.push([itemStart, Math.min(itemEnd, itemStart + entrance)]);
       if (exit > 0) animated.push([Math.max(itemStart, itemEnd - exit), itemEnd]);
+      if (item.props?.strikeAnimated === true || item.props?.textStylePreset === 'refute-strike') {
+        const fps = Number(state.fps) > 0 ? Number(state.fps) : 30;
+        const rawStart = Number(item.props?.strikeStartSec ?? 0.4);
+        const rawDur = Number(item.props?.strikeDurationSec ?? 0.35);
+        const startSec = Number.isFinite(rawStart) ? clamp(rawStart, 0, 60) : 0.4;
+        const durSec = Number.isFinite(rawDur) ? clamp(rawDur, 0.08, 5) : 0.35;
+        const sFrom = itemStart + Math.floor(startSec * fps);
+        const sTo = Math.min(itemEnd, itemStart + Math.ceil((startSec + durSec) * fps) + 1);
+        if (sTo > sFrom) animated.push([sFrom, sTo]);
+      }
     } else {
       for (const [wFrom, wUntil] of pictureAnimationWindows(item)) {
         animated.push([wFrom, wUntil]);

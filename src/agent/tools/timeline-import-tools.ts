@@ -350,10 +350,15 @@ function buildImportedTimeline(draft: ImportDraft, timeline: ParsedTimeline, nam
   const tracks = createImportTracks(draft, timeline.clips);
   for (const clip of timeline.clips) {
     const asset = draft.getDoc().assets.find((candidate) => candidate.id === clip.assetId)!;
-    draft.commands.addMediaItem({ ...asset, durationInFrames: clip.durationInFrames }, {
+    const sourceFramesNeeded = clip.sourceStartFrame + clip.durationInFrames;
+    const importAsset = asset.durationInFrames >= sourceFramesNeeded
+      ? asset
+      : { ...asset, durationInFrames: sourceFramesNeeded };
+    draft.commands.addMediaItem(importAsset, {
       track: tracks.get(`${clip.family}:${clip.lane}`),
       startFrame: clip.startFrame,
       srcInFrame: clip.sourceStartFrame,
+      durationInFrames: clip.durationInFrames,
     });
   }
   const current = draft.getDoc();

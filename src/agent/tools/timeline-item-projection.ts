@@ -54,5 +54,8 @@ export function projectTimelineItem(
     volume: item.volume ?? null,
     fadeInFrames: item.fadeInFrames ?? null,
     fadeOutFrames: item.fadeOutFrames ?? null,
+    pictureDisabled: item.pictureDisabled === true,
+    timelineId: item.timelineId ?? null,
+    props: item.props ?? null,
   };
 }

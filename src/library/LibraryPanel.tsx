@@ -87,7 +87,7 @@ export interface LibraryPanelProps {
   onRemoveMediaAssets: (ids: string[]) => void;
   onPasteMediaAssets: (assets: MediaAsset[], folderId?: string) => void;
   onRelinkMediaAsset?: (id: string, next: MediaAssetRelinkPatch) => void;
-  onAddSolid?: (preset?: { name?: string; color?: string; mask?: ClipMask }) => void;
+  onAddSolid?: (preset?: { name?: string; color?: string; props?: Record<string, unknown>; mask?: ClipMask }) => void;
   onAddShape?: (shape: 'rectangle' | 'ellipse') => void;
   onAddMosaic?: () => void;
   onAddText: () => void;
@@ -110,7 +110,7 @@ function localizeDefaultSequenceName(name: string, t: ReturnType<typeof useT>): 
   const match = /^序列 (\d+)$/.exec(name);
   return match ? t('序列 {n}', { n: match[1]! }) : name;
 }
-export const LibraryPanel = memo(function LibraryPanel({ timelineId, semanticScopeId, onAddAudio, playerRef, fps, items, trackOptions, captionTracks, onSetCaptions, onCreateCaptionTrack, onUpdateCaptions, selectedCaptions, onSelectCaption, onSelectCaptionRange, onSeekFrame, selectedItem, onAddText, pasteTranscriptRequest = 0, getSequenceOptions, onAddSequence, assets, mediaFolders, usedAssetIds, onTimelineAssetIds, previewAssetId, onPreviewAsset, offlineAssetIds, onAssetLoadError, onImportMedia, onImportMobileMedia, onIngestDirectoryAsset, onTranscribeAsset, onAddMediaItem, onAddMediaAssetsToTimeline, onCreateMediaFolder, onRenameMediaFolder, onDeleteMediaFolder, onMoveMediaAssets, onRenameMediaAsset, onRenameMediaAssets, onSetMediaAssetFavorite, onSetMediaAssetsFavorite, onRemoveMediaAsset, onRemoveMediaAssets, onPasteMediaAssets, onRelinkMediaAsset, onAddSolid, onAddShape, onAddMosaic, onApplyTransition, onApplyFx, onApplyZoom, quickStart, onOpenTextWorkspace, onRequestPasteTranscript }: LibraryPanelProps) {
+export const LibraryPanel = memo(function LibraryPanel({ timelineId, semanticScopeId, templates, onAddTemplate, onAddAudio, playerRef, fps, items, trackOptions, captionTracks, onSetCaptions, onCreateCaptionTrack, onUpdateCaptions, selectedCaptions, onSelectCaption, onSelectCaptionRange, onSeekFrame, selectedItem, onAddText, pasteTranscriptRequest = 0, getSequenceOptions, onAddSequence, assets, mediaFolders, usedAssetIds, onTimelineAssetIds, previewAssetId, onPreviewAsset, offlineAssetIds, onAssetLoadError, onImportMedia, onImportMobileMedia, onIngestDirectoryAsset, onTranscribeAsset, onAddMediaItem, onAddMediaAssetsToTimeline, onCreateMediaFolder, onRenameMediaFolder, onDeleteMediaFolder, onMoveMediaAssets, onRenameMediaAsset, onRenameMediaAssets, onSetMediaAssetFavorite, onSetMediaAssetsFavorite, onRemoveMediaAsset, onRemoveMediaAssets, onPasteMediaAssets, onRelinkMediaAsset, onAddSolid, onAddShape, onAddMosaic, onApplyTransition, onApplyFx, onApplyZoom, quickStart, onOpenTextWorkspace, onRequestPasteTranscript }: LibraryPanelProps) {
   const t = useT();
   const [mainTab, setMainTab] = useState<(typeof MAIN_TABS)[number]>(quickStart === 'captions' ? '字幕' : '我的素材');
   const [activeTool, setActiveTool] = useState<LibraryTool>(quickStart === 'captions' ? '字幕' : '我的素材');
@@ -196,6 +196,8 @@ export const LibraryPanel = memo(function LibraryPanel({ timelineId, semanticSco
           <div style={{ flex: 1, overflowY: 'auto', padding: 12, minHeight: 0 }}>
             <EffectsBrowser
               selectedItem={selectedItem}
+              templates={templates}
+              onAddTemplate={onAddTemplate}
               onAddSolid={onAddSolid}
               onAddShape={onAddShape}
               onAddMosaic={onAddMosaic}

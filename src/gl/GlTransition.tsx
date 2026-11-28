@@ -31,6 +31,10 @@ interface GlTransitionProps {
    *  uniform values. When present, rendered instead of a GLSL_TRANSITIONS built-in. */
   customFrag?: string;
   customUniforms?: Record<string, number>;
+  originX?: number;
+  originY?: number;
+  lineColor?: string;
+  lineWidthPx?: number;
   /** transition length in frames */
   L: number;
   /** absolute timeline frame where the window starts (for u_time) */
@@ -153,7 +157,7 @@ function animatedTransitionSource(source: HTMLCanvasElement, slot: { canvas: HTM
   return destination;
 }
 
-export function GlTransition({ type, direction, L, windowStart, outgoing, incoming, trimOut, trimIn, width, height, fit, outgoingBackgroundFill = false, incomingBackgroundFill = false, customFrag, customUniforms, previewTargetId, onPreviewStatus, onReadyChange }: GlTransitionProps) {
+export function GlTransition({ type, direction, L, windowStart, outgoing, incoming, trimOut, trimIn, width, height, fit, outgoingBackgroundFill = false, incomingBackgroundFill = false, customFrag, customUniforms, originX, originY, lineColor, lineWidthPx, previewTargetId, onPreviewStatus, onReadyChange }: GlTransitionProps) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -311,6 +315,10 @@ export function GlTransition({ type, direction, L, windowStart, outgoing, incomi
           width,
           height,
           direction,
+          originX,
+          originY,
+          lineColor,
+          lineWidthPx,
         });
         const outgoingFrame = buildEffectShaderFrame(
           outgoingEffects.map(({ fx, def: effect }) => ({ def: effect, overrides: fx.overrides })),

@@ -179,6 +179,17 @@ export function applyClipAction(s: TimelineState, a: Action): TimelineState | un
       const ids = new Set(eligible.map((item) => item.id));
       return { ...s, items: s.items.map((item) => ids.has(item.id) ? { ...item, pictureDisabled: disable } : item) };
     }
+    case 'setItemDisabled': {
+      if (lockedItem(s, a.id)) return s;
+      const target = s.items.find((item) => item.id === a.id);
+      if (!target) return s;
+      const disabled = a.disabled === true;
+      if ((target.pictureDisabled === true) === disabled) return s;
+      return {
+        ...s,
+        items: s.items.map((item) => (item.id === a.id ? { ...item, pictureDisabled: disabled } : item)),
+      };
+    }
     case 'setFade':
       if (lockedItem(s, a.id)
         || (a.fadeInFrames !== undefined && !Number.isFinite(a.fadeInFrames))

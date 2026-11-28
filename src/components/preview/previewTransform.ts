@@ -1,7 +1,9 @@
 import { isBackgroundFillActive } from '../../editor/backgroundFill';
 import { normalizeClipMask, resolveMaskAt } from '../../editor/clipMask';
+import { resolveVectorShape, vectorShapeBounds } from '../../editor/vectorShapes';
 import { compositionMosaicRect, parseCompositionMosaic, type CompositionMosaic } from '../../editor/compositionMosaic';
-import { measureTextClipRect } from './previewTextGeometry';
+import { measureTextClipRect, resolveTextAnchorPoint } from './previewTextGeometry';
+import { computeScanFocusLayout } from '../../library/explainerTemplates';
 import {
   flexCropVisibleRect,
   compactFlexCrop,
@@ -151,6 +153,11 @@ function previewBaseRect(state: TimelineState, item: TimelineItem, localFrame = 
   }
   const crop = item.transform?.crop;
   if (item.kind === 'solid') {
+    const vectorShape = resolveVectorShape(item.props);
+    if (vectorShape) {
+      const bounds = vectorShapeBounds(vectorShape, state.width, state.height, 24);
+      return crop ? intersectPreviewRects(bounds, flexCropVisibleRect(crop, state.width, state.height, canvas)) : bounds;
+    }
     const mask = item.mask ? resolveMaskAt(item, localFrame, { width: state.width, height: state.height }) : undefined;
     const content = mask
       ? {
@@ -164,6 +171,23 @@ function previewBaseRect(state: TimelineState, item: TimelineItem, localFrame = 
   }
   if (item.kind === 'text') {
     const content = measureTextClipRect(state, item);
+    return crop ? intersectPreviewRects(content, flexCropVisibleRect(crop, state.width, state.height, canvas)) : content;
+  }
+  if (item.kind === 'motion-graphic' && item.templateId === 'zuoren-explainer-scan-focus') {
+    const layout = computeScanFocusLayout(item.props, state.width, state.height);
+    const pad = 24;
+    const minX = Math.min(layout.x0, layout.mx, layout.ex);
+    const maxX = Math.max(layout.x1, layout.mx, layout.ex);
+    const minY = Math.min(layout.y0, layout.my, layout.ey);
+    const maxY = Math.max(layout.y1, layout.my, layout.ey);
+    const extraLeft = layout.hasLabelCard && layout.pointsLeft ? 260 : pad;
+    const extraRight = layout.hasLabelCard && !layout.pointsLeft ? 260 : pad;
+    const extraY = layout.hasLabelCard ? 44 : pad;
+    const x1 = Math.max(0, minX - extraLeft);
+    const y1 = Math.max(0, minY - extraY);
+    const x2 = Math.min(state.width, maxX + extraRight);
+    const y2 = Math.min(state.height, maxY + extraY);
+    const content = { x: x1, y: y1, width: Math.max(40, x2 - x1), height: Math.max(40, y2 - y1) };
     return crop ? intersectPreviewRects(content, flexCropVisibleRect(crop, state.width, state.height, canvas)) : content;
   }
   const sourceWidth = item.width && item.width > 0 ? item.width : state.width;
@@ -186,18 +210,26 @@ const rotatePoint = (point: PreviewPoint, center: PreviewPoint, degrees: number)
   return { x: center.x + x * cos - y * sin, y: center.y + x * sin + y * cos };
 };
 
+export function previewTransformOrigin(
+  state: Pick<TimelineState, 'width' | 'height' | 'fit'>,
+  item: Pick<TimelineItem, 'kind' | 'width' | 'height' | 'props'>,
+): PreviewPoint {
+  if (item.kind === 'text') return resolveTextAnchorPoint(state, item);
+  return { x: state.width / 2, y: state.height / 2 };
+}
+
 const applyTransform = (
   state: Pick<TimelineState, 'width' | 'height'>,
   point: PreviewPoint,
   transform: EffectivePreviewTransform,
+  origin: PreviewPoint = { x: state.width / 2, y: state.height / 2 },
 ): PreviewPoint => {
-  // Same origin as CSS `transform-origin: 50% 50%` on the full-canvas layer.
-  const center = { x: state.width / 2, y: state.height / 2 };
+  // Same origin as CSS `transformOrigin` on the full-canvas layer.
   const scaled = {
-    x: center.x + (point.x - center.x) * transform.scaleX,
-    y: center.y + (point.y - center.y) * transform.scaleY,
+    x: origin.x + (point.x - origin.x) * transform.scaleX,
+    y: origin.y + (point.y - origin.y) * transform.scaleY,
   };
-  const rotated = rotatePoint(scaled, center, transform.rotation);
+  const rotated = rotatePoint(scaled, origin, transform.rotation);
   return {
     x: rotated.x + transform.x / 100 * state.width,
     y: rotated.y + transform.y / 100 * state.height,
@@ -206,33 +238,34 @@ const applyTransform = (
 
 export function previewCandidateGeometry(state: TimelineState, candidate: PreviewCandidate): PreviewCandidateGeometry {
   const baseRect = previewBaseRect(state, candidate.item, candidate.localFrame);
+  const origin = previewTransformOrigin(state, candidate.item);
   const rawCorners = [
     { x: baseRect.x, y: baseRect.y },
     { x: baseRect.x + baseRect.width, y: baseRect.y },
     { x: baseRect.x + baseRect.width, y: baseRect.y + baseRect.height },
     { x: baseRect.x, y: baseRect.y + baseRect.height },
   ] as const;
-  const corners = rawCorners.map((point) => applyTransform(state, point, candidate.transform)) as unknown as PreviewCandidateGeometry['corners'];
+  const corners = rawCorners.map((point) => applyTransform(state, point, candidate.transform, origin)) as unknown as PreviewCandidateGeometry['corners'];
   const rawCenter = { x: baseRect.x + baseRect.width / 2, y: baseRect.y + baseRect.height / 2 };
-  return { baseRect, center: applyTransform(state, rawCenter, candidate.transform), corners };
+  return { baseRect, center: applyTransform(state, rawCenter, candidate.transform, origin), corners };
 }
 
 const inverseTransform = (
   state: Pick<TimelineState, 'width' | 'height'>,
   point: PreviewPoint,
   transform: EffectivePreviewTransform,
+  origin: PreviewPoint = { x: state.width / 2, y: state.height / 2 },
 ): PreviewPoint => {
-  const center = { x: state.width / 2, y: state.height / 2 };
   const translated = {
     x: point.x - transform.x / 100 * state.width,
     y: point.y - transform.y / 100 * state.height,
   };
-  const rotated = rotatePoint(translated, center, -transform.rotation);
+  const rotated = rotatePoint(translated, origin, -transform.rotation);
   const safeX = Math.abs(transform.scaleX) < 1e-6 ? 1e-6 : transform.scaleX;
   const safeY = Math.abs(transform.scaleY) < 1e-6 ? 1e-6 : transform.scaleY;
   return {
-    x: center.x + (rotated.x - center.x) / safeX,
-    y: center.y + (rotated.y - center.y) / safeY,
+    x: origin.x + (rotated.x - origin.x) / safeX,
+    y: origin.y + (rotated.y - origin.y) / safeY,
   };
 };
 
@@ -240,7 +273,8 @@ export function hitPreviewCandidates(state: TimelineState, absoluteFrame: number
   return visiblePreviewCandidates(state, absoluteFrame).filter((candidate) => {
     const rect = previewBaseRect(state, candidate.item, candidate.localFrame);
     if (!rect.width || !rect.height) return false;
-    const local = inverseTransform(state, point, candidate.transform);
+    const origin = previewTransformOrigin(state, candidate.item);
+    const local = inverseTransform(state, point, candidate.transform, origin);
     return local.x >= rect.x && local.x <= rect.x + rect.width
       && local.y >= rect.y && local.y <= rect.y + rect.height;
   });

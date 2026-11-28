@@ -4,15 +4,70 @@ import type { BrowserProjectOwnership } from '../persist/projectStoreTransport';
 
 const EDITOR_REGISTRATION_CAPABILITY_HEADER = 'X-OpenChatCut-Editor-Registration';
 
+export interface MultiWindowConflictInfo {
+  code: 'MULTI_WINDOW_CONFLICT' | 'OWNERSHIP_TAKEN_OVER';
+  holderClientKind?: 'desktop' | 'browser' | null;
+  message: string;
+}
+
+const readOnlyProjects = new Set<string>();
+const readOnlyListeners = new Set<() => void>();
+
+export function setExternalBridgeReadOnly(projectId: string, readOnly: boolean): void {
+  const had = readOnlyProjects.has(projectId);
+  if (had === readOnly) return;
+  if (readOnly) readOnlyProjects.add(projectId);
+  else readOnlyProjects.delete(projectId);
+  for (const listener of readOnlyListeners) listener();
+}
+
+export function isExternalBridgeReadOnly(projectId: string): boolean {
+  return readOnlyProjects.has(projectId);
+}
+
+export function subscribeExternalBridgeReadOnly(listener: () => void): () => void {
+  readOnlyListeners.add(listener);
+  return () => readOnlyListeners.delete(listener);
+}
+
+export function editorTabIdentity(): { tabId: string; clientKind: 'desktop' | 'browser' } {
+  const clientKind: 'desktop' | 'browser' =
+    typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
+      ? 'desktop'
+      : 'browser';
+  let tabId = '';
+  try {
+    const key = 'zuoren:editorTabId';
+    tabId = window.sessionStorage.getItem(key) ?? '';
+    if (!tabId) {
+      tabId = crypto.randomUUID();
+      window.sessionStorage.setItem(key, tabId);
+    }
+  } catch {
+    tabId = typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `tab_${Date.now()}`;
+  }
+  return { tabId, clientKind };
+}
+
 export class EditorBridgeRequestError extends Error {
   readonly operation: string;
   readonly status: number;
+  readonly code?: string;
+  readonly holderClientKind?: 'desktop' | 'browser' | null;
 
-  constructor(operation: string, status: number) {
-    super(`${operation} failed: HTTP ${status}`);
+  constructor(
+    operation: string,
+    status: number,
+    code?: string,
+    holderClientKind?: 'desktop' | 'browser' | null,
+    serverMessage?: string,
+  ) {
+    super(serverMessage || `${operation} failed: HTTP ${status}`);
     this.name = 'EditorBridgeRequestError';
     this.operation = operation;
     this.status = status;
+    this.code = code;
+    this.holderClientKind = holderClientKind;
   }
 }
 
@@ -67,7 +122,9 @@ export async function registerEditorBridge(
   baseRevision: string,
   signal: AbortSignal,
   registrationCapability?: string,
+  options?: { forceTakeover?: boolean },
 ): Promise<BrowserProjectOwnership> {
+  const identity = editorTabIdentity();
   const response = await fetch('/api/external-agent/register', {
     method: 'POST',
     headers: editorBridgeHeaders(true, registrationCapability),
@@ -76,10 +133,27 @@ export async function registerEditorBridge(
       editorId: editorInstanceId,
       baseRevision,
       tools: externalToolSchemas(),
+      tabId: identity.tabId,
+      clientKind: identity.clientKind,
+      ...(options?.forceTakeover ? { forceTakeover: true } : {}),
     }),
     signal,
   });
-  if (!response.ok) throw new EditorBridgeRequestError('registration', response.status);
+  if (!response.ok) {
+    let body: { code?: string; holderClientKind?: 'desktop' | 'browser' | null; error?: string } | undefined;
+    try {
+      body = await response.json() as typeof body;
+    } catch {
+      body = undefined;
+    }
+    throw new EditorBridgeRequestError(
+      'registration',
+      response.status,
+      body?.code,
+      body?.holderClientKind,
+      body?.error,
+    );
+  }
   const value: unknown = await response.json();
   if (!value || typeof value !== 'object') throw new Error('invalid editor registration response');
   const registration = value as Partial<{

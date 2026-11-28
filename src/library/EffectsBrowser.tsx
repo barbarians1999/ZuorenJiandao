@@ -11,6 +11,10 @@ import {
 import { TRANSITION_LABELS, TRANSITION_ORDER, type TransitionType } from '../editor/transitionTypes';
 import { FX_EFFECTS, FX_IDS, LUT_EFFECTS, LUT_IDS } from '../gl/fx/effects';
 import { customTransitionUniforms, getCustomTransition } from '../gl/customTransitions';
+import { PAPER_BACKGROUND_PRESETS } from '../editor/paperBackgrounds';
+import { VECTOR_SHAPE_DEFAULTS } from '../editor/vectorShapes';
+import { EXPLAINER_TEMPLATES } from './explainerTemplates';
+import type { Tpl } from '../types';
 import { setLibraryDrag } from './drag';
 import { FxThumb } from './FxThumb';
 import { asPluginZoom, pluginResourceItems, usePluginPacks } from './pluginResources';
@@ -18,12 +22,14 @@ import { ResourceBrowser, type ResourceItem } from './ResourceBrowser';
 import { TransitionThumb } from './TransitionThumb';
 import { ZoomThumb } from './ZoomThumb';
 
-export type EffectsSubTab = 'fx' | 'lut' | 'transition' | 'zoom' | 'shapes';
+export type EffectsSubTab = 'fx' | 'lut' | 'transition' | 'zoom' | 'shapes' | 'explainer';
 
 export interface EffectsBrowserProps {
   selectedItem?: TimelineItem | null;
   defaultSubTab?: EffectsSubTab;
-  onAddSolid?: () => void;
+  templates?: Tpl[];
+  onAddTemplate?: (tpl: Tpl) => void;
+  onAddSolid?: (preset?: { name?: string; color?: string; props?: Record<string, unknown> }) => void;
   onAddShape?: (shape: 'rectangle' | 'ellipse') => void;
   onAddMosaic?: () => void;
   onApplyFx?: (assetId: string) => void;
@@ -41,6 +47,7 @@ interface EffectCardSpec {
 
 const SUB_TABS: ReadonlyArray<{ id: EffectsSubTab; label: string }> = [
   { id: 'shapes', label: '形状与马赛克' },
+  { id: 'explainer', label: '科普组件' },
   { id: 'fx', label: '画面特效' },
   { id: 'lut', label: '滤镜 LUT' },
   { id: 'transition', label: '转场' },
@@ -50,6 +57,8 @@ const SUB_TABS: ReadonlyArray<{ id: EffectsSubTab; label: string }> = [
 export function EffectsBrowser({
   selectedItem = null,
   defaultSubTab = 'shapes',
+  templates,
+  onAddTemplate,
   onAddSolid,
   onAddShape,
   onAddMosaic,
@@ -121,22 +130,91 @@ export function EffectsBrowser({
         ),
       },
     ] : []),
-    ...(onAddSolid ? [{
-      id: 'solid-bg',
-      label: t('纯色背景'),
-      hint: t('可调纯色底层/遮罩'),
-      onClick: onAddSolid,
-      preview: (
-        <div style={{
-          width: 52,
-          height: 34,
-          borderRadius: 6,
-          border: `1px solid ${theme.borderLight}`,
-          background: `linear-gradient(135deg, ${theme.panelAlt}, ${theme.hover})`,
-        }} />
-      ),
-    }] : []),
+    ...(onAddSolid ? [
+      {
+        id: 'vector-line',
+        label: t('精细直线'),
+        hint: t('1–20px 矢量分割线/装饰线'),
+        onClick: () => onAddSolid({ name: '精细直线', color: '#d4af37', props: { shapeKind: 'line', ...VECTOR_SHAPE_DEFAULTS.line } }),
+        preview: (
+          <svg width={52} height={34} viewBox="0 0 52 34">
+            <line x1={6} y1={17} x2={46} y2={17} stroke={theme.accent} strokeWidth={2.5} strokeLinecap="round" />
+          </svg>
+        ),
+      },
+      {
+        id: 'vector-rect',
+        label: t('矩形边框'),
+        hint: t('轻量空心框与圆角线框'),
+        onClick: () => onAddSolid({ name: '矩形边框', color: '#d4af37', props: { shapeKind: 'rect', ...VECTOR_SHAPE_DEFAULTS.rect } }),
+        preview: (
+          <svg width={52} height={34} viewBox="0 0 52 34">
+            <rect x={8} y={6} width={36} height={22} rx={4} fill="none" stroke={theme.accent} strokeWidth={2} />
+          </svg>
+        ),
+      },
+      {
+        id: 'vector-arrow',
+        label: t('指向箭头'),
+        hint: t('单向/双向矢量指示箭头'),
+        onClick: () => onAddSolid({ name: '指向箭头', color: '#d4af37', props: { shapeKind: 'arrow', ...VECTOR_SHAPE_DEFAULTS.arrow } }),
+        preview: (
+          <svg width={52} height={34} viewBox="0 0 52 34">
+            <line x1={8} y1={17} x2={38} y2={17} stroke={theme.accent} strokeWidth={2.5} strokeLinecap="round" />
+            <polygon points="36,11 46,17 36,23" fill={theme.accent} />
+          </svg>
+        ),
+      },
+      {
+        id: 'solid-bg',
+        label: t('纯色背景'),
+        hint: t('可调纯色底层/遮罩'),
+        onClick: () => onAddSolid(),
+        preview: (
+          <div style={{
+            width: 52,
+            height: 34,
+            borderRadius: 6,
+            border: `1px solid ${theme.borderLight}`,
+            background: `linear-gradient(135deg, ${theme.panelAlt}, ${theme.hover})`,
+          }} />
+        ),
+      },
+    ] : []),
   ];
+
+  const explainerList = useMemo(() => {
+    const fromProps = (templates ?? []).filter((tpl) => tpl.category === 'explainer-kits');
+    return fromProps.length ? fromProps : EXPLAINER_TEMPLATES;
+  }, [templates]);
+
+  const paperCards: EffectCardSpec[] = onAddSolid
+    ? PAPER_BACKGROUND_PRESETS.map((preset) => ({
+        id: `paper-${preset.id}`,
+        label: t(preset.label),
+        hint: t('内置纸张颗粒与中心微亮渐变的背景板'),
+        onClick: () => onAddSolid({
+          name: preset.label,
+          color: preset.colors[1],
+          props: {
+            paperPreset: preset.id,
+            color: preset.colors[1],
+            paperGrain: preset.defaultGrain,
+            paperVignette: preset.defaultVignette,
+            paperAccentLine: preset.defaultAccentLine,
+          },
+        }),
+        preview: (
+          <div style={{
+            width: 54,
+            height: 34,
+            borderRadius: 6,
+            border: `1px solid ${theme.borderLight}`,
+            background: `radial-gradient(circle at 50% 45%, ${preset.colors[0]}, ${preset.colors[2]})`,
+          }} />
+        ),
+      }))
+    : [];
 
   const blurCards: EffectCardSpec[] = [
     ...(onAddMosaic ? [{
@@ -201,7 +279,6 @@ export function EffectsBrowser({
         className="cc-resource-tertiary-tabs"
         role="tablist"
         aria-label={t('画面包装与特效分类')}
-        style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6, paddingBottom: 2 }}
       >
         {SUB_TABS.map((tab) => (
           <button
@@ -320,6 +397,70 @@ export function EffectsBrowser({
               ))}
             </div>
           </div>
+
+          {paperCards.length > 0 && (
+            <div className="cc-effects-section">
+              <div className="cc-effects-section-title">{t('纸纹背景板')}</div>
+              <div className="cc-effects-grid">
+                {paperCards.map((card) => (
+                  <button
+                    key={card.id}
+                    type="button"
+                    className="cc-effect-card"
+                    onClick={card.onClick}
+                    title={card.hint}
+                  >
+                    <div className="cc-effect-card-thumb">{card.preview}</div>
+                    <span className="cc-effect-card-label">{card.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {subTab === 'explainer' && (
+        <>
+          <div className="cc-effects-section">
+            <div className="cc-effects-section-title">{t('科普动效组件（点一下上轨，右侧填字即可）')}</div>
+            <div className="cc-effects-grid cc-effects-grid--wide">
+              {explainerList.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  className="cc-effect-card"
+                  onClick={() => onAddTemplate?.(tpl)}
+                  title={tpl.description ?? tpl.name}
+                >
+                  <div className="cc-effect-card-thumb">
+                    {tpl.thumb ? <img src={tpl.thumb} alt="" draggable={false} style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
+                  </div>
+                  <span className="cc-effect-card-label">{t(tpl.name)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {paperCards.length > 0 && (
+            <div className="cc-effects-section">
+              <div className="cc-effects-section-title">{t('配套纸纹背景板')}</div>
+              <div className="cc-effects-grid">
+                {paperCards.map((card) => (
+                  <button
+                    key={card.id}
+                    type="button"
+                    className="cc-effect-card"
+                    onClick={card.onClick}
+                    title={card.hint}
+                  >
+                    <div className="cc-effect-card-thumb">{card.preview}</div>
+                    <span className="cc-effect-card-label">{card.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

@@ -1,3 +1,13 @@
+import { parseBuiltinTransitionId } from '../editor/transitionTypes';
+
+export const SERVER_DIRECT_TEMPLATE_IDS: ReadonlySet<string> = new Set([
+  'zuoren-explainer-scan-focus',
+  'zuoren-explainer-flow-steps',
+  'zuoren-explainer-data-counter',
+  'zuoren-explainer-quote-card',
+  'zuoren-explainer-strike-refute',
+]);
+
 const GLOBAL_READ_TOOL_NAMES: Record<string, true> = {
   load_skill: true,
   ToolSearch: true,
@@ -30,6 +40,14 @@ const SERVER_DIRECT_READ_TOOL_NAMES: Record<string, true> = {
   read_project: true,
   read_transcript: true,
   find_transcript: true,
+  browse_local_media: true,
+  request_asset_download: true,
+  view_timeline_frames: true,
+  view_asset_frames: true,
+  search_fonts: true,
+  browse_library: true,
+  list_templates: true,
+  search_templates: true,
 };
 
 const SERVER_DIRECT_EDIT_TOOL_NAMES: Record<string, true> = {
@@ -48,6 +66,13 @@ const SERVER_DIRECT_EDIT_TOOL_NAMES: Record<string, true> = {
   update_watermark: true,
   manage_markers: true,
   import_timeline: true,
+  import_asset: true,
+  import_assets: true,
+  import_folder: true,
+  import_media: true,
+  finalize_uploaded_asset: true,
+  manage_media_pool: true,
+  edit_item: true,
 };
 
 const SERVER_DIRECT_BROWSER_ACTIONS: Record<string, true> = {
@@ -90,12 +115,51 @@ export function isExternalServerDirectTool(name: string): boolean {
     || SERVER_DIRECT_EDIT_TOOL_NAMES[name] === true;
 }
 
+function isRecordObject(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isOfflineEditItemCall(args: Readonly<Record<string, unknown>>): boolean {
+  if (Array.isArray(args.adds)) {
+    for (const entry of args.adds) {
+      if (!isRecordObject(entry)) continue;
+      const type = String(entry.type ?? '');
+      const assetId = String(entry.assetId ?? '');
+      if (type === 'effect') return false;
+      if (type === 'transition' && !parseBuiltinTransitionId(assetId)) return false;
+      if (type === 'motion-graphic' && assetId.startsWith('library:motion-graphic:')) {
+        const tplId = assetId.slice('library:motion-graphic:'.length);
+        if (!SERVER_DIRECT_TEMPLATE_IDS.has(tplId)) return false;
+      }
+      if (type === 'audio' && assetId.startsWith('library:sound:')) return false;
+    }
+  }
+  if (Array.isArray(args.updates)) {
+    for (const entry of args.updates) {
+      if (!isRecordObject(entry)) continue;
+      const type = String(entry.type ?? '');
+      if (type === 'effect') return false;
+      if (type === 'transition' && entry.assetId !== undefined && !parseBuiltinTransitionId(String(entry.assetId))) return false;
+      if (entry.effectId !== undefined || entry.propertyOverrides !== undefined) return false;
+    }
+  }
+  if (Array.isArray(args.deletes)) {
+    for (const entry of args.deletes) {
+      if (!isRecordObject(entry)) continue;
+      const type = String(entry.type ?? '');
+      if (!type || type === 'effect') return false;
+    }
+  }
+  return true;
+}
+
 /** Some otherwise data-only tools multiplex browser-backed actions. */
 export function isExternalServerDirectCall(
   name: string,
   args: Readonly<Record<string, unknown>>,
 ): boolean {
   if (!isExternalServerDirectTool(name)) return false;
+  if (name === 'edit_item') return isOfflineEditItemCall(args);
   if (name !== 'edit_captions') return true;
   const action = typeof args.action === 'string' ? args.action.trim() : '';
   if (SERVER_DIRECT_BROWSER_ACTIONS[action] === true || action === 'bilingual') return false;

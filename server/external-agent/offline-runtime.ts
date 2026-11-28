@@ -12,6 +12,8 @@ import {
   type ExternalEditSessionTerminalStatus,
 } from '../../src/agent/external-edit-session.ts';
 import { assertOfflineToolAllowed } from './offline-tool-authorization.ts';
+import { isExternalReadTool } from '../../src/agent/external-tool-policy.ts';
+import { EXPLAINER_TEMPLATES } from '../../src/library/explainerTemplates.js';
 import type { AgentContext } from '../../src/agent/context.ts';
 import { ExternalEditorCallError, isProjectConnected } from './broker.ts';
 import { executeOfflineTool } from './offline-executor.ts';
@@ -118,12 +120,24 @@ export class OfflineExternalEditRuntime {
     validateOfflineInvocation(name, rawArgs);
     const terminal = name === 'get_edit_session' ? this.sessions.get(requiredSessionId(rawArgs)) : undefined;
     if (terminal && !ACTIVE_SESSION_STATUSES[terminal.session.status]) return this.info(terminal.session);
-    const releaseAfter = name === 'review_edit_session' || name === 'discard_edit_session';
+    const hasSessionId = typeof rawArgs.editSessionId === 'string' && rawArgs.editSessionId.trim().length > 0;
+    const isReadOnlyWithoutSession = !hasSessionId && isExternalReadTool(name);
+    const releaseAfter = name === 'review_edit_session' || name === 'discard_edit_session' || isReadOnlyWithoutSession;
     return this.runExclusive(async () => {
       try {
         await this.validateAvailabilityLocked();
         const args = { ...rawArgs };
         if (name === 'begin_edit_session') return await this.begin(args.clientName, args.approvalMode);
+        if (isReadOnlyWithoutSession) {
+          assertOfflineToolAllowed(name, args, this.editorUrl);
+          const readSession = createExternalEditSession(this.baseDoc, 'offline-read', 'auto');
+          return await this.executeTool(
+            name,
+            args,
+            externalDraftContext(readSession, this.context(readSession)),
+            { origin: this.origin() },
+          );
+        }
         const state = this.requireSession(requiredSessionId(args));
         if (name === 'get_edit_session') return this.info(state.session);
         if (name === 'discard_edit_session') return await this.discard(state);
@@ -171,6 +185,16 @@ export class OfflineExternalEditRuntime {
     }
     const renewed = await this.persistence.renewOwnership(this.ownership, this.expectedRevision);
     if (renewed.status !== 'renewed') {
+      const hasActive = [...this.sessions.values()]
+        .some(({ session }) => ACTIVE_SESSION_STATUSES[session.status] === true);
+      if (!hasActive) {
+        const reclaimed = await this.persistence.claimProject(this.projectId, this.ownership.ownerId);
+        if (reclaimed.status === 'claimed' && reclaimed.revision === this.expectedRevision) {
+          this.ownership = reclaimed.claim;
+          this.baseDoc = reclaimed.doc;
+          return;
+        }
+      }
       this.failActiveSessions('stale');
       throw new ExternalEditorCallError(
         'stale',
@@ -244,7 +268,12 @@ export class OfflineExternalEditRuntime {
     try {
       await run.started(invocation);
       started = true;
-      result = await this.executeTool(name, args, externalDraftContext(candidate, this.context(candidate)));
+      result = await this.executeTool(
+        name,
+        args,
+        externalDraftContext(candidate, this.context(candidate)),
+        { origin: this.origin() },
+      );
       await this.validateAvailabilityLocked();
     } catch (error) {
       await run.captureToolOutcome(
@@ -433,6 +462,14 @@ export class OfflineExternalEditRuntime {
     }
   }
 
+  private origin(): string {
+    try {
+      return new URL(this.editorUrl).origin;
+    } catch {
+      return '';
+    }
+  }
+
   private context(session: ExternalEditSession): AgentContext {
     if (!session.draft) throw new Error(`Edit session ${session.id} is no longer writable.`);
     return {
@@ -440,7 +477,7 @@ export class OfflineExternalEditRuntime {
       getState: session.draft.getState,
       getDoc: session.draft.getDoc,
       getCreativeMode: () => null,
-      templates: [],
+      templates: EXPLAINER_TEMPLATES,
       audio: [],
       getProjectId: () => this.projectId,
       getApprovalMode: () => 'auto',

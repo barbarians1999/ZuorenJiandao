@@ -1,11 +1,16 @@
-import { activeTimeline, timelineTrackIds, trackKind, type ProjectDoc, type Timeline } from './types';
+import { activeTimeline, isEffectTrack, isTextTrack, timelineTrackIds, trackKind, type ProjectDoc, type Timeline } from './types';
 import { sequenceGraphError } from './sequenceGraph';
 import { resolveCaptionWords } from '../captions/resolve';
+import { hasOperationalTranscript } from '../transcript/types';
 import { mainTrackId } from './magneticTimeline';
 
-/** Move selected clips into an editable nested timeline in one history step. */
-export function planSubdraft(doc: ProjectDoc, ids: readonly string[], uid: (prefix: string) => string):
-  { ok: true; doc: ProjectDoc; timelineId: string; itemId: string } | { ok: false; error: string } {
+/** Move selected clips into an editable nested timeline (compound clip) in one history step. */
+export function planSubdraft(
+  doc: ProjectDoc,
+  ids: readonly string[],
+  uid: (prefix: string) => string,
+  customName?: string,
+): { ok: true; doc: ProjectDoc; timelineId: string; itemId: string } | { ok: false; error: string } {
   const parent = activeTimeline(doc);
   const chosen = new Set(ids);
   const items = parent.items.filter((item) => chosen.has(item.id));
@@ -27,7 +32,8 @@ export function planSubdraft(doc: ProjectDoc, ids: readonly string[], uid: (pref
     return { ok: false, error: '含跨轨配乐压低规则时，请选择全部片段创建子草稿。' };
   }
   const captionData = [parent.captions, ...Object.values(parent.tracks ?? {}).map((track) => track?.captions)].filter(Boolean);
-  if (!all && captionData.some((caption) => caption!.sourceMode === 'timeline'
+  const hasSelectedTranscript = items.some((item) => hasOperationalTranscript(item));
+  if (!all && captionData.some((caption) => (caption!.sourceMode === 'timeline' && hasSelectedTranscript)
     || (caption!.sources ?? []).some((id) => chosen.has(id)) || chosen.has(caption!.sourceItemId ?? '')
     || caption!.sourceEntries?.some((entry) => chosen.has(entry.itemId)))) {
     return { ok: false, error: '所选片段关联已有字幕，请一并选择全部片段，或在子草稿整理完后生成字幕。' };
@@ -67,8 +73,22 @@ export function planSubdraft(doc: ProjectDoc, ids: readonly string[], uid: (pref
   }
   const timelineId = uid('tl');
   const itemId = uid('item');
-  const trackId = replacesMain ? main! : uid('track');
-  const name = `子草稿 ${doc.timelines.length}`;
+  const bottomVisualTrack = !replacesMain && bottom >= 0 ? order[bottom] : undefined;
+  const canReuseBottomTrack = !!bottomVisualTrack
+    && bottomVisualTrack !== main
+    && trackKind(parent, bottomVisualTrack) === 'video'
+    && !isTextTrack(parent, bottomVisualTrack, main)
+    && !isEffectTrack(parent, bottomVisualTrack, main)
+    && !parent.tracks?.[bottomVisualTrack]?.locked
+    && !parent.tracks?.[bottomVisualTrack]?.hidden
+    && !parent.tracks?.[bottomVisualTrack]?.muted
+    && !parent.items.some((item) => !chosen.has(item.id)
+      && item.track === bottomVisualTrack
+      && item.startFrame < end
+      && item.startFrame + item.durationInFrames > start);
+  const reusedTrack = !replacesMain && canReuseBottomTrack;
+  const trackId = replacesMain ? main! : reusedTrack ? bottomVisualTrack! : uid('track');
+  const name = customName?.trim() || `复合片段 ${doc.timelines.length}`;
   const child: Timeline = {
     ...parent, id: timelineId, name, hidden: false,
     order: Math.max(...doc.timelines.map((timeline) => timeline.order)) + 1,
@@ -87,23 +107,46 @@ export function planSubdraft(doc: ProjectDoc, ids: readonly string[], uid: (pref
   // An editable composite keeps its authored multitrack layout. It must not
   // inherit magnet ON and unexpectedly close intentional internal gaps.
   child.interaction = { ...parent.interaction, mainTrackId: mainTrackId(child) ?? undefined, magnet: false };
+  const remainingParentItems = [...parent.items.filter((item) => !chosen.has(item.id)).map((item) =>
+    item.mainClipId && chosen.has(item.mainClipId) ? { ...item, mainClipId: itemId } : item), {
+    id: itemId, kind: 'sequence' as const, timelineId, name, track: trackId,
+    startFrame: start, durationInFrames: end - start, srcInFrame: 0,
+    width: parent.width, height: parent.height,
+    ...(!replacesMain && externalParents.size === 1 ? { mainClipId: [...externalParents][0] } : {}),
+  }];
+  const baseOrder = replacesMain || reusedTrack
+    ? order
+    : [...order.slice(0, Math.max(0, top)), trackId, ...order.slice(Math.max(0, top))];
+  const usedTrackSet = new Set(remainingParentItems.map((item) => item.track));
+  const emptyVideoTracks = new Set(
+    baseOrder.filter((id) =>
+      id !== trackId
+      && id !== main
+      && tracks.has(id)
+      && trackKind(parent, id) === 'video'
+      && !parent.tracks?.[id]?.locked
+      && !usedTrackSet.has(id)),
+  );
+  const prunedOrder = baseOrder.filter((id) => !emptyVideoTracks.has(id));
+  const finalOrder = prunedOrder.some((id) => trackKind(parent, id) === 'video') ? prunedOrder : baseOrder;
+  const prunedTracks: NonNullable<Timeline['tracks']> = {};
+  for (const [id, flags] of Object.entries(parent.tracks ?? {})) {
+    if (emptyVideoTracks.has(id) && finalOrder !== baseOrder) continue;
+    prunedTracks[id] = all ? { ...flags, captions: null, role: undefined, audioRouting: undefined } : flags;
+  }
+  if (!reusedTrack) {
+    prunedTracks[trackId] = replacesMain
+      ? {
+          ...parent.tracks?.[trackId],
+          ...(all ? { hidden: false, muted: false, captions: null, role: undefined, audioRouting: undefined } : {}),
+        }
+      : { kind: 'video', name };
+  }
   const nextParent: Timeline = {
     ...parent, selectedId: null, selectedIds: [],
-    items: [...parent.items.filter((item) => !chosen.has(item.id)).map((item) =>
-      item.mainClipId && chosen.has(item.mainClipId) ? { ...item, mainClipId: itemId } : item), {
-      id: itemId, kind: 'sequence', timelineId, name, track: trackId,
-      startFrame: start, durationInFrames: end - start, srcInFrame: 0,
-      width: parent.width, height: parent.height,
-      ...(!replacesMain && externalParents.size === 1 ? { mainClipId: [...externalParents][0] } : {}),
-    }],
-    trackOrder: replacesMain ? order : [...order.slice(0, Math.max(0, top)), trackId, ...order.slice(Math.max(0, top))],
-    tracks: {
-      ...Object.fromEntries(Object.entries(parent.tracks ?? {}).map(([id, flags]) => [id,
-        all ? { ...flags, captions: null, role: undefined, audioRouting: undefined } : flags])),
-      [trackId]: replacesMain ? { ...parent.tracks?.[trackId],
-        ...(all ? { hidden: false, muted: false, captions: null, role: undefined, audioRouting: undefined } : {}),
-      } : { kind: 'video', name },
-    },
+    items: remainingParentItems,
+    trackOrder: finalOrder,
+    tracks: prunedTracks,
     captions: all ? null : parent.captions,
     transitions: parent.transitions?.filter((transition) => !chosen.has(transition.incomingItemId) && !chosen.has(transition.outgoingItemId)),
     linkGroups: parent.linkGroups?.filter((group) => !group.itemIds.some((id) => chosen.has(id))),

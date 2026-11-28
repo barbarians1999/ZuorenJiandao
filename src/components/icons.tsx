@@ -14,7 +14,7 @@ export type IconName =
   | 'download' | 'film' | 'clipboard' | 'plug' | 'github' | 'mail' | 'database'
   | 'music' | 'video' | 'image' | 'swap' | 'star' | 'pencil' | 'x' | 'diamond'
   | 'search' | 'upload' | 'folder' | 'folderPlus' | 'grid' | 'list' | 'sort' | 'filter' | 'more' | 'bug'
-  | 'palette' | 'wand' | 'tracking' | 'qrCode' | 'info' | 'sun' | 'moon' | 'refresh' | 'gripVertical';
+  | 'palette' | 'wand' | 'tracking' | 'qrCode' | 'info' | 'sun' | 'moon' | 'refresh' | 'gripVertical' | 'audioMeter';
 
 // stroke path(s) per icon; a few are fill-based (play/pause/cursor/bookmark)
 const FILL = new Set<IconName>(['play', 'pause', 'fastForward', 'fastRewind', 'cursor', 'bookmark']);
@@ -121,6 +121,7 @@ const P: Record<IconName, string> = {
   palette: 'M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z M7.5 12.5m-.6 0a.6 .6 0 1 0 1.2 0a.6 .6 0 1 0-1.2 0 M8.5 7.5m-.6 0a.6 .6 0 1 0 1.2 0a.6 .6 0 1 0-1.2 0 M13.5 6.5m-.6 0a.6 .6 0 1 0 1.2 0a.6 .6 0 1 0-1.2 0 M17.5 10.5m-.6 0a.6 .6 0 1 0 1.2 0a.6 .6 0 1 0-1.2 0',
   sun: 'M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0 M3 12h1 M12 3v1 M20 12h1 M12 20v1 M5.6 5.6l.7.7 M18.4 5.6l-.7.7 M18.4 18.4l-.7-.7 M5.6 18.4l.7-.7',
   moon: 'M12 3a7.5 7.5 0 0 0 9 9 9 9 0 1 1-9-9z',
+  audioMeter: 'M6 19V11 M12 19V5 M18 19V8',
 };
 
 interface IconProps {

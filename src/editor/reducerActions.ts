@@ -40,6 +40,7 @@ export type Action =
   | { type: 'slip'; id: string; deltaInFrames: number }
   | { type: 'setVolume'; id: string; volume: number }
   | { type: 'togglePicture'; ids: string[] }
+  | { type: 'setItemDisabled'; id: string; disabled: boolean }
   | { type: 'setFade'; id: string; fadeInFrames?: number; fadeOutFrames?: number }
   | { type: 'setTransform'; id: string; patch: ClipTransform }
   | { type: 'setFilters'; id: string; patch: ClipFilters }

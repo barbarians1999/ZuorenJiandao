@@ -17,6 +17,7 @@ import { t } from '../../i18n/locale';
 import { isIsolateAudioFxId, strengthFromAudioFxId } from '../../audio/isolateVoice';
 import { showAppToast } from '../../ui/appToast';
 import { placeSound, soundAssetForId } from '../../audio/soundPlacement';
+import { VECTOR_SHAPE_DEFAULTS } from '../../editor/vectorShapes';
 
 interface DropCtx {
   state: TimelineState;
@@ -159,6 +160,18 @@ export function applyLibraryToTrack(
     }
     if (payload.id === 'shape-ellipse') {
       commands.addShapeItem('ellipse', { track: targetTrack, startFrame });
+      return true;
+    }
+    if (payload.id === 'vector-line' || payload.id === 'vector-rect' || payload.id === 'vector-arrow') {
+      const shapeKind = payload.id === 'vector-line' ? 'line' : payload.id === 'vector-rect' ? 'rect' : 'arrow';
+      const label = shapeKind === 'line' ? '精细直线' : shapeKind === 'rect' ? '矩形边框' : '指向箭头';
+      commands.addSolidItem({
+        track: targetTrack,
+        startFrame,
+        name: label,
+        color: '#d4af37',
+        props: { shapeKind, ...VECTOR_SHAPE_DEFAULTS[shapeKind] },
+      });
       return true;
     }
     if (payload.id === 'solid-bg') {

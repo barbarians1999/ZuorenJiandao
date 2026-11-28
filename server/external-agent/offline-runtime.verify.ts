@@ -16,17 +16,21 @@ import { verifyOfflineCommitAndProjectionScenarios } from './offline-runtime-saf
 
 const toolNames = new Set(offlineExternalToolSchemas().map((schema) => schema.name));
 
-for (const allowed of ['begin_edit_session', 'read_timeline', 'read_project', 'read_transcript', 'read_captions', 'read_agent_artifact', 'set_aspect_ratio', 'edit_captions', 'update_watermark', 'import_timeline']) {
+for (const allowed of [
+  'begin_edit_session', 'read_timeline', 'read_project', 'read_transcript', 'read_captions',
+  'read_agent_artifact', 'set_aspect_ratio', 'edit_captions', 'update_watermark', 'import_timeline',
+  'browse_local_media', 'import_asset', 'import_assets', 'import_folder',
+  'import_media', 'finalize_uploaded_asset', 'request_asset_download',
+  'manage_media_pool', 'edit_item',
+  'view_timeline_frames', 'view_asset_frames', 'search_fonts', 'browse_library', 'list_templates', 'search_templates',
+]) {
   assert.equal(toolNames.has(allowed), true, `${allowed} is server-direct`);
 }
 for (const excluded of [
   'list_edit_sessions',
   'recover_edit_session',
-  'edit_item',
   'manage_effects',
-  'view_timeline_frames',
   'submit_image',
-  'import_media',
   'download_media',
   'manage_versions',
   'submit_render_job',
@@ -69,6 +73,21 @@ for (const action of ['preset_apply', 'preset_delete', 'preset_list', 'preset_re
       && error.message.includes('browser-backed'),
   );
 }
+for (const browserEdit of [
+  { adds: [{ type: 'effect', targetItemId: 'clip-1', assetId: 'fx:blur' }] },
+  { adds: [{ type: 'transition', incomingItemId: 'clip-2', assetId: 'tr:dissolve' }] },
+  { adds: [{ type: 'motion-graphic', assetId: 'library:motion-graphic:lower-third' }] },
+  { adds: [{ type: 'audio', assetId: 'library:sound:whoosh' }] },
+  { updates: [{ type: 'effect', targetItemId: 'clip-1', effectId: 'fx-1' }] },
+  { deletes: [{ type: 'effect', id: 'fx-1', targetItemId: 'clip-1' }] },
+]) {
+  await assert.rejects(
+    () => runtime.execute('edit_item', { editSessionId: sessionId, ...browserEdit }),
+    (error) => error instanceof ExternalEditorCallError
+      && error.outcome === 'rejected'
+      && error.message.includes('browser-only'),
+  );
+}
 const untouchedSession = await runtime.execute('get_edit_session', { editSessionId: sessionId });
 assert(untouchedSession && typeof untouchedSession === 'object' && 'operationCount' in untouchedSession);
 assert.equal(untouchedSession.operationCount, 0);
@@ -109,6 +128,17 @@ assert.equal(persistence.current.timelines[0].height, 1920);
 assert.equal(persistence.versions.length, 1);
 assert.deepEqual(persistence.versions[0], projectDoc());
 assert.equal(persistence.checkpoint, null, 'applied sessions remove their draft checkpoint');
+
+// Sequential second round after review_edit_session must re-claim seamlessly without stale error
+const readBetween = await runtime.execute('read_timeline', {});
+assert(readBetween && typeof readBetween === 'object');
+const begunRound2 = await runtime.execute('begin_edit_session', { approvalMode: 'auto', clientName: 'External editor round 2' });
+const sessionId2 = editSessionId(begunRound2);
+await runtime.execute('set_aspect_ratio', { editSessionId: sessionId2, ratio: '16:9', fit: 'contain' });
+const appliedRound2 = await runtime.execute('review_edit_session', { editSessionId: sessionId2, summary: 'Restore landscape' }) as { status?: string };
+assert.equal(appliedRound2.status, 'applied');
+assert.equal(persistence.current.timelines[0].width, 1920);
+assert.equal(persistence.current.timelines[0].height, 1080);
 
 const importDoc = projectDoc();
 importDoc.assets.push({

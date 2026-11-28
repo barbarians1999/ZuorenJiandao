@@ -4,13 +4,16 @@ import path from 'node:path';
 import { TLSSocket } from 'node:tls';
 import type { Plugin } from 'vite';
 import {
+  checkMultiWindowConflict,
   editorCallBinding,
+  editorEvictionInfo,
   touchEditor,
   editorRegistrationMatches,
   nextEditorCall,
   nextEditorCancellation,
   registerEditor,
   settleEditorCall,
+  settleEditorCallWithRevision,
   unregisterEditor,
 } from '../external-agent/broker.ts';
 import { handleMcpRequest, mcpTools } from '../external-agent/mcp.ts';
@@ -47,9 +50,12 @@ const bridgeOperations: BridgeOperations = {
   nextEditorCall,
   nextEditorCancellation,
   settleEditorCall,
+  settleEditorCallWithRevision,
   editorCallBinding,
   touchEditor,
   mcpTools,
+  checkMultiWindowConflict,
+  editorEvictionInfo,
 };
 
 
