@@ -22,7 +22,8 @@ const COLOR_KEYS = ['color', 'textColor', 'fillColor', 'titleColor', 'inkColor']
 const FONT_SIZE_KEYS = ['fontSize', 'textSize', 'titleSize'] as const;
 const TEXT_KEYS = [
   'text', 'title', 'headline', 'heading', 'labelText', 'claimText', 'quoteLines',
-  'stepsText', 'metricName', 'caption', 'quoteText', 'nameText', 'titleText',
+  'stepsText', 'itemsText', 'seriesText', 'slicesText', 'chartTitle', 'metricName',
+  'caption', 'quoteText', 'nameText', 'titleText',
   'line1Text', 'keyword', 'subtitle', 'content', 'label', 'subText',
 ] as const;
 const WEIGHT_KEYS = ['fontWeight', 'weight'] as const;

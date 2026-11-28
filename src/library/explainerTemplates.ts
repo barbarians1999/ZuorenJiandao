@@ -1,4 +1,5 @@
 import type { Tpl } from '../types';
+import { EXPLAINER_CHART_TEMPLATES } from './explainerChartTemplates';
 
 function makeThumb(svgBody: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
@@ -621,14 +622,23 @@ const DATA_COUNTER_CODE = `const DataCounterCard = ({item}) => {
 
   const rollStartFrame = p.rollStartFrame !== undefined && p.rollStartFrame !== '' && Number.isFinite(Number(p.rollStartFrame)) && Number(p.rollStartFrame) >= 0
     ? Math.max(0, Math.round(Number(p.rollStartFrame)))
-    : Math.max(0, Math.round((Number(p.rollStartSec ?? 0.3)) * fps));
-  const rollEndFrame = p.rollEndFrame !== undefined && p.rollEndFrame !== '' && Number.isFinite(Number(p.rollEndFrame)) && Number(p.rollEndFrame) > 0
-  const rollP = cubicOut((f - rollStartFrame) / (rollEndFrame - rollStartFrame));
-  const currentValue = startValue + (endValue - startValue) * rollP;
+    : Math.max(0, Math.round(Math.max(0, Number(p.rollStartSec ?? 0.3)) * fps));
+  const rawRollEndFrame = p.rollEndFrame !== undefined && p.rollEndFrame !== '' && Number.isFinite(Number(p.rollEndFrame)) && Number(p.rollEndFrame) > 0
+    ? Math.round(Number(p.rollEndFrame))
+    : Math.round(Math.max(0, Number(p.rollEndSec ?? 1.8)) * fps);
+  const rollEndFrame = Math.max(rollStartFrame + 1, rawRollEndFrame);
+  const rollP = f <= rollStartFrame
+    ? 0
+    : f >= rollEndFrame
+      ? 1
+      : cubicOut((f - rollStartFrame) / (rollEndFrame - rollStartFrame));
+  const currentValue = rollP >= 1 ? endValue : rollP <= 0 ? startValue : startValue + (endValue - startValue) * rollP;
 
   const enterP = cubicOut(f / 10);
   const exitP = f > dur - 10 ? clamp01((dur - f) / 10) : 1;
-  const noteP = cubicOut((f - (rollStartFrame + (rollEndFrame - rollStartFrame) * 0.55)) / 10);
+  const noteP = f >= rollEndFrame
+    ? 1
+    : cubicOut((f - (rollStartFrame + (rollEndFrame - rollStartFrame) * 0.55)) / 10);
 
   const cardBg = String(p.cardBgColor || '#f4ecda');
   const bgAlpha = clamp01(Number(p.cardBgOpacity ?? 95) / 100);
@@ -894,8 +904,16 @@ const STRIKE_REFUTE_CODE = `const StrikeRefuteCard = ({item}) => {
     ? Math.max(0, Math.round(Number(p.strikeStartFrame)))
     : Math.max(0, Math.round((Number(p.strikeStartSec ?? 0.6)) * fps));
   const strikeFrames = p.strikeDurationFrames !== undefined && p.strikeDurationFrames !== '' && Number.isFinite(Number(p.strikeDurationFrames)) && Number(p.strikeDurationFrames) > 0
-  const strikeP = cubicOut((f - startFrame) / strikeFrames);
-  const verdictP = cubicOut((f - (startFrame + Math.round(strikeFrames * 0.65))) / 8);
+    ? Math.max(1, Math.round(Number(p.strikeDurationFrames)))
+    : Math.max(1, Math.round(Math.max(0.05, Number(p.strikeDurationSec ?? 0.35)) * fps));
+  const strikeP = f <= startFrame
+    ? 0
+    : f >= startFrame + strikeFrames
+      ? 1
+      : cubicOut((f - startFrame) / strikeFrames);
+  const verdictP = f >= startFrame + strikeFrames
+    ? 1
+    : cubicOut((f - (startFrame + Math.round(strikeFrames * 0.65))) / 8);
 
   const enterP = cubicOut(f / 9);
   const exitP = f > dur - 10 ? clamp01((dur - f) / 10) : 1;
@@ -1273,4 +1291,5 @@ export const EXPLAINER_TEMPLATES: Tpl[] = [
     ),
     code: STRIKE_REFUTE_CODE,
   },
+  ...EXPLAINER_CHART_TEMPLATES,
 ];

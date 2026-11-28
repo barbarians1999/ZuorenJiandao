@@ -739,6 +739,22 @@ const ADVANCED_MG_PROP_KEYS = new Set([
   'strikeLines',
   'strikeStartFrame',
   'strikeDurationFrames',
+  'highlightIndex',
+  'itemFrames',
+  'maxValue',
+  'showValueRoll',
+  'drawStartFrame',
+  'drawEndFrame',
+  'highlightFrames',
+  'yMin',
+  'yMax',
+  'showNodeValues',
+  'sweepStartFrame',
+  'sweepEndFrame',
+  'compareStartFrame',
+  'compareEndFrame',
+  'dualAnimStyle',
+  'fontFamily',
 ]);
 
 function isAdvancedMotionGraphicProp(field: PropSpec): boolean {

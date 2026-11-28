@@ -6,6 +6,17 @@ All notable changes to ZuorenJiandao are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use [Semantic Versioning](https://semver.org/).  
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.8] - 2026-11-28
+
+### 新增能力：科普动效套件 3 款参数化数据统计图表
+- **条形 / 柱状统计图（`zuoren-explainer-bar-chart`，`src/library/explainerChartTemplates.ts`）**：支持横向条形图与竖向柱状图一键切换；填入 2～6 组“名称 | 数值 | 单位（可选自定义显示文案）”按真实数值比例自动计算柱长/柱高，支持行首 `*` 或序号高亮强调、按口播秒数/帧号逐条平滑伸长、数值同步滚动及底部注释。
+- **折线统计图（`zuoren-explainer-line-chart`，`src/library/explainerChartTemplates.ts`）**：支持横轴时间标签与 1～3 组纵轴趋势线，自动绘制坐标轴、网格线与图例；支持直线折线与单调微平滑曲线切换，从左到右动态描线生长，并支持关键年份节点按口播时间点（或描线到达时机）同步点亮并弹出数值气泡。
+- **扇形 / 圆环占比图（`zuoren-explainer-pie-chart`，`src/library/explainerChartTemplates.ts`）**：支持单图结构占比与左右双图前后对比两种布局、圆环占比图与实心扇形图两种样式；自动归一化计算 2～6 组扇区角度并生成防重叠外部引线标注与对比图例，支持顺时针平滑扫出及双图比例动态过渡。
+- **统一档案配色、画布双击改数据与外部 MCP 同步（`src/components/preview/previewTextEdit.ts`、`src/components/preview/PreviewTextEditBar.tsx`、`src/components/inspector/InspectorContent.tsx`、`src/agent/external-tool-policy.ts`）**：三款图表统一内置「暖黄宣纸（砖红强调）」「深红档案（暗金强调）」「透明底·浅/深色字」「自定义」5 种主题配色，支持在预览画布双击直接多行修改数据，并将进阶踩点/坐标轴上下限参数收纳至属性栏高级折叠区，同步开放至外部/离线 MCP 接口。
+
+### 修复
+- **修复「数据滚动对比卡」与「动态划线批驳卡片」长片段定格回跳问题（`src/library/explainerTemplates.ts`）**：补全 `rollEndFrame` 与 `strikeFrames` 的条件计算分支并在动画结束后严格锁定终值，解决超过滚动/划线时间后数值跳回起始值的问题。
+
 ## [0.5.7] - 2026-11-27
 
 ### 界面自然度与排版适配优化

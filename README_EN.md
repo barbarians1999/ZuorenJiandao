@@ -53,7 +53,7 @@
 
 ## Download & Install (Windows x64)
 
-1. Download the latest Windows installer (`ZuorenJiandao-Setup-0.5.7-x64.exe`) from [GitHub Releases](https://github.com/barbarians1999/ZuorenJiandao/releases).
+1. Download the latest Windows installer (`ZuorenJiandao-Setup-0.5.8-x64.exe`) from [GitHub Releases](https://github.com/barbarians1999/ZuorenJiandao/releases).
 2. Double-click to install.
    > **Note**: The installer is currently unsigned (`NotSigned`). If Windows SmartScreen displays a prompt, click **More info → Run anyway** to proceed.
 

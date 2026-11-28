@@ -53,7 +53,7 @@
 
 ## 下载与安装（Windows 64 位）
 
-1. 前往 [Releases 页面](https://github.com/barbarians1999/ZuorenJiandao/releases) 下载最新版本的 Windows 安装程序（例如 `ZuorenJiandao-Setup-0.5.7-x64.exe`）。
+1. 前往 [Releases 页面](https://github.com/barbarians1999/ZuorenJiandao/releases) 下载最新版本的 Windows 安装程序（例如 `ZuorenJiandao-Setup-0.5.8-x64.exe`）。
 2. 双击运行安装程序。
    > **提示**：当前版本安装包暂未附带商业数字签名。如果 Windows 弹出“Windows 已保护你的电脑”蓝色提示框，点击 **更多信息 → 仍要运行** 即可正常安装。
 

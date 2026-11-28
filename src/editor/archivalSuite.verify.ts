@@ -316,6 +316,39 @@ import { buildSparseOverlayPlan } from '../../remotion/overlay-hybrid.mjs';
   assert.equal(textItem.props?.textStylePreset, 'refute-strike');
   assert.equal(mgItem.templateId, 'zuoren-explainer-flow-steps');
 
+  const chartBatch = await execOfflineEditItemTool('edit_item', {
+    adds: [
+      {
+        type: 'motion-graphic',
+        assetId: 'library:motion-graphic:zuoren-explainer-bar-chart',
+        track: 'V2',
+        fromFrame: 300,
+        durationInFrames: 120,
+        props: { orientation: 'vertical', itemsText: '1952 | 135 | 万吨\n*1979 | 3448 | 万吨' },
+      },
+      {
+        type: 'motion-graphic',
+        assetId: 'library:motion-graphic:zuoren-explainer-line-chart',
+        track: 'V2',
+        fromFrame: 420,
+        durationInFrames: 120,
+        props: { curveMode: 'smooth' },
+      },
+      {
+        type: 'motion-graphic',
+        assetId: 'library:motion-graphic:zuoren-explainer-pie-chart',
+        track: 'V2',
+        fromFrame: 540,
+        durationInFrames: 120,
+        props: { layoutMode: 'single', chartStyle: 'pie' },
+      },
+    ],
+  }, ctx) as { ok?: boolean };
+  assert.equal(chartBatch.ok, true);
+  assert.ok(draft.getState().items.some((i: TimelineItem) => i.templateId === 'zuoren-explainer-bar-chart'));
+  assert.ok(draft.getState().items.some((i: TimelineItem) => i.templateId === 'zuoren-explainer-line-chart'));
+  assert.ok(draft.getState().items.some((i: TimelineItem) => i.templateId === 'zuoren-explainer-pie-chart'));
+
   const updateAndTr = await execOfflineEditItemTool('edit_item', {
     adds: [
       {

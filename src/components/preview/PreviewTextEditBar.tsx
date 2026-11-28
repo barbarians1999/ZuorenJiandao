@@ -163,7 +163,7 @@ export function PreviewTextEditBar({
           <textarea
             ref={editorRef}
             value={draft}
-            rows={2}
+            rows={Math.min(6, Math.max(2, draft.split('\n').length))}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;

@@ -6,6 +6,9 @@ export const SERVER_DIRECT_TEMPLATE_IDS: ReadonlySet<string> = new Set([
   'zuoren-explainer-data-counter',
   'zuoren-explainer-quote-card',
   'zuoren-explainer-strike-refute',
+  'zuoren-explainer-bar-chart',
+  'zuoren-explainer-line-chart',
+  'zuoren-explainer-pie-chart',
 ]);
 
 const GLOBAL_READ_TOOL_NAMES: Record<string, true> = {

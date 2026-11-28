@@ -65,6 +65,24 @@ const bareMg = {
 } as TimelineItem;
 assert.equal(previewTextEditFields(bareMg), null, 'MG without text style props is not editable');
 
+for (const [templateId, textKey, sample] of [
+  ['zuoren-explainer-bar-chart', 'itemsText', '德国 | 45 | 年'],
+  ['zuoren-explainer-line-chart', 'seriesText', '*钢产量 | 135, 3448'],
+  ['zuoren-explainer-pie-chart', 'slicesText', '*文盲人口 | 80\n识字人口 | 20'],
+] as const) {
+  const chartItem = {
+    ...base,
+    kind: 'motion-graphic',
+    templateId,
+    props: { [textKey]: sample, chartTitle: '标题', inkColor: '#1c1816' },
+    code: 'const X = () => null;',
+  } as TimelineItem;
+  const fields = previewTextEditFields(chartItem);
+  assert.ok(fields, `${templateId} supports preview double-click edit`);
+  assert.equal(fields!.textKey, textKey);
+  assert.equal(fields!.text, sample);
+}
+
 const video = { ...base, kind: 'video', src: 'x.mp4' } as TimelineItem;
 assert.equal(previewTextEditFields(video), null);
 assert.equal(isBakedVisualClip(video), true);
