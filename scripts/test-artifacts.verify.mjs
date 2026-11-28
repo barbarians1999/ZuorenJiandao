@@ -10,7 +10,9 @@ const base=mkdtempSync(join(tmpdir(),'zuoren-artifacts-contract-'));
 const env={CC_TEST_ARTIFACT_ROOT:join(base,'managed'),CC_TEST_MIN_FREE_BYTES:'0',CC_TEST_MAX_BYTES:'4096'};
 try {
   assert.throws(()=>testArtifactRoot({CC_TEST_ARTIFACT_ROOT:'relative'},'win32'),/absolute/);
-  if(process.platform==='win32')assert.throws(()=>testArtifactRoot({},'win32',()=>false),/D: is unavailable/);
+  if(process.platform==='win32')assert.throws(()=>testArtifactRoot({},'win32',()=>false),/G: and D: are unavailable/);
+  if(process.platform==='win32')assert.equal(testArtifactRoot({},'win32',(p)=>p==='G:/'),'G:\\ZuorenJiandao-TestData\\managed');
+  if(process.platform==='win32')assert.equal(testArtifactRoot({},'win32',(p)=>p==='D:/'),'D:\\ZuorenJiandao-TestData\\managed');
   assert.throws(()=>assertArtifactSpace(base,100,{env,available:99,used:0}),/Low artifact/);
   assert.throws(()=>assertArtifactSpace(base,100,{env,available:5000,used:4000}),/budget exceeded/);
   const personal=join(base,'personal');mkdirSync(personal);writeFileSync(join(personal,'original.mp4'),'user media');

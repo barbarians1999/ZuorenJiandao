@@ -17,11 +17,12 @@ export function artifactHash(path) {
 }
 export function testArtifactRoot(env = process.env, platform = process.platform, available = existsSync) {
   const configured = env.CC_TEST_ARTIFACT_ROOT?.trim();
-  const root = configured || (platform === 'win32' ? 'D:/ZuorenJiandao-TestData/managed' : join(tmpdir(), 'zuoren-managed-tests'));
+  const defaultWinDrive = available('G:/') ? 'G:/' : (available('D:/') ? 'D:/' : null);
+  const root = configured || (platform === 'win32' ? `${defaultWinDrive ?? 'G:/'}ZuorenJiandao-TestData/managed` : join(tmpdir(), 'zuoren-managed-tests'));
   assert(isAbsolute(root), 'CC_TEST_ARTIFACT_ROOT must be absolute');
   if (platform === 'win32' && !available(dirname(resolve(root)))) {
-    // Missing D: must fail, not silently produce another multi-GB C: fallback.
-    assert(configured || available('D:/'), 'D: is unavailable; explicitly configure CC_TEST_ARTIFACT_ROOT');
+    // Missing data drive must fail, not silently produce another multi-GB C: fallback.
+    assert(configured || defaultWinDrive !== null, 'G: and D: are unavailable; explicitly configure CC_TEST_ARTIFACT_ROOT');
   }
   return resolve(root);
 }

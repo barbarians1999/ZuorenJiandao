@@ -165,12 +165,13 @@ export async function verifyRestoredGenerationJobs(
     );
   }
   assert.equal(getGenerationJobSnapshot('restored-export-delete')?.cleanupPolicy, 'server-export');
-  await waitFor(
-    () => cleanupCompletedIds.includes(expiryAssetId),
-    'restored export expiry did not invoke its persisted cleanup policy',
-  );
-  assert.equal(getGenerationJobSnapshot('restored-export-expiry'), undefined);
-  assert.equal(await fileExists(join(uploadRoot, expiryExportName)), false);
+  await delay(50);
+  assert.equal(getGenerationJobSnapshot('restored-export-expiry')?.status, 'succeeded',
+    'restored server export older than one hour must be retained');
+  assert.equal(cleanupCompletedIds.includes(expiryAssetId), false,
+    'restored server export older than one hour must not trigger cleanup');
+  assert.equal(await fileExists(join(uploadRoot, expiryExportName)), true,
+    'restored temporary export file older than one hour must be retained');
 
   assert.equal(await deleteGenerationJob('restored-export-delete'), true);
   assert.equal(await fileExists(join(uploadRoot, deleteExportName)), false);
@@ -425,6 +426,8 @@ export async function verifyTaskLimitedGenerationJobs(
   const cleanupTrigger = await createGenerationJob({ kind: 'cleanup-trigger' }, async (id) => generationResult(id));
   Date.now = realNow;
   assert.equal(getGenerationJobSnapshot(second.jobId)?.status, 'queued', 'age cleanup must retain queued jobs');
+  assert.equal(getGenerationJobSnapshot('restored-export-expiry')?.status, 'succeeded',
+    'age cleanup must retain server-export jobs beyond one hour');
   finishFirst?.();
   await waitFor(
     () => getGenerationJobSnapshot(first.jobId)?.status === 'succeeded'

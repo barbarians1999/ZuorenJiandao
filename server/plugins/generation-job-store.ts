@@ -252,6 +252,7 @@ function normalizePersistedJob(value: unknown): GenerationJob | null {
     ? row.timestamps as GenerationOperationTimestamps
     : { createdAt: row.createdAt, submittedAt: row.createdAt, updatedAt: row.updatedAt };
   const restored = !TERMINAL.has(row.status);
+  const cleanupPolicy = typeof row.cleanupPolicy === 'string' ? row.cleanupPolicy : undefined;
   return {
     id: row.id,
     status: row.status,
@@ -279,9 +280,9 @@ function normalizePersistedJob(value: unknown): GenerationJob | null {
     error: row.error,
     code: row.code,
     retryable: row.retryable,
-    cleanupPolicy: typeof row.cleanupPolicy === 'string' ? row.cleanupPolicy : undefined,
+    cleanupPolicy,
     pendingDownloadUrl: row.pendingDownloadUrl,
-    retentionMs: MAX_JOB_AGE_MS,
+    retentionMs: normalizeRetentionMs(undefined, cleanupPolicy),
     acceptance: makeAcceptanceWaiter(),
     restored,
   };
@@ -317,13 +318,16 @@ export async function loadPersistedJobs(): Promise<void> {
   persistenceHydrated = true;
 }
 
-export function normalizeRetentionMs(value: number | undefined): number {
-  return Number.isFinite(value) && Number(value) >= 0 ? Number(value) : MAX_JOB_AGE_MS;
+export function normalizeRetentionMs(value: number | undefined, cleanupPolicy?: string): number {
+  if (value === Number.POSITIVE_INFINITY) return Number.POSITIVE_INFINITY;
+  if (Number.isFinite(value) && Number(value) >= 0) return Number(value);
+  return cleanupPolicy === 'server-export' ? Number.POSITIVE_INFINITY : MAX_JOB_AGE_MS;
 }
 
 export function scheduleExpiry(job: GenerationJob, retryMs?: number): void {
   if (!TERMINAL.has(job.status)) return;
   clearTimeout(job.expiryTimer);
+  if (retryMs === undefined && !Number.isFinite(job.retentionMs)) return;
   const remaining = retryMs ?? Math.max(0, job.retentionMs - (Date.now() - job.updatedAt));
   job.expiryTimer = setTimeout(() => { void evictTerminalJob(job.id, true); }, remaining);
   job.expiryTimer.unref?.();
@@ -367,14 +371,18 @@ export async function evictTerminalJob(jobId: string, retentionExpiry = false): 
     await persistJobs();
   } catch (error) {
     jobs.set(jobId, job);
-    scheduleExpiry(job, 60_000);
+    if (retentionExpiry) scheduleExpiry(job, 60_000);
     throw error;
   }
   return true;
 }
 
 export async function cleanOldJobs(): Promise<void> {
-  const cutoff = Date.now() - MAX_JOB_AGE_MS;
-  const expired = [...jobs.values()].filter((job) => TERMINAL.has(job.status) && job.updatedAt < cutoff);
+  const now = Date.now();
+  const expired = [...jobs.values()].filter((job) => (
+    TERMINAL.has(job.status)
+    && Number.isFinite(job.retentionMs)
+    && now - job.updatedAt > job.retentionMs
+  ));
   await Promise.all(expired.map((job) => evictTerminalJob(job.id, true)));
 }

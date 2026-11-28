@@ -191,7 +191,7 @@ export async function createGenerationJob(
     updatedAt: now,
     cleanupResult: options.cleanupResult,
     cleanupPolicy: options.cleanupPolicy,
-    retentionMs: normalizeRetentionMs(options.retentionMs),
+    retentionMs: normalizeRetentionMs(options.retentionMs, options.cleanupPolicy),
     acceptance: makeAcceptanceWaiter(),
   };
   jobs.set(id, job);

@@ -1,5 +1,5 @@
 import { constants as fsConstants } from 'node:fs';
-import { copyFile, link, readdir, stat, unlink } from 'node:fs/promises';
+import { copyFile, link, stat, unlink } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { ffmpegBin } from '../media-binaries.ts';
 import { ffmpegThreadArgs, spawnMediaProcess } from '../media-process.ts';
@@ -26,19 +26,11 @@ import { TaskLimiter, type ReleaseTaskPermit } from '../task-limiter.ts';
 const DEFAULT_MAX_ACTIVE_EXPORTS = 1;
 const MAX_ACTIVE_EXPORTS = 4;
 const FFMPEG_TIMEOUT_MS = 60 * 60_000;
-export const EXPORT_JOB_RETENTION_MS = 60 * 60_000;
 const EXPORT_CANCEL_TIMEOUT_MS = 15_000;
 const EXPORT_JOB_FILE_PREFIX = 'openchatcut-export-job-';
 const EXPORT_JOB_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'mp3', 'wav']);
 const EXPORT_JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EXPORT_JOB_FILENAME = /^openchatcut-export-job-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(?:mp4|webm|mov|mp3|wav)$/i;
-
-interface CleanupStaleExportOptions {
-  now?: number;
-  retentionMs?: number;
-  onError?: (path: string, error: unknown) => void;
-  shouldRetain?: (renderId: string) => Promise<boolean> | boolean;
-}
 
 function errorCode(error: unknown): string | undefined {
   return error && typeof error === 'object' && 'code' in error
@@ -121,40 +113,6 @@ export async function unlinkWithRetry(path: string, attempts = 3, delayMs = 100)
       await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
     }
   }
-}
-
-/** Remove only expired async-export artifacts; ordinary user media is never matched. */
-export async function cleanupStaleExportFiles(
-  directory: string,
-  options: CleanupStaleExportOptions = {},
-): Promise<number> {
-  const now = options.now ?? Date.now();
-  const retentionMs = Math.max(0, options.retentionMs ?? EXPORT_JOB_RETENTION_MS);
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch (error) {
-    if (errorCode(error) === 'ENOENT') return 0;
-    throw error;
-  }
-
-  let removed = 0;
-  for (const entry of entries) {
-    const match = entry.isFile() ? EXPORT_JOB_FILENAME.exec(entry.name) : null;
-    if (!match) continue;
-    const path = join(directory, entry.name);
-    try {
-      const info = await stat(path);
-      if (now - info.mtimeMs < retentionMs) continue;
-      if (await options.shouldRetain?.(match[1])) continue;
-      await unlinkWithRetry(path);
-      removed += 1;
-    } catch (error) {
-      if (errorCode(error) === 'ENOENT') continue;
-      options.onError?.(path, error);
-    }
-  }
-  return removed;
 }
 
 export function resolveMaxActiveExports(value = process.env.OPENCHATCUT_MAX_ACTIVE_EXPORTS): number {

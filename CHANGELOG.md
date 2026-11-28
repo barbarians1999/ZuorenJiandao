@@ -6,6 +6,12 @@ All notable changes to ZuorenJiandao are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use [Semantic Versioning](https://semver.org/).  
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.10] - 2026-11-28
+
+### 修复与调整
+- **移除临时导出结果 1 小时自动清理机制（`server/plugins/export.ts`、`server/plugins/export-runtime.ts`、`server/plugins/generation-job-store.ts`、`server/plugins/generation-job-lifecycle.ts`）**：取消服务端启动与每小时定时清理临时导出文件（`openchatcut-export-job-*`）的扫描任务，同时取消后台导出任务（`server-export`）的 1 小时自动过期与文件删除，避免导出结果超过 1 小时后失效；正常保存完成与手动取消导出时的清理逻辑完整保留。
+- **Windows 受管暂存盘兼容 `G:` 与 `D:`（`scripts/test-artifacts.mjs`、`scripts/test-artifacts.verify.mjs`）**：默认优先使用 `G:` 盘并自动兼容 `D:` 盘（如 GitHub Actions Windows 构建环境），两者均不可用时显式报错且不静默回落到 C 盘。
+
 ## [0.5.9] - 2026-11-28
 
 ### 修复与体验优化
