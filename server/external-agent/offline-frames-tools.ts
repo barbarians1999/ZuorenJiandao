@@ -10,8 +10,9 @@ import {
   defaultTrackId,
 } from '../../src/editor/types.js';
 import { resolveTimelineRenderPlan } from '../../src/editor/sequenceGraph.js';
-import { searchFontCatalog } from '../../src/fonts/googleFontCatalog.js';
+import { execFontTool } from '../../src/agent/tools/font-tools.js';
 import { EXPLAINER_TEMPLATES } from '../../src/library/explainerTemplates.js';
+import { getServerFontResolver } from './server-font-resolver.ts';
 import { PAPER_BACKGROUND_PRESETS } from '../../src/editor/paperBackgrounds.js';
 import { TRANSITION_LABELS, TRANSITION_ORDER } from '../../src/editor/transitionTypes.js';
 import { prepareBrowserRenderSnapshots } from '../../src/agent/tools/renderSnapshotMedia.js';
@@ -383,9 +384,10 @@ export async function execOfflineFramesTool(
   if (name === 'view_timeline_frames') return execOfflineViewTimelineFrames(args, ctx, origin);
   if (name === 'view_asset_frames') return execOfflineViewAssetFrames(args, ctx, origin);
   if (name === 'search_fonts') {
-    const query = String(args.query ?? '').trim();
-    if (!query) return { error: 'query is required', results: [] };
-    return { query, results: searchFontCatalog(query, 25) };
+    return execFontTool('search_fonts', args, {
+      ...ctx,
+      fontResolver: ctx.fontResolver ?? getServerFontResolver(),
+    });
   }
   if (name === 'browse_library') return execOfflineBrowseLibrary(args);
   if (name === 'list_templates') {

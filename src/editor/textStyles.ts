@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { runtimeFontFamily } from '../../shared/desktop-fonts';
-import { isLoadableFontFamily, resolveCanonicalFamily } from '../fonts/googleFontCatalog';
+import { resolveCanonicalFamily } from '../fonts/googleFontCatalog';
 
 export const TITLE_ANIMATIONS = [
   { id: 'none', label: '无' }, { id: 'fade', label: '淡入／淡出' },
@@ -396,8 +396,6 @@ const TEXT_FIELD_HINTS: Record<string, string> = {
   height: 'Text box height wraps automatically; scale via transform.scale or fontSize.',
 };
 
-const BUNDLED_UI_FONTS = new Set(['geist', 'ioskeleymono', 'ioskeley mono']);
-
 export function validateTextClipProps(props: Record<string, unknown>): string | null {
   for (const key of Object.keys(props)) {
     if (!ALLOWED_TEXT_PROP_KEYS.has(key)) {
@@ -423,10 +421,6 @@ export function validateTextClipProps(props: Record<string, unknown>): string | 
   if (props.fontFamily !== undefined && props.fontAssetId === undefined) {
     const raw = String(props.fontFamily).trim();
     if (!raw) return 'text fontFamily cannot be empty';
-    const first = raw.split(',')[0]?.trim().replace(/^["']|["']$/g, '') ?? '';
-    if (!BUNDLED_UI_FONTS.has(first.toLowerCase()) && !isLoadableFontFamily(first)) {
-      return `unsupported fontFamily "${raw}". Call search_fonts (supports Chinese aliases like "宋体" / "思源宋体") to choose a loadable font.`;
-    }
   }
   for (const numKey of [
     'fontSize', 'fontWeight', 'letterSpacing', 'lineHeight', 'strokeWidth',

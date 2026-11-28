@@ -17,7 +17,13 @@ import {
 import { searchFontCatalog, isLoadableFontFamily } from '../../fonts/googleFonts';
 import { LOCAL_FONTS, ensureLocalFont, findLocalFont } from '../../fonts/localFonts';
 import { timelineToFcpxml } from '../../export/fcpxml';
-import type { TimelineState } from '../../editor/types';
+import type { MediaAsset, TimelineState } from '../../editor/types';
+import { validateTextClipProps } from '../../editor/textStyles';
+import { execOfflineEditItemTool } from '../../../server/external-agent/offline-edit-item';
+import { execCoreTool } from './core-tools';
+import { execCaptionsTool } from './captions-tools';
+import { searchLocalFontEntries } from '../../fonts/fontLookup';
+import type { DesktopFontFace } from '../../../shared/desktop-fonts';
 
 assert.ok(FONT_TOOL_NAMES.has('search_fonts'));
 assert.strictEqual(FONT_TOOL_SCHEMAS[0]!.name, 'search_fonts');
@@ -142,5 +148,135 @@ assert.ok(xmlPrem.includes('ChatCut Export'));
 assert.ok(!xmlPrem.includes('colorSpace='));
 assert.ok(xmlRes.includes('ChatCut Export (Resolve)'));
 assert.ok(xmlRes.includes('colorSpace="1-1-1 (Rec. 709)"'));
+
+// Unrestricted fontFamily: arbitrary OS/custom font names are no longer blocked by a fixed whitelist
+assert.strictEqual(validateTextClipProps({ text: '任意字体', fontFamily: '方正小标宋简体' }), null);
+assert.strictEqual(validateTextClipProps({ text: '任意字体', fontFamily: 'AnyCustomOSFont' }), null);
+assert.strictEqual(validateTextClipProps({ text: '空字体', fontFamily: '   ' }), 'text fontFamily cannot be empty');
+
+// System & imported font search + auto-binding across search_fonts, edit_item, update_item_props, edit_captions
+{
+  const systemFace: DesktopFontFace = {
+    faceId: 'sys-fz-1',
+    family: '方正小标宋简体',
+    fullName: '方正小标宋简体 Regular',
+    postscriptName: 'FZXBSJW--GB1-0',
+    subfamily: 'Regular',
+    weight: 400,
+    style: 'normal',
+    faceIndex: 0,
+    source: 'system',
+    filename: 'FZXiaoBiaoSong-B05S.ttf',
+    aliases: ['FZXiaoBiaoSong-B05S'],
+  };
+  const systemAsset: MediaAsset = {
+    id: 'font_fz_sys',
+    kind: 'file',
+    name: '方正小标宋简体 Regular',
+    sourceFilename: 'FZXiaoBiaoSong-B05S.ttf',
+    src: '/media/uploads/font-fz-sys.ttf',
+    durationInFrames: 0,
+    sourceContentHash: 'fz-hash',
+    props: {
+      resourceType: 'font',
+      font: {
+        family: '方正小标宋简体',
+        fullName: '方正小标宋简体 Regular',
+        postscriptName: 'FZXBSJW--GB1-0',
+        subfamily: 'Regular',
+        weight: 400,
+        style: 'normal',
+        faceIndex: 0,
+        source: 'system',
+        format: 'truetype',
+        aliases: ['FZXiaoBiaoSong-B05S'],
+      },
+    },
+  };
+
+  const localDraft = makeDraft(docFromTimeline({
+    fps: 30, width: 1920, height: 1080, items: [], selectedId: null, assets: [],
+  }));
+  const localCtx: AgentContext = {
+    commands: localDraft.commands,
+    getState: localDraft.getState,
+    getDoc: localDraft.getDoc,
+    getCreativeMode: () => null,
+    templates: [],
+    audio: [],
+    fontResolver: {
+      async searchLocalFonts(query, projectAssets, limit = 25) {
+        return searchLocalFontEntries(query, projectAssets, [], [systemFace], limit);
+      },
+      async resolveFont(rawFamily, projectAssets) {
+        const clean = rawFamily.trim().toLowerCase();
+        if (clean === '方正小标宋简体' || clean === 'fzxiaoBiaosong-b05s'.toLowerCase() || clean === 'fzxiaobiaosong-b05s' || clean === 'fzxbsjw--gb1-0') {
+          const already = projectAssets.find((a) => a.id === systemAsset.id);
+          return already
+            ? { fontFamily: '方正小标宋简体', fontAssetId: systemAsset.id, source: 'project' }
+            : { fontFamily: '方正小标宋简体', fontAssetId: systemAsset.id, asset: systemAsset, source: 'system' };
+        }
+        return null;
+      },
+    },
+  };
+
+  const searchZh = await execFontTool('search_fonts', { query: '方正小标宋' }, localCtx) as {
+    results: Array<{ family: string; source: string; loadable: boolean }>;
+  };
+  assert.ok(searchZh.results.some((r) => r.family === '方正小标宋简体' && r.source === 'system' && r.loadable));
+
+  const searchEn = await execFontTool('search_fonts', { query: 'FZXiaoBiaoSong-B05S' }, localCtx) as {
+    results: Array<{ family: string; source: string; aliases: string[] }>;
+  };
+  assert.ok(searchEn.results.some((r) => r.family === '方正小标宋简体' && r.aliases.includes('FZXiaoBiaoSong-B05S')));
+
+  // validateOnly must not leak resolved assets into doc.assets
+  const dryRun = await execOfflineEditItemTool('edit_item', {
+    validateOnly: true,
+    adds: [{ type: 'text', text: '试运行', fontFamily: 'FZXiaoBiaoSong-B05S', track: 'V1', fromFrame: 0, durationInFrames: 60 }],
+  }, localCtx) as { ok?: boolean };
+  assert.strictEqual(dryRun.ok, true);
+  assert.strictEqual(localDraft.getDoc().assets.length, 0);
+
+  // Real add with English/PostScript name auto-attaches system asset & fontAssetId
+  const added = await execOfflineEditItemTool('edit_item', {
+    adds: [
+      { type: 'text', text: '标题一', fontFamily: 'FZXiaoBiaoSong-B05S', track: 'V1', fromFrame: 0, durationInFrames: 60 },
+      { type: 'text', text: '任意自定义', fontFamily: 'MyArbitraryOSFont', track: 'V1', fromFrame: 60, durationInFrames: 60 },
+    ],
+  }, localCtx) as { ok?: boolean };
+  assert.strictEqual(added.ok, true);
+  assert.strictEqual(localDraft.getDoc().assets.length, 1);
+  assert.strictEqual(localDraft.getDoc().assets[0]?.id, systemAsset.id);
+  const textItems = localDraft.getState().items;
+  assert.strictEqual(textItems[0]?.props?.fontAssetId, systemAsset.id);
+  assert.strictEqual(textItems[0]?.props?.fontFamily, '方正小标宋简体');
+  assert.strictEqual(textItems[1]?.props?.fontFamily, 'MyArbitraryOSFont');
+
+  // update_item_props also resolves system font names
+  const propUpdate = await execCoreTool('update_item_props', {
+    itemId: textItems[1]!.id,
+    props: { fontFamily: '方正小标宋简体' },
+  }, localCtx, []) as { ok?: boolean };
+  assert.strictEqual(propUpdate.ok, true);
+  assert.strictEqual(localDraft.getState().items[1]?.props?.fontAssetId, systemAsset.id);
+
+  // edit_captions style also resolves system font names
+  await execCaptionsTool('edit_captions', { action: 'enable', json: { manual: true } }, localCtx);
+  const capStyle = await execCaptionsTool('edit_captions', {
+    action: 'style',
+    json: { fontFamily: 'FZXiaoBiaoSong-B05S' },
+  }, localCtx) as { ok?: boolean };
+  assert.strictEqual(capStyle.ok, true);
+  assert.strictEqual(localDraft.getState().captions?.styleOverride?.fontAssetId, systemAsset.id);
+
+  // When a clip binds fontAssetId, fontFallbackGate passes export readiness check
+  assert.strictEqual(fontFallbackGate({
+    ...localDraft.getState(),
+    items: [localDraft.getState().items[0]!],
+    captions: null,
+  }, false), null);
+}
 
 console.log('font-tools.check: ok');

@@ -29,6 +29,7 @@ import type { OpResult } from '../../src/agent/tools/edit-item-shared.js';
 import { makeDraft, type DraftEngine } from '../../src/editor/store.js';
 import type { TimelineItem, TransitionType } from '../../src/editor/types.js';
 import { EXPLAINER_TEMPLATES } from '../../src/library/explainerTemplates.js';
+import { resolveEditItemFonts } from '../../src/agent/fontResolver.js';
 
 const OFFLINE_TEMPLATES = EXPLAINER_TEMPLATES.filter((t) => SERVER_DIRECT_TEMPLATE_IDS.has(t.id));
 
@@ -329,7 +330,8 @@ export async function execOfflineEditItemTool(
 ): Promise<unknown> {
   if (name !== 'edit_item') return { error: `unknown tool ${name}` };
   const ripple = args.ripple === true;
-  return executeAtomicEditBatch<OfflineEditItemDraft>(args, {
+  const { args: resolvedArgs, resolvedAssets } = await resolveEditItemFonts(args, ctx);
+  return executeAtomicEditBatch<OfflineEditItemDraft>(resolvedArgs, {
     createDraft: () => {
       const engine = makeDraft(ctx.getDoc());
       return {
@@ -344,6 +346,13 @@ export async function execOfflineEditItemTool(
     },
     validate: validateOperation,
     apply: (draft, plan) => commitOfflinePlan(draft.context, plan, ripple),
-    publish: (draft) => ctx.commands.applyDoc(draft.engine.getDoc()),
+    publish: (draft) => {
+      for (const asset of resolvedAssets) {
+        if (!draft.context.getDoc().assets.some((entry) => entry.id === asset.id)) {
+          draft.context.commands.addAsset(asset);
+        }
+      }
+      ctx.commands.applyDoc(draft.engine.getDoc());
+    },
   });
 }

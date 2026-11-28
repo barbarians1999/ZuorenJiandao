@@ -4,13 +4,12 @@ export const FONT_TOOL_SCHEMAS: AgentToolSchema[] = [
   {
     name: 'search_fonts',
     description: [
-      'Search the font catalog the local/headless renderer can load (Google Fonts bundled in-app',
-      '+ locally bundled Chinese foundry faces, source:"bundled"). Use when export reports unsupported',
-      'fonts or when picking fontFamily for motion-graphic items / captions. Returns canonical family',
-      'names to use verbatim. Substring-matches family AND native-name aliases',
-      '(case/punctuation-insensitive) — e.g. "inter", "playfair", "noto sc", "思源黑体", "得意黑",',
-      '"抖音美好体". loadable=false means catalogued only; prefer a loadable alternative or',
-      'confirmFontFallback on export.',
+      'Search bundled, Google, user-imported, and installed local/Windows system fonts',
+      '(supports Chinese family names like "思源黑体" / "方正小标宋简体", English/PostScript',
+      'names like "FZXiaoBiaoSong-B05S", and aliases). Use when picking fontFamily for',
+      'text clips, motion-graphic items, or captions. Any installed system/imported font',
+      'name or custom fontFamily string can also be passed directly to edit_item /',
+      'update_item_props / edit_captions without restriction.',
     ].join(' '),
     input_schema: {
       type: 'object',

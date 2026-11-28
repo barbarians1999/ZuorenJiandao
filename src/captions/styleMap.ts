@@ -39,6 +39,11 @@ export function mapCaptionStyle(json: Record<string, unknown>, canvasHeight: num
   // text
   const font = str(json.fontFamily) ?? str(json.font);
   if (font) o.fontFamily = font;
+  if (json.fontAssetId === null) o.fontAssetId = null;
+  else {
+    const fontAssetId = str(json.fontAssetId);
+    if (fontAssetId) o.fontAssetId = fontAssetId;
+  }
   const sizePx = num(json.sizePx);
   const fontSizeRatio = num(json.fontSizeRatio) ?? num(json.fontSize);
   if (sizePx !== undefined && canvasHeight > 0) o.fontSize = Math.max(0.001, sizePx / canvasHeight);
@@ -118,7 +123,7 @@ export function mapCaptionStyle(json: Record<string, unknown>, canvasHeight: num
 
   // Report any input fields this build cannot represent.
   const applied: Record<string, true> = {
-    font: true, fontFamily: true, sizePx: true, fontSizeRatio: true, fontSize: true, weight: true, fontWeight: true,
+    font: true, fontFamily: true, fontAssetId: true, sizePx: true, fontSizeRatio: true, fontSize: true, weight: true, fontWeight: true,
     fontStyle: true, textAlign: true, align: true, underline: true, strike: true, letterSpacing: true, lineHeight: true, color: true,
     strokeColor: true, strokeWidth: true, strokeOff: true, strokeOpacity: true,
     highlightColor: true, highlightBackground: true, highlightOff: true,

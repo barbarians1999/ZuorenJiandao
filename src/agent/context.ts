@@ -6,6 +6,7 @@ import type { Tpl } from '../types';
 import type { AudioAsset } from '../audio/library';
 import type { LibraryDragKind } from '../library/drag';
 import type { ApprovalMode } from './capabilities';
+import type { AgentFontResolver } from './fontResolver';
 import {
   SELECTION_REF_CATEGORY, isSelectionRefKind, timelineIdOf,
   type AssetRefKind, type SelectionReference,
@@ -69,6 +70,8 @@ export interface AgentContext {
   /** Live progress note for long-running tool execution (e.g. local ASR model
    * load/download); surfaced through the chat run status when present. */
   onToolProgress?: (note: string) => void;
+  /** Optional font resolver override (server/offline MCP or tests). */
+  fontResolver?: AgentFontResolver;
 }
 /** Source-media span of a placed clip in ms (srcIn → srcIn + duration·rate). */
 function sourceMediaSpan(item: TimelineItem, fps: number): Record<string, number> {

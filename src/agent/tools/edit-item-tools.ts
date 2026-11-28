@@ -7,6 +7,7 @@ import type { EditItemOperation } from './edit-item-batch';
 import { commitPlan } from './edit-item-commit';
 import type { Args, OpResult } from './edit-item-shared';
 import { validateAdd, validateDelete, validateUpdate } from './edit-item-validate';
+import { resolveEditItemFonts } from '../fontResolver';
 
 interface EditItemDraft {
   engine: DraftEngine;
@@ -26,7 +27,8 @@ export async function execEditItemTool(
 ): Promise<unknown> {
   if (name !== 'edit_item') return { error: `unknown tool ${name}` };
   const ripple = args.ripple === true;
-  return executeAtomicEditBatch<EditItemDraft>(args, {
+  const { args: resolvedArgs, resolvedAssets } = await resolveEditItemFonts(args, ctx);
+  return executeAtomicEditBatch<EditItemDraft>(resolvedArgs, {
     createDraft: () => {
       const engine = makeDraft(ctx.getDoc());
       return {
@@ -41,6 +43,13 @@ export async function execEditItemTool(
     },
     validate: validateOperation,
     apply: (draft, plan) => commitPlan(draft.context, plan, ripple),
-    publish: (draft) => ctx.commands.applyDoc(draft.engine.getDoc()),
+    publish: (draft) => {
+      for (const asset of resolvedAssets) {
+        if (!draft.context.getDoc().assets.some((entry) => entry.id === asset.id)) {
+          draft.context.commands.addAsset(asset);
+        }
+      }
+      ctx.commands.applyDoc(draft.engine.getDoc());
+    },
   });
 }

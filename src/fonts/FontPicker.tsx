@@ -2,14 +2,22 @@ import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { DesktopFontFace, FontChoice } from '../../shared/desktop-fonts';
 import { fontAssetMetadata } from '../../shared/desktop-fonts';
+import type { MediaAsset } from '../editor/mediaTypes';
 import { useT } from '../i18n/locale';
 import { useFontLibrary } from './FontLibraryProvider';
 import { ensureAssetFont } from './assetFonts';
 import { ensureFont } from './googleFonts';
 import { getCachedFontSample, loadFontSample } from './fontSample';
-import { filterFontEntries, fontPickerEntries, nextFontRecent, readFontPreference, writeFontPreference,
+import { desktopFontKey, filterFontEntries, fontPickerEntries, mergeFontAssets, nextFontRecent, readFontPreference, writeFontPreference,
   type FontPickerEntry, type FontPickerTab } from './fontPickerModel';
 import './font-picker.css';
+
+let cachedImportedFonts: MediaAsset[] = [];
+const importedListeners = new Set<(assets: MediaAsset[]) => void>();
+function publishImportedFonts(assets: MediaAsset[]): void {
+  cachedImportedFonts = assets;
+  for (const listener of importedListeners) listener(assets);
+}
 
 const TABS: readonly { id: FontPickerTab; label: string }[] = [
   { id: 'bundled', label: '内置' }, { id: 'system', label: '系统' }, { id: 'imported', label: '已导入' },
@@ -57,9 +65,11 @@ export function FontPicker({ value, fontAssetId, sampleText: _sampleText, mixed 
   const t = useT(), library = useFontLibrary(), id = useId();
   const [open, setOpen] = useState(false), [tab, setTab] = useState<FontPickerTab>('bundled'), [query, setQuery] = useState('');
   const [faces, setFaces] = useState<DesktopFontFace[]>([]), [systemLoaded, setSystemLoaded] = useState(false);
+  const [importedAssets, setImportedAssets] = useState<MediaAsset[]>(() => cachedImportedFonts);
   const [loading, setLoading] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   const [failedEntry, setFailedEntry] = useState<FontPickerEntry | null>(null);
   const [unreadable, setUnreadable] = useState(0);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
   const [favorites, setFavorites] = useState(() => readFontPreference('favorite'));
   const [recent, setRecent] = useState(() => readFontPreference('recent'));
   const [position, setPosition] = useState({ left: 0, top: 0, width: 420, maxHeight: 520 });
@@ -67,10 +77,23 @@ export function FontPicker({ value, fontAssetId, sampleText: _sampleText, mixed 
   const request = useRef(0);
   const running = useRef(false);
   const desktop = typeof window === 'undefined' ? undefined : window.openChatCutDesktop?.fonts;
-  const entries = useMemo(() => fontPickerEntries(library.assets, faces), [library.assets, faces]);
+  const mergedAssets = useMemo(() => mergeFontAssets(importedAssets, library.assets), [importedAssets, library.assets]);
+  const entries = useMemo(() => fontPickerEntries(mergedAssets, faces), [mergedAssets, faces]);
   const visible = useMemo(() => filterFontEntries(entries, tab, query, favorites, recent), [entries, tab, query, favorites, recent]);
   const current = fontAssetId ? entries.find((entry) => entry.asset?.id === fontAssetId) : entries.find((entry) => entry.family === value && !entry.asset && !entry.face);
   const label = current?.label ?? value;
+  useEffect(() => {
+    importedListeners.add(setImportedAssets);
+    return () => { importedListeners.delete(setImportedAssets); };
+  }, []);
+  useEffect(() => {
+    if (!desktop?.listImportedFonts) return;
+    let active = true;
+    void desktop.listImportedFonts().then((assets) => {
+      if (active) publishImportedFonts(assets);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [desktop, open]);
   const loadSystem = async (refresh = false) => {
     if (!desktop || loading || (systemLoaded && !refresh)) return;
     setLoading(true); setError(null); setFailedEntry(null);
@@ -119,10 +142,17 @@ export function FontPicker({ value, fontAssetId, sampleText: _sampleText, mixed 
         if (!desktop || !library.canPersist) throw new Error(t('请在桌面工程编辑器中导入字体'));
         const asset = await desktop.materializeFont(entry.face.faceId);
         await ensureAssetFont(asset);
+        if (entry.face.source === 'imported' && desktop.listImportedFonts) {
+          void desktop.listImportedFonts().then(publishImportedFonts).catch(() => undefined);
+        }
         choice = { fontFamily: fontAssetMetadata(asset)!.family, fontAssetId: asset.id, asset };
       } else if (entry.asset) {
+        const inProject = library.assets.some((asset) => asset.id === entry.asset!.id);
+        if (!inProject && !library.canPersist) throw new Error(t('请在桌面工程编辑器中导入字体'));
         await ensureAssetFont(entry.asset);
-        choice = { fontFamily: entry.family, fontAssetId: entry.asset.id };
+        choice = inProject
+          ? { fontFamily: entry.family, fontAssetId: entry.asset.id }
+          : { fontFamily: entry.family, fontAssetId: entry.asset.id, asset: entry.asset };
       } else {
         await ensureFont(entry.family);
         choice = { fontFamily: entry.family };
@@ -143,13 +173,24 @@ export function FontPicker({ value, fontAssetId, sampleText: _sampleText, mixed 
   };
   const importFile = async () => {
     if (!desktop || busy) return;
-    setError(null); setFailedEntry(null);
+    setBusy(true); setError(null); setFailedEntry(null); setImportNotice(null);
     try {
+      if (typeof desktop.importFontFiles === 'function') {
+        const result = await desktop.importFontFiles();
+        if (!result) return;
+        publishImportedFonts(result.assets);
+        if (result.failed > 0) {
+          setImportNotice(t('{n} 个字体文件无法读取，其余已导入。', { n: result.failed }));
+        }
+        setTab('imported'); setQuery('');
+        return;
+      }
       const picked = await desktop.chooseFontFile();
       if (!picked) return;
-      setFaces((existing) => [...existing.filter((face) => face.source !== 'imported'), ...picked]);
+      setFaces((existing) => [...new Map([...existing, ...picked].map((face) => [desktopFontKey(face), face])).values()]);
       setTab('imported'); setQuery('');
     } catch (reason) { setError(reason instanceof Error ? reason.message : t('字体文件无法读取')); }
+    finally { setBusy(false); }
   };
   const toggleFavorite = (key: string) => {
     const next = favorites.includes(key) ? favorites.filter((entry) => entry !== key) : [...favorites, key];
@@ -177,6 +218,7 @@ export function FontPicker({ value, fontAssetId, sampleText: _sampleText, mixed 
         else void importFile();
       }}>{t('重试')}</button></div>}
       {unreadable > 0 && tab === 'system' && <p className="cc-font-status">{t('{n} 个字体文件无法读取，其他字体仍可使用。', { n: unreadable })}</p>}
+      {importNotice && tab === 'imported' && <p className="cc-font-status" role="status">{importNotice}</p>}
       {tab === 'system' && !desktop && <p className="cc-font-status">{t('本机字体和本地导入可在 Windows 桌面版中使用。')}</p>}
       <div className="cc-font-list" role="listbox" aria-label={t('可选字体')} aria-busy={busy || loading}>
         {visible.map((entry) => {
@@ -190,7 +232,7 @@ export function FontPicker({ value, fontAssetId, sampleText: _sampleText, mixed 
               aria-pressed={favorites.includes(entry.key)} disabled={busy} onClick={() => toggleFavorite(entry.key)}>{favorites.includes(entry.key) ? '★' : '☆'}</button>
           </div>;
         })}
-        {!loading && !visible.length && <p className="cc-font-empty">{t(query ? '没有找到这个字体' : tab === 'imported' ? '点击「导入字体」，支持 TTF、OTF 和 TTC；TTC 可选择具体字形。' : tab === 'favorite' ? '点击字体右侧的星号收藏' : tab === 'recent' ? '使用过的字体会显示在这里' : '暂无可用字体')}</p>}
+        {!loading && !visible.length && <p className="cc-font-empty">{t(query ? '没有找到这个字体' : tab === 'imported' ? '点击「导入字体」，支持一次多选 TTF、OTF 和 TTC，导入后所有工程通用。' : tab === 'favorite' ? '点击字体右侧的星号收藏' : tab === 'recent' ? '使用过的字体会显示在这里' : '暂无可用字体')}</p>}
       </div>
       <footer>{t('点击字样应用；更换字体不会改变文字内容和其他样式。')}</footer>
     </div>, document.body)}

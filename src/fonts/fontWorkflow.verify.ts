@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { captionFontPatch, captionFontKey, captionSelectedFontsPatch } from './captionFontScope';
-import { filterFontEntries, fontPickerEntries, nextFontRecent } from './fontPickerModel';
+import { filterFontEntries, fontPickerEntries, mergeFontAssets, nextFontRecent } from './fontPickerModel';
 import { assetFontFamily, fontAssetMetadata } from '../../shared/desktop-fonts';
 import { buildCues } from '../captions/captionCues';
 import { buildCaptionPages } from '../captions/captionPages';
@@ -73,6 +73,48 @@ assert.deepEqual(collectUploadSrcs(doc), [asset.src]);
 assert.equal(buildCaptionPages(reloaded.timelines[0]!.captions!, reloaded.timelines[0]!.items, 30)[0]?.fontOverride?.fontAssetId, asset.id);
 const entries = fontPickerEntries([asset], []);
 assert.equal(filterFontEntries(entries, 'imported', '自选', [], [])[0]?.asset?.id, asset.id);
+const globalSecond: MediaAsset = {
+  ...asset,
+  id: 'font_second',
+  name: '第二个导入字体',
+  sourceFilename: 'second.ttf',
+  src: '/media/uploads/font-second.ttf',
+  props: {
+    resourceType: 'font',
+    font: {
+      family: '第二字体',
+      fullName: '第二字体 Regular',
+      postscriptName: 'SecondFont',
+      subfamily: 'Regular',
+      weight: 400,
+      style: 'normal',
+      faceIndex: 0,
+      source: 'imported',
+      format: 'truetype',
+    },
+  },
+};
+const mergedFontAssets = mergeFontAssets([globalSecond, asset], [asset]);
+assert.deepEqual(mergedFontAssets.map((a) => a.id), ['font_second', 'font_exact']);
+const mergedEntries = fontPickerEntries(mergedFontAssets, [
+  {
+    faceId: 'dup-face',
+    family: '自选字体',
+    fullName: '自选字体 Regular',
+    postscriptName: 'ExactFont',
+    subfamily: 'Regular',
+    weight: 400,
+    style: 'normal',
+    faceIndex: 0,
+    source: 'imported',
+    filename: 'exact.ttf',
+  },
+]);
+assert.deepEqual(
+  filterFontEntries(mergedEntries, 'imported', '', [], []).map((entry) => entry.asset?.id),
+  ['font_second', 'font_exact'],
+  'imported tab keeps both global and project imported fonts without duplicates',
+);
 assert.ok(filterFontEntries(entries, 'bundled', '思源', [], []).some((entry) => entry.family === 'Noto Sans SC'));
 assert.equal(filterFontEntries(entries, 'favorite', '', [`asset:${asset.id}`], [])[0]?.asset?.id, asset.id);
 assert.deepEqual(nextFontRecent(['a', 'b'], 'b'), ['b', 'a']);

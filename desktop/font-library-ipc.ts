@@ -14,13 +14,27 @@ export function installDesktopFontsIpc(trustedOrigin: string): void {
     if (refresh !== undefined && typeof refresh !== 'boolean') throw new Error('invalid font refresh request');
     return library.listSystemFonts(refresh === true);
   });
-  handle(DESKTOP_FONT_CHANNELS.choose, async (event) => {
-    const parent = BrowserWindow.fromWebContents(event.sender);
-    const options = { title: '导入本地字体', properties: ['openFile' as const], filters: [
+  handle(DESKTOP_FONT_CHANNELS.listImported, () => library.listImportedFonts());
+  const pickFontPaths = async (sender: Electron.WebContents) => {
+    const parent = BrowserWindow.fromWebContents(sender);
+    const options = { title: '导入本地字体', properties: ['openFile' as const, 'multiSelections' as const], filters: [
       { name: '字体文件（TTF / OTF / TTC）', extensions: ['ttf', 'otf', 'ttc'] },
     ] };
     const picked = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
-    return picked.canceled || !picked.filePaths[0] ? null : library.inspect(picked.filePaths[0], 'imported');
+    return picked.canceled || picked.filePaths.length === 0 ? null : picked.filePaths;
+  };
+  handle(DESKTOP_FONT_CHANNELS.choose, async (event) => {
+    const paths = await pickFontPaths(event.sender);
+    if (!paths) return null;
+    const faces = [];
+    for (const filePath of paths) {
+      faces.push(...await library.inspect(filePath, 'imported'));
+    }
+    return faces;
+  });
+  handle(DESKTOP_FONT_CHANNELS.importFiles, async (event) => {
+    const paths = await pickFontPaths(event.sender);
+    return paths ? library.importFontFiles(paths) : null;
   });
   handle(DESKTOP_FONT_CHANNELS.preview, (_event, faceId: unknown) => library.previewFont(faceId));
   handle(DESKTOP_FONT_CHANNELS.materialize, (_event, faceId: unknown) => library.materializeFont(faceId));

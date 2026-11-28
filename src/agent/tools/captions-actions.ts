@@ -10,6 +10,7 @@ import { hasOperationalTranscript } from '../../transcript/types';
 import { applyDisplayTextEntries } from './captions-word-overrides';
 import { isCaptionMotionPreset } from '../../captions/captionMotion';
 import { newManualCaptions } from '../../captions/manualCaptions';
+import { getAgentFontResolver } from '../fontResolver';
 import {
   execCueAdd,
   execCueRemove,
@@ -187,6 +188,22 @@ export async function editCaptions(args: Args, ctx: AgentContext): Promise<Resul
   // ── style / layout / display / track ──
   if (action === 'style') {
     const { styleOverride, pacing, ignored } = mapCaptionStyle(json, s.height);
+    if (styleOverride.fontFamily && styleOverride.fontAssetId === undefined) {
+      const resolved = await getAgentFontResolver(ctx).resolveFont(
+        styleOverride.fontFamily,
+        ctx.getDoc().assets ?? [],
+        styleOverride.fontWeight ?? c.styleOverride?.fontWeight,
+      );
+      if (resolved?.fontAssetId) {
+        if (resolved.asset && !ctx.getDoc().assets.some((asset) => asset.id === resolved.asset!.id)) {
+          ctx.commands.addAsset(resolved.asset);
+        }
+        styleOverride.fontFamily = resolved.fontFamily;
+        styleOverride.fontAssetId = resolved.fontAssetId;
+      } else if (c.styleOverride?.fontAssetId) {
+        styleOverride.fontAssetId = null;
+      }
+    }
     const patch: Partial<CaptionsData> = { styleOverride: { ...(c.styleOverride ?? {}), ...styleOverride } };
     if (pacing) patch.pacing = pacing;
     if (!Object.keys(styleOverride).length && !pacing) return { error: 'style needs at least one recognized field in json', ...(ignored.length ? { ignored } : {}) };

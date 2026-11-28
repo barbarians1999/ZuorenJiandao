@@ -6,6 +6,18 @@ All notable changes to ZuorenJiandao are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases use [Semantic Versioning](https://semver.org/).  
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.9] - 2026-11-28
+
+### 修复与体验优化
+- **修复「已导入」字体只保留最新一个的问题并支持跨工程通用与批量导入（`desktop/font-library.ts`、`desktop/font-library-ipc.ts`、`shared/desktop-fonts.ts`、`desktop/preload.ts`、`src/fonts/fontPickerModel.ts`、`src/fonts/FontPicker.tsx`）**：
+  - 点击「导入字体」选定字体后即刻持久化写入受管目录清单（`.imported-fonts.json`），新导入字体置顶、原有已导入字体全部保留并自动去重，无需先应用到片段才会留存；
+  - 支持文件选择框一次多选批量导入 `.ttf` / `.otf` / `.ttc`（混入损坏文件时自动跳过并提示数量，不影响正常字体导入）；
+  - 导入后的字体在所有新建和已有工程的「已导入」页签中均可直接看到，点击应用时自动将字体资源关联到当前工程，确保工程保存、重开与视频导出完整可用。
+- **取消自动化接口字体白名单并支持系统/导入字体自动识别与绑定（`src/editor/textStyles.ts`、`desktop/font-sfnt.ts`、`src/fonts/fontLookup.ts`、`src/agent/fontResolver.ts`、`server/external-agent/server-font-resolver.ts`、`src/agent/tools/font-tools.ts`、`src/agent/tools/edit-item-tools.ts`、`src/agent/tools/core-tools.ts`、`src/agent/tools/captions-actions.ts`、`src/library/explainerTemplates.ts`、`src/library/explainerChartTemplates.ts`）**：
+  - 彻底移除 `validateTextClipProps` 中写死的内置字体白名单校验，自动化接口（`edit_item`、`update_item_props`、`edit_captions` 等）支持任意合法 `fontFamily` 写入，不再拦截如「方正小标宋简体 / FZXiaoBiaoSong-B05S」等外部或系统字体；
+  - 扩展 `desktop/font-sfnt.ts` 提取字体文件内的全语言家族名与 PostScript 别名（含简体中文 `0x0804`、繁体中文 `0x0404`、英文 `0x0409` 等），配合浏览器端与离线服务端字体解析器，自动匹配内置、工程、跨工程已导入及 Windows 系统字体并自动绑定 `fontAssetId`；未在本机检索到的字体名也会原样保留直写不阻断；
+  - `search_fonts` 支持检索内置、工程、已导入与系统字体；8 款科普动效组件同步支持通过 `fontAssetId` 渲染对应字体，并更新工具文档与参数说明。
+
 ## [0.5.8] - 2026-11-28
 
 ### 新增能力：科普动效套件 3 款参数化数据统计图表

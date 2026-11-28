@@ -233,7 +233,9 @@ const api: OpenChatCutDesktopApi = {
     ipcRenderer.invoke(EDITOR_CREDENTIALS_CHANNEL) as Promise<EditorBootstrapInfo>,
   fonts: {
     listSystemFonts: (refresh) => ipcRenderer.invoke(DESKTOP_FONT_CHANNELS.list, refresh),
+    listImportedFonts: () => ipcRenderer.invoke(DESKTOP_FONT_CHANNELS.listImported),
     chooseFontFile: () => ipcRenderer.invoke(DESKTOP_FONT_CHANNELS.choose),
+    importFontFiles: () => ipcRenderer.invoke(DESKTOP_FONT_CHANNELS.importFiles),
     previewFont: (faceId) => ipcRenderer.invoke(DESKTOP_FONT_CHANNELS.preview, faceId),
     materializeFont: (faceId) => ipcRenderer.invoke(DESKTOP_FONT_CHANNELS.materialize, faceId),
   },

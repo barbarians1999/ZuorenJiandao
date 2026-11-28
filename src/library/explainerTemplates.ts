@@ -206,7 +206,8 @@ const SCAN_FOCUS_CODE = `const ScanFocusCard = ({item}) => {
     '霞鹜文楷': '"LXGW WenKai TC", "STKaiti", "KaiTi", serif',
     '楷体': '"LXGW WenKai TC", "STKaiti", "KaiTi", serif',
   };
-  const resolvedFont = fontAliases[String(p.fontFamily || '').trim()] || String(p.fontFamily || '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif');
+  const assetFontPrefix = p.fontAssetId ? 'cc-font-' + Array.from(String(p.fontAssetId)).map((ch) => ch.codePointAt(0).toString(16)).join('-') + ', ' : '';
+  const resolvedFont = assetFontPrefix + (fontAliases[String(p.fontFamily || '').trim()] || String(p.fontFamily || '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif'));
   const frameColor = String(p.frameColor || '#f4ecda');
   const accentColor = String(p.accentColor || '#c83228');
   const textColor = String(p.textColor || '#fff8ee');
@@ -520,7 +521,7 @@ const FLOW_STEPS_CODE = `const FlowStepsCard = ({item}) => {
   const padH = count >= 5 ? 24 : 34;
 
   return (
-    <AbsoluteFill style={{ pointerEvents: 'none', fontFamily: p.fontFamily || 'Noto Sans SC, sans-serif' }}>
+    <AbsoluteFill style={{ pointerEvents: 'none', fontFamily: (p.fontAssetId ? 'cc-font-' + Array.from(String(p.fontAssetId)).map((ch) => ch.codePointAt(0).toString(16)).join('-') + ', ' : '') + (p.fontFamily || 'Noto Sans SC, sans-serif') }}>
       <div style={{
         position: 'absolute',
         left: 0,
@@ -664,7 +665,7 @@ const DATA_COUNTER_CODE = `const DataCounterCard = ({item}) => {
   });
 
   return (
-    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', pointerEvents: 'none', fontFamily: p.fontFamily || 'Noto Sans SC, sans-serif' }}>
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', pointerEvents: 'none', fontFamily: (p.fontAssetId ? 'cc-font-' + Array.from(String(p.fontAssetId)).map((ch) => ch.codePointAt(0).toString(16)).join('-') + ', ' : '') + (p.fontFamily || 'Noto Sans SC, sans-serif') }}>
       <div style={{
         width: 960,
         maxWidth: '86%',
@@ -814,7 +815,7 @@ const QUOTE_CARD_CODE = `const QuoteHighlightCard = ({item}) => {
   const exitP = f > dur - 10 ? clamp01((dur - f) / 10) : 1;
 
   return (
-    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', pointerEvents: 'none', fontFamily: p.fontFamily || 'Noto Serif SC, serif' }}>
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', pointerEvents: 'none', fontFamily: (p.fontAssetId ? 'cc-font-' + Array.from(String(p.fontAssetId)).map((ch) => ch.codePointAt(0).toString(16)).join('-') + ', ' : '') + (p.fontFamily || 'Noto Serif SC, serif') }}>
       <div style={{
         width: 1280,
         maxWidth: '84%',
@@ -939,7 +940,7 @@ const STRIKE_REFUTE_CODE = `const StrikeRefuteCard = ({item}) => {
   };
 
   return (
-    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', pointerEvents: 'none', fontFamily: p.fontFamily || 'Noto Sans SC, sans-serif' }}>
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', pointerEvents: 'none', fontFamily: (p.fontAssetId ? 'cc-font-' + Array.from(String(p.fontAssetId)).map((ch) => ch.codePointAt(0).toString(16)).join('-') + ', ' : '') + (p.fontFamily || 'Noto Sans SC, sans-serif') }}>
       <div style={{
         maxWidth: '84%',
         background: cardAlpha > 0 ? hexToRgba(cardBg, cardAlpha) : 'transparent',

@@ -5,16 +5,29 @@ function utf16be(text: string): Uint8Array {
   Array.from(text).forEach((char, i) => view.setUint16(i * 2, char.charCodeAt(0)));
   return bytes;
 }
-export function fontFixture(family = '测试黑体', weight = 400): Uint8Array {
-  const names = [[1, family], [2, 'Regular'], [4, `${family} Regular`], [6, `TestSans${weight}`]] as const;
-  const strings = names.map(([, value]) => utf16be(value));
+export function fontFixture(
+  family = '测试黑体',
+  weight = 400,
+  extra?: { englishFamily?: string; postscriptName?: string },
+): Uint8Array {
+  const names: Array<readonly [number, number, string]> = [
+    [0x0804, 1, family],
+    [0x0804, 2, 'Regular'],
+    [0x0804, 4, `${family} Regular`],
+    [0x0804, 6, extra?.postscriptName ?? `TestSans${weight}`],
+  ];
+  if (extra?.englishFamily) {
+    names.push([0x0409, 1, extra.englishFamily]);
+    names.push([0x0409, 4, `${extra.englishFamily} Regular`]);
+  }
+  const strings = names.map(([, , value]) => utf16be(value));
   const name = new Uint8Array(6 + names.length * 12 + strings.reduce((sum, bytes) => sum + bytes.length, 0));
   const nameView = new DataView(name.buffer), storage = 6 + names.length * 12;
   nameView.setUint16(2, names.length); nameView.setUint16(4, storage);
   let position = storage;
-  names.forEach(([id], index) => {
+  names.forEach(([language, id], index) => {
     const at = 6 + index * 12;
-    nameView.setUint16(at, 3); nameView.setUint16(at + 2, 1); nameView.setUint16(at + 4, 0x0804);
+    nameView.setUint16(at, 3); nameView.setUint16(at + 2, 1); nameView.setUint16(at + 4, language);
     nameView.setUint16(at + 6, id); nameView.setUint16(at + 8, strings[index]!.length); nameView.setUint16(at + 10, position - storage);
     name.set(strings[index]!, position); position += strings[index]!.length;
   });

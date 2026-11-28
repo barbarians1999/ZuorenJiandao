@@ -17,6 +17,7 @@ import { EXPLAINER_TEMPLATES } from '../../src/library/explainerTemplates.js';
 import type { AgentContext } from '../../src/agent/context.ts';
 import { ExternalEditorCallError, isProjectConnected } from './broker.ts';
 import { executeOfflineTool } from './offline-executor.ts';
+import { getServerFontResolver } from './server-font-resolver.ts';
 import { captureCheckpointedToolOutcome } from './offline-outcome.ts';
 import {
   externalToolFailureOutcome,
@@ -481,6 +482,7 @@ export class OfflineExternalEditRuntime {
       audio: [],
       getProjectId: () => this.projectId,
       getApprovalMode: () => 'auto',
+      fontResolver: getServerFontResolver(),
     };
   }
 

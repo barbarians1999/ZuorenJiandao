@@ -6,6 +6,7 @@ import {
   isLoadableFontFamily,
   searchFontCatalog,
 } from '../../fonts/googleFontCatalog';
+import { getAgentFontResolver } from '../fontResolver';
 import { collectReferencedFonts } from '../../fonts/projectFonts';
 
 export { collectReferencedFonts } from '../../fonts/projectFonts';
@@ -14,25 +15,38 @@ export { collectReferencedFonts } from '../../fonts/projectFonts';
 
 type Args = Record<string, unknown>;
 
-export async function execFontTool(name: string, args: Args, _ctx: AgentContext): Promise<unknown> {
-  if (name === 'search_fonts') return execSearchFonts(args);
+export async function execFontTool(name: string, args: Args, ctx: AgentContext): Promise<unknown> {
+  if (name === 'search_fonts') return execSearchFonts(args, ctx);
   return { error: `unknown tool ${name}` };
 }
 
-function execSearchFonts(args: Args): unknown {
+async function execSearchFonts(args: Args, ctx: AgentContext): Promise<unknown> {
   const query = String(args.query ?? '').trim();
   if (!query) return { error: 'query is required', results: [] };
-  const results = searchFontCatalog(query, 25);
-  return {
-    ok: true,
-    query,
-    count: results.length,
-    results: results.map((r) => ({
+  const catalogHits = searchFontCatalog(query, 25);
+  const localHits = await getAgentFontResolver(ctx).searchLocalFonts(query, ctx.getDoc().assets ?? [], 25);
+  const results = [
+    ...catalogHits.map((r) => ({
       family: r.family,
       aliases: r.aliases,
       loadable: r.loadable,
       source: r.source,
     })),
+    ...localHits.map((r) => ({
+      family: r.family,
+      ...(r.fullName ? { fullName: r.fullName } : {}),
+      ...(r.postscriptName ? { postscriptName: r.postscriptName } : {}),
+      aliases: r.aliases,
+      loadable: r.loadable,
+      source: r.source,
+      ...(r.fontAssetId ? { fontAssetId: r.fontAssetId } : {}),
+    })),
+  ].slice(0, 40);
+  return {
+    ok: true,
+    query,
+    count: results.length,
+    results,
     note: results.some((r) => !r.loadable)
       ? 'Some hits are catalog aliases only (loadable=false) — export may require confirmFontFallback=true.'
       : undefined,

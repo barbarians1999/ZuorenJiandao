@@ -2,7 +2,9 @@ import type { MediaAsset } from '../src/editor/mediaTypes.js';
 
 export const DESKTOP_FONT_CHANNELS = {
   list: 'openchatcut:fonts-list',
+  listImported: 'openchatcut:fonts-list-imported',
   choose: 'openchatcut:fonts-choose',
+  importFiles: 'openchatcut:fonts-import',
   preview: 'openchatcut:fonts-preview',
   materialize: 'openchatcut:fonts-materialize',
 } as const;
@@ -16,6 +18,7 @@ export interface FontFaceMetadata {
   style: 'normal' | 'italic';
   weightRange?: readonly [number, number];
   faceIndex: number;
+  aliases?: string[];
 }
 
 export interface DesktopFontFace extends FontFaceMetadata {
@@ -35,9 +38,17 @@ export interface DesktopFontPreview {
   bytes: Uint8Array;
 }
 
+export interface DesktopFontImportResult {
+  assets: MediaAsset[];
+  imported: MediaAsset[];
+  failed: number;
+}
+
 export interface DesktopFontsApi {
   listSystemFonts(refresh?: boolean): Promise<DesktopFontCatalog>;
+  listImportedFonts(): Promise<MediaAsset[]>;
   chooseFontFile(): Promise<DesktopFontFace[] | null>;
+  importFontFiles(): Promise<DesktopFontImportResult | null>;
   previewFont(faceId: string): Promise<DesktopFontPreview>;
   materializeFont(faceId: string): Promise<MediaAsset>;
 }

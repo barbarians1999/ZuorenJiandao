@@ -3,6 +3,7 @@ import type { AgentToolSchema } from '../tool-schema';
 import { defaultTrackId, resolveTrackId, trackAlias } from '../../editor/types';
 import { execCoreDataTool } from './core-data-tools';
 import { execJianyingExport } from './jianying-export-tool';
+import { resolveUpdateItemPropsArgs } from '../fontResolver';
 
 type Args = Record<string, unknown>;
 
@@ -83,7 +84,8 @@ export async function execCoreTool(
   schemas: readonly AgentToolSchema[],
 ): Promise<unknown> {
   if (name === 'ToolSearch') return searchTools(args, schemas);
-  const dataResult = execCoreDataTool(name, args, ctx);
+  const nextArgs = name === 'update_item_props' ? await resolveUpdateItemPropsArgs(args, ctx) : args;
+  const dataResult = execCoreDataTool(name, nextArgs, ctx);
   if (dataResult !== undefined) return dataResult;
   const jianyingResult = await execJianyingExport(name, args, ctx);
   if (jianyingResult !== undefined) return jianyingResult;

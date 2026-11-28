@@ -24,7 +24,8 @@ const BAR_CHART_CODE = `const BarChartCard = ({item}) => {
     '霞鹜文楷': '"LXGW WenKai TC", "STKaiti", "KaiTi", serif',
     '楷体': '"LXGW WenKai TC", "STKaiti", "KaiTi", serif',
   };
-  const resolvedFont = fontAliases[String(p.fontFamily || '').trim()] || String(p.fontFamily || '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif');
+  const assetFontPrefix = p.fontAssetId ? 'cc-font-' + Array.from(String(p.fontAssetId)).map((ch) => ch.codePointAt(0).toString(16)).join('-') + ', ' : '';
+  const resolvedFont = assetFontPrefix + (fontAliases[String(p.fontFamily || '').trim()] || String(p.fontFamily || '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif'));
 
   const themeKey = String(p.themePreset || 'warm-paper');
   const presets = {
@@ -538,7 +539,8 @@ const LINE_CHART_CODE = `const LineChartCard = ({item}) => {
     '霞鹜文楷': '"LXGW WenKai TC", "STKaiti", "KaiTi", serif',
     '楷体': '"LXGW WenKai TC", "STKaiti", "KaiTi", serif',
   };
-  const resolvedFont = fontAliases[String(p.fontFamily || '').trim()] || String(p.fontFamily || '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif');
+  const assetFontPrefix = p.fontAssetId ? 'cc-font-' + Array.from(String(p.fontAssetId)).map((ch) => ch.codePointAt(0).toString(16)).join('-') + ', ' : '';
+  const resolvedFont = assetFontPrefix + (fontAliases[String(p.fontFamily || '').trim()] || String(p.fontFamily || '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif'));
 
   const themeKey = String(p.themePreset || 'warm-paper');
   const presets = {
@@ -1073,7 +1075,8 @@ const PIE_CHART_CODE = `const PieChartCard = ({item}) => {
     '霞鹜文楷': '"LXGW WenKai TC", "STKaiti", "KaiTi", serif',
     '楷体': '"LXGW WenKai TC", "STKaiti", "KaiTi", serif',
   };
-  const resolvedFont = fontAliases[String(p.fontFamily || '').trim()] || String(p.fontFamily || '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif');
+  const assetFontPrefix = p.fontAssetId ? 'cc-font-' + Array.from(String(p.fontAssetId)).map((ch) => ch.codePointAt(0).toString(16)).join('-') + ', ' : '';
+  const resolvedFont = assetFontPrefix + (fontAliases[String(p.fontFamily || '').trim()] || String(p.fontFamily || '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif'));
 
   const themeKey = String(p.themePreset || 'warm-paper');
   const presets = {

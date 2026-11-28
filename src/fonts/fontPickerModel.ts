@@ -19,6 +19,20 @@ export function desktopFontKey(face: DesktopFontFace): string {
   return `${face.source}:${face.postscriptName}:${face.fullName}:${face.filename}:${face.faceIndex}`;
 }
 
+export function mergeFontAssets(
+  globalImported: readonly MediaAsset[],
+  projectAssets: readonly MediaAsset[],
+): MediaAsset[] {
+  const merged = new Map<string, MediaAsset>();
+  for (const asset of globalImported) {
+    if (fontAssetMetadata(asset)) merged.set(asset.id, asset);
+  }
+  for (const asset of projectAssets) {
+    if (fontAssetMetadata(asset) && !merged.has(asset.id)) merged.set(asset.id, asset);
+  }
+  return [...merged.values()];
+}
+
 export function fontPickerEntries(assets: readonly MediaAsset[], faces: readonly DesktopFontFace[]): FontPickerEntry[] {
   const entries: FontPickerEntry[] = [
     ...FONT_CATALOG.map((font): FontPickerEntry => {
@@ -35,16 +49,26 @@ export function fontPickerEntries(assets: readonly MediaAsset[], faces: readonly
       key: `family:${family}`, family, label: ['默认黑体', '默认宋体', '默认等宽'][index]!, aliases: [], source: 'generic',
     })),
   ];
+  const importedFaceSignatures = new Set<string>();
   for (const asset of assets) {
     const metadata = fontAssetMetadata(asset);
     if (!metadata) continue;
+    if (metadata.source === 'imported') {
+      importedFaceSignatures.add(`${metadata.postscriptName}\0${metadata.fullName}\0${metadata.weight}\0${metadata.style}`);
+    }
     entries.push({ key: `asset:${asset.id}`, family: metadata.family, label: metadata.fullName,
-      aliases: [metadata.postscriptName, asset.sourceFilename ?? ''], source: 'imported', asset });
+      aliases: [metadata.postscriptName, ...(metadata.aliases ?? []), asset.sourceFilename ?? ''], source: 'imported', asset });
   }
-  entries.push(...faces.map((face): FontPickerEntry => ({
-    key: desktopFontKey(face), family: face.family, label: face.fullName,
-    aliases: [face.postscriptName, face.filename], source: face.source, face,
-  })));
+  for (const face of faces) {
+    if (face.source === 'imported'
+      && importedFaceSignatures.has(`${face.postscriptName}\0${face.fullName}\0${face.weight}\0${face.style}`)) {
+      continue;
+    }
+    entries.push({
+      key: desktopFontKey(face), family: face.family, label: face.fullName,
+      aliases: [face.postscriptName, ...(face.aliases ?? []), face.filename], source: face.source, face,
+    });
+  }
   return [...new Map(entries.map((entry) => [entry.key, entry])).values()];
 }
 

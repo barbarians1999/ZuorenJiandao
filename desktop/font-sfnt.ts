@@ -58,12 +58,13 @@ function decodedName(bytes: Uint8Array, platform: number): string {
   return text.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 512);
 }
 
-function fontNames(bytes: Uint8Array, table: Table): Map<number, string> {
+function fontNames(bytes: Uint8Array, table: Table): { primary: Map<number, string>; allById: Map<number, string[]> } {
   if (table.length < 6) throw new Error('字体名称表无效');
   const count = u16(bytes, table.offset + 2);
   const storage = table.offset + u16(bytes, table.offset + 4);
   if (count > 4096 || 6 + count * 12 > table.length) throw new Error('字体名称表无效');
   const names = new Map<number, { value: string; rank: number }>();
+  const allById = new Map<number, string[]>();
   for (let i = 0; i < count; i++) {
     const at = table.offset + 6 + i * 12;
     const platform = u16(bytes, at), language = u16(bytes, at + 4), id = u16(bytes, at + 6);
@@ -72,19 +73,33 @@ function fontNames(bytes: Uint8Array, table: Table): Map<number, string> {
     if (start < table.offset || length > 16384 || start + length > table.offset + table.length) throw new Error('字体名称超出名称表范围');
     const value = decodedName(bytes.subarray(start, start + length), platform);
     if (!value) continue;
+    const list = allById.get(id);
+    if (!list) allById.set(id, [value]);
+    else if (!list.includes(value)) list.push(value);
     const rank = language === 0x0804 ? 100 : language === 0x0404 ? 90 : language === 0x0409 ? 80 : platform === 0 ? 60 : platform === 3 ? 50 : 10;
     if (rank > (names.get(id)?.rank ?? -1)) names.set(id, { value, rank });
   }
-  return new Map([...names].map(([id, entry]) => [id, entry.value]));
+  return { primary: new Map([...names].map(([id, entry]) => [id, entry.value])), allById };
 }
 
 function metadataAt(bytes: Uint8Array, offset: number, faceIndex: number): FontFaceMetadata {
   const tables = tablesAt(bytes, offset);
   const find = (name: string) => tables.find((table) => table.tag === name);
-  const names = fontNames(bytes, find('name')!);
+  const { primary: names, allById } = fontNames(bytes, find('name')!);
   const family = names.get(16) ?? names.get(1);
   if (!family) throw new Error('无法读取字体名称');
   const subfamily = names.get(17) ?? names.get(2) ?? '';
+  const fullName = names.get(4) ?? `${family} ${subfamily}`.trim();
+  const postscriptName = names.get(6) ?? family;
+  const aliasSet = new Set<string>();
+  for (const id of [1, 4, 6, 16]) {
+    for (const value of allById.get(id) ?? []) {
+      if (value !== family && value !== fullName && value !== postscriptName) {
+        aliasSet.add(value);
+      }
+    }
+  }
+  const aliases = [...aliasSet];
   const os2 = find('OS/2'), head = find('head');
   const weight = os2 && os2.length >= 6 ? Math.max(1, Math.min(1000, u16(bytes, os2.offset + 4))) : 400;
   const italic = os2 && os2.length >= 64 ? !!(u16(bytes, os2.offset + 62) & 1)
@@ -101,8 +116,8 @@ function metadataAt(bytes: Uint8Array, offset: number, faceIndex: number): FontF
       if (min >= 1 && max <= 1000 && min <= max) weightRange = [min, max];
     }
   }
-  return { family, subfamily, fullName: names.get(4) ?? `${family} ${subfamily}`.trim(),
-    postscriptName: names.get(6) ?? family, weight, style: italic ? 'italic' : 'normal', faceIndex,
+  return { family, subfamily, fullName, postscriptName, weight, style: italic ? 'italic' : 'normal', faceIndex,
+    ...(aliases.length ? { aliases } : {}),
     ...(weightRange ? { weightRange } : {}) };
 }
 

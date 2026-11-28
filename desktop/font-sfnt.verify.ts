@@ -20,4 +20,12 @@ const bad = regular.slice(); new DataView(bad.buffer).setUint32(20, 0xffffffff);
 assert.throws(() => readFontFaces(bad), /范围/);
 const duplicate = regular.slice(); duplicate.set(duplicate.subarray(12, 16), 28);
 assert.throws(() => readFontFaces(duplicate), /重复/);
-console.log('font-sfnt.verify: metadata, TTC extraction/checksums, malformed bounds passed');
+const bilingual = fontFixture('方正小标宋简体', 400, {
+  englishFamily: 'FZXiaoBiaoSong-B05S',
+  postscriptName: 'FZXBSJW--GB1-0',
+});
+const bilingualFace = readFontFaces(bilingual)[0]!;
+assert.equal(bilingualFace.family, '方正小标宋简体');
+assert.equal(bilingualFace.postscriptName, 'FZXBSJW--GB1-0');
+assert.ok(bilingualFace.aliases?.includes('FZXiaoBiaoSong-B05S'), 'retains English alias alongside Chinese family');
+console.log('font-sfnt.verify: metadata, multilingual aliases, TTC extraction/checksums, malformed bounds passed');

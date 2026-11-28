@@ -21,6 +21,7 @@ import { compositionPlan } from './compositionPlan';
 import { planSubdraft } from './subdraft';
 import { planExpandSubdraft } from './subdraftOperations';
 import { makeDraft } from './store';
+import { docFromTimeline } from '../persist/projectStore';
 import type { ProjectDoc, Timeline, TimelineItem } from './types';
 import { isExternalServerDirectCall } from '../agent/external-tool-policy';
 import { execOfflineEditItemTool } from '../../server/external-agent/offline-edit-item';
@@ -414,6 +415,65 @@ import { buildSparseOverlayPlan } from '../../remotion/overlay-hybrid.mjs';
   assert.ok(rLong.width > rShort.width);
   assert.ok(validateTextClipProps({ borderLeft: '4px solid #d4af37' })?.includes('accentBarPosition'));
   assert.equal(validateTextClipProps({ text: '合规', anchor: 'top-left', accentBarPosition: 'top', fontFamily: '宋体' }), null);
+  assert.equal(validateTextClipProps({ text: '系统字体放行', fontFamily: '方正小标宋简体' }), null);
+  assert.equal(validateTextClipProps({ text: '英文别名放行', fontFamily: 'FZXiaoBiaoSong-B05S' }), null);
+
+  // Offline MCP accepts arbitrary fontFamily and auto-resolves matched local/system fonts when resolver is supplied
+  {
+    const offlineFontDoc = docFromTimeline({
+      fps: 30, width: 1920, height: 1080, items: [], selectedId: null, assets: [],
+    });
+    const offlineFontDraft = makeDraft(offlineFontDoc);
+    const offlineSystemAsset = {
+      id: 'font_offline_fz',
+      kind: 'file' as const,
+      name: '方正小标宋简体 Regular',
+      sourceFilename: 'FZXiaoBiaoSong-B05S.ttf',
+      src: '/media/uploads/font-offline-fz.ttf',
+      durationInFrames: 0,
+      props: {
+        resourceType: 'font',
+        font: {
+          family: '方正小标宋简体',
+          fullName: '方正小标宋简体 Regular',
+          postscriptName: 'FZXBSJW--GB1-0',
+          subfamily: 'Regular',
+          weight: 400,
+          style: 'normal' as const,
+          faceIndex: 0,
+          source: 'system' as const,
+          format: 'truetype' as const,
+        },
+      },
+    };
+    const offlineFontCtx: AgentContext = {
+      commands: offlineFontDraft.commands,
+      getState: offlineFontDraft.getState,
+      getDoc: offlineFontDraft.getDoc,
+      getCreativeMode: () => null,
+      templates: EXPLAINER_TEMPLATES,
+      audio: [],
+      fontResolver: {
+        async searchLocalFonts() { return []; },
+        async resolveFont(rawFamily) {
+          if (rawFamily.trim() === 'FZXiaoBiaoSong-B05S') {
+            return { fontFamily: '方正小标宋简体', fontAssetId: offlineSystemAsset.id, asset: offlineSystemAsset, source: 'system' };
+          }
+          return null;
+        },
+      },
+    };
+    const offRes = await execOfflineEditItemTool('edit_item', {
+      adds: [
+        { type: 'text', text: '系统字体', fontFamily: 'FZXiaoBiaoSong-B05S', track: 'V1', fromFrame: 0, durationInFrames: 60 },
+        { type: 'text', text: '自由字体', fontFamily: 'UnlistedCustomFont', track: 'V1', fromFrame: 60, durationInFrames: 60 },
+      ],
+    }, offlineFontCtx) as { ok?: boolean };
+    assert.equal(offRes.ok, true);
+    assert.equal(offlineFontDraft.getDoc().assets.some((a) => a.id === offlineSystemAsset.id), true);
+    assert.equal(offlineFontDraft.getState().items[0]?.props?.fontAssetId, offlineSystemAsset.id);
+    assert.equal(offlineFontDraft.getState().items[1]?.props?.fontFamily, 'UnlistedCustomFont');
+  }
 
   // Module 2: vector shapes (2px line / rect / arrow), single-side fade, custom paper, video compat flag
   const lineShape = resolveVectorShape({ shapeKind: 'line', strokeWidth: 2, color: '#d4af37', x1: 0.1, y1: 0.3, x2: 0.5, y2: 0.3 })!;
